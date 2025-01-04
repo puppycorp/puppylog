@@ -1,15 +1,8 @@
 # puppylog
 
-To install dependencies:
+## API
 
-```bash
-bun install
 ```
-
-To run:
-
-```bash
-bun run app.ts
+GET /api/logs?start,end,limit,offset,tag,search
+GET /api/logs/stream?tag,search
 ```
-
-This project was created using `bun init` in bun v1.1.24. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.

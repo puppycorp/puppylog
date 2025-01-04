@@ -19,6 +19,6 @@
 		// Removed "outFile" as bundling will be handled by Bun
 	},
 	"include": [
-		"src/**/*"
+		"ts/**/*"
 	]
 }
