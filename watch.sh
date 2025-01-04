@@ -1,0 +1,1 @@
+bun build ./src/app.ts --outfile=./assets/puppylog.js --minify --watch
