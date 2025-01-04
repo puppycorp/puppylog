@@ -3,7 +3,7 @@ from tinygrad.nn import optim
 from tinygrad.nn.state import get_parameters
 import numpy as np
 
-from gpt import GPT, GPTConfig
+from python.gpt import GPT, GPTConfig
 
 # Example of small GPT model
 vocab_size = 128  # Adjust based on tokenized log vocabulary
