@@ -7,6 +7,8 @@ import argparse
 import random
 import string
 import requests
+import gzip
+from io import BytesIO
 from datetime import datetime, timedelta
 
 # Possible log levels and their relative frequencies.
@@ -271,7 +273,21 @@ def main():
 
     if args.command == "rawupload":
         print(f"Uploading raw log data to {args.address}...")
-        requests.post(args.address, data=logs_str)
+
+        # Compress the log data
+        buf = BytesIO()
+        with gzip.GzipFile(fileobj=buf, mode='wb') as f:
+            f.write(logs_str.encode('utf-8'))
+        
+        compressed_data = buf.getvalue()
+        
+        # Send the compressed data
+        headers = {
+            #"Content-Encoding": "gzip",
+        }
+        res = requests.post(args.address, data=logs_str, headers=headers)
+        
+        print(res.status_code)
 
 
     # log_entries = generate_logs(args.count)

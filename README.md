@@ -113,7 +113,7 @@ Logline(same format as normal post) \r\n
 ```
 
 
-### POST /api/logs/raw
+### POST /api/device/{devid}/rawlogs
 
 Post raw logs as they are stored in device. However this might require user to insert some processing rules if the log schema is not automatically detectable. There could be some basic asumptions like timestamp is in certain format or it is the first column.
 

@@ -1,9 +1,20 @@
+use std::io::Write;
+
 use axum::{
-    routing::{get, post},
-    http::StatusCode,
-    Json, Router,
+    extract::{DefaultBodyLimit, Path}, http::StatusCode, routing::{get, post}, Json, Router
 };
+use chrono::{Datelike, Utc};
 use serde::{Deserialize, Serialize};
+use tower_http::decompression::{DecompressionLayer, RequestDecompressionLayer};
+
+mod parsing;
+
+fn log_path() -> std::path::PathBuf {
+    match std::env::var("LOG_PATH") {
+        Ok(val) => std::path::Path::new(&val).to_owned(),
+        Err(_) => std::path::Path::new("./logs").to_owned()
+    }
+}
 
 #[tokio::main]
 async fn main() {
@@ -12,9 +23,10 @@ async fn main() {
 
     // build our application with a route
     let app = Router::new()
-        // `GET /` goes to `root`
         .route("/", get(root))
-        .route("/api/logs/raw", post(upload_raw_logs))
+        .route("/api/device/{devid}/rawlogs", post(upload_raw_logs))
+            .layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
+            .layer(RequestDecompressionLayer::new().gzip(true))
         // `POST /users` goes to `create_user`
         .route("/users", post(create_user));
 
@@ -29,9 +41,34 @@ async fn root() -> &'static str {
 }
 
 async fn upload_raw_logs(
-    body: String
+    Path(devid): Path<String>,
+    body: String,
 ) {
-    println!("{}", body);
+    //println!("{}", body);
+
+    let now = Utc::now();
+
+    println!("logpath: {}", log_path().display());
+
+    let path = log_path().join(format!("{}/{}/{}", now.year(), now.month(), now.day()));
+
+    println!("{}", path.display());
+
+    if !path.exists() {
+        std::fs::create_dir_all(&path).unwrap();
+    }
+
+    let file = path.join(format!("{}.log", devid));
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)
+        .unwrap();
+
+    file.write_all(body.as_bytes()).unwrap();
+
+    println!("writing done");
 }
 
 #[axum::debug_handler]
