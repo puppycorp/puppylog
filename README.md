@@ -11,6 +11,7 @@ Get logs
 | --------- | -------- | --------------------------------- |
 | start     | DateTime | Start time for logs               |
 | end       | DateTime | End time for logs                 |
+| order     | int      | Order of the logs                  |
 | loglevel  | enum[]   | Debug, Info, Warning, Error       |
 | project   | int[]    | Project identifier                |
 | env       | int[]    | env type prod, dev ....           |

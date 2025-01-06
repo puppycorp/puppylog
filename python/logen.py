@@ -264,16 +264,6 @@ def chunked_data_generator(data, chunk_size):
     for line in lines:
         print(f"Line: {line}")
         yield line
-    #     chunk.append(line)
-    #     chunk_size_accum += len(line)
-    #     if chunk_size_accum >= chunk_size:
-    #         yield ''.join(chunk)
-    #         chunk = []
-    #         chunk_size_accum = 0
-
-    # if chunk:
-    #     yield ''.join(chunk)
-
 
 def main():
     parser = argparse.ArgumentParser(
