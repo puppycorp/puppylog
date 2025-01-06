@@ -1,4 +1,4 @@
-import { LogRow, LogSearch, Logtable } from "./logtable";
+import { LogRow, LogSearch, Logtable } from "./logs";
 
 const generateFakeLogRows = (n: number): LogRow[] => {
 	const rows: LogRow[] = []
@@ -23,6 +23,4 @@ window.onload = () => {
 	const t = new Logtable()
 	body.appendChild(logSearch.root)
 	body.appendChild(t.root)
-
-	t.addRows(generateFakeLogRows(10))
 }

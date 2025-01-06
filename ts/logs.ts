@@ -16,17 +16,21 @@ export class Logtable {
     constructor() {
         this.root = document.createElement('table')
         this.header = document.createElement('tr')
-        this.header.innerHTML = `<th>Timestamp</th><th>tags</th><th>message</th>`
+        this.header.innerHTML = `<th>Timestamp</th><th>message</th>`
         this.root.appendChild(this.header)
-        this.body = document.createElement('tbody')
-        this.body.innerHTML = `<tr><td>2020-01-01 12:00:00</td><td>APP</td><td>hello world</td></tr>`
+        this.body = document.createElement('tbody') 
         this.root.appendChild(this.body)
+
+        fetch("http://localhost:3000/api/logs?count=10").then((res) => res.json()).then((data) => {
+            this.addRows(data)
+        })
     }
 
     public addRows(rows: LogRow[]) {
+        console.log("Adding rows", rows)
         for (const r of rows) {
             const row = document.createElement('tr')
-            row.innerHTML = `<td>${r.timestamp}</td><td>${r.tags.join(', ')}</td><td>${r.message}</td>`
+            row.innerHTML = `<td>${r.timestamp}</td><td>${r.message}</td>`
 
             if (this.sortDir === "asc") {
                 this.body.prepend(row)
@@ -46,6 +50,8 @@ export class LogSearch {
     public root: HTMLElement
     private input: HTMLInputElement
     private button: HTMLButtonElement
+    private startDate: HTMLInputElement
+    private endDate: HTMLInputElement
 
     constructor() {
         this.root = document.createElement('div')
@@ -55,9 +61,19 @@ export class LogSearch {
         this.button.innerHTML = "Search"
         this.root.appendChild(this.input)
         this.root.appendChild(this.button)
+        this.startDate = document.createElement('input')
+        this.startDate.type = "date"
+        this.root.appendChild(this.startDate)
+        this.endDate = document.createElement('input')
+        this.endDate.type = "date"
+        this.root.appendChild(this.endDate)
     }
 
     public getQuery(): string {
         return this.input.value
     }
+}
+
+export class Logsearcher {
+    
 }

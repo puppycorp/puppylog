@@ -7,7 +7,7 @@ use chrono::{DateTime, Datelike, Utc};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tower_http::decompression::{DecompressionLayer, RequestDecompressionLayer};
+use tower_http::{cors::{AllowMethods, Any, CorsLayer}, decompression::{DecompressionLayer, RequestDecompressionLayer}};
 
 mod logline;
 
@@ -100,6 +100,13 @@ async fn main() {
     // initialize tracing
     //tracing_subscriber::fmt::init();
 
+    
+
+    let cors = CorsLayer::new()
+        .allow_origin(Any) // Allow requests from any origin
+        .allow_methods(AllowMethods::any()) // Allowed HTTP methods
+        .allow_headers(Any);
+
     // build our application with a route
     let app = Router::new()
         .route("/", get(root))
@@ -109,7 +116,7 @@ async fn main() {
         .route("/api/device/{devid}/rawlogs/stream", post(stream_raw_logs))
             .layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
             .layer(RequestDecompressionLayer::new().gzip(true))
-        .route("/api/logs", get(get_logs));
+        .route("/api/logs", get(get_logs)).layer(cors);
 
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
