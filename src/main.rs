@@ -14,6 +14,7 @@ async fn main() {
     let app = Router::new()
         // `GET /` goes to `root`
         .route("/", get(root))
+        .route("/api/logs/raw", post(upload_raw_logs))
         // `POST /users` goes to `create_user`
         .route("/users", post(create_user));
 
@@ -25,6 +26,12 @@ async fn main() {
 // basic handler that responds with a static string
 async fn root() -> &'static str {
     "Hello, World!"
+}
+
+async fn upload_raw_logs(
+    body: String
+) {
+    println!("{}", body);
 }
 
 #[axum::debug_handler]

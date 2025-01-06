@@ -6,6 +6,7 @@ Generate synthetic log lines without angle bracket tags, using a cyclical order.
 import argparse
 import random
 import string
+import requests
 from datetime import datetime, timedelta
 
 # Possible log levels and their relative frequencies.
@@ -251,18 +252,34 @@ def main():
         "--count", "-c", type=int, default=1000,
         help="Number of log lines to generate (default: 1000)"
     )
-    parser.add_argument(
-        "--output", "-o", type=str, default="generated_logs.txt",
-        help="Output file to store generated logs (default: generated_logs.txt)"
+    # parser.add_argument(
+    #     "--output", "-o", type=str, default="generated_logs.txt",
+    #     help="Output file to store generated logs (default: generated_logs.txt)"
+    # )
+    subparsers = parser.add_subparsers(dest="command")
+    rawupload = subparsers.add_parser("rawupload")
+    rawupload.add_argument(
+        "address", type=str,
+        help="Server URL to upload raw logdata (example: http://localhost:8080)"
     )
+
     args = parser.parse_args()
 
-    log_entries = generate_logs(args.count)
-    with open(args.output, "w") as f:
-        for entry in log_entries:
-            f.write(entry + "\n")
+    print(args)
 
-    print(f"Generated {args.count} log lines in {args.output}.")
+    logs_str = "\n".join(generate_logs(args.count))
+
+    if args.command == "rawupload":
+        print(f"Uploading raw log data to {args.address}...")
+        requests.post(args.address, data=logs_str)
+
+
+    # log_entries = generate_logs(args.count)
+    # with open(args.output, "w") as f:
+    #     for entry in log_entries:
+    #         f.write(entry + "\n")
+
+    # print(f"Generated {args.count} log lines in {args.output}.")
 
 if __name__ == "__main__":
     main()
