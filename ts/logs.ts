@@ -12,6 +12,7 @@ export class Logtable {
     private header: HTMLElement
     private body: HTMLElement
     public sortDir: SortDir = "desc"
+    private logSearcher: LogSearcher
 
     constructor() {
         this.root = document.createElement('table')
@@ -21,9 +22,22 @@ export class Logtable {
         this.body = document.createElement('tbody') 
         this.root.appendChild(this.body)
 
-        fetch("http://localhost:3000/api/logs?count=10").then((res) => res.json()).then((data) => {
-            this.addRows(data)
+        // fetch("http://localhost:3000/api/logs?count=10").then((res) => res.json()).then((data) => {
+        //     this.addRows(data)
+        // })
+
+        
+
+        this.logSearcher = new LogSearcher({
+            onNewLoglines: (rows) => {
+                this.addRows(rows)
+            },
+            onClear: () => {
+                this.body.innerHTML
+            }
         })
+
+        this.logSearcher.search({})
     }
 
     public addRows(rows: LogRow[]) {
@@ -74,6 +88,56 @@ export class LogSearch {
     }
 }
 
-export class Logsearcher {
-    
+export class LogSearcher {
+    private logEventSource?: EventSource
+    private onClear: () => void
+    private onNewLoglines: (rows: LogRow[]) => void
+
+    public constructor(args: {
+        onClear: () => void
+        onNewLoglines: (rows: LogRow[]) => void
+    }) {
+        this.onClear = args.onClear
+        this.onNewLoglines = args.onNewLoglines
+    }
+
+    public search(args: {
+        startDate?: string
+        endDate?: string
+        search?: string[]
+    }) {
+        const query = new URLSearchParams()
+        if (args.startDate) {
+            query.append("startDate", args.startDate)
+        }
+        if (args.endDate) {
+            query.append("endDate", args.endDate)
+        }
+        if (args.search) {
+            for (const s of args.search) {
+                query.append("search", s)
+            }
+        }
+
+        const url = new URL("http://localhost:3000/api/logs/stream")
+        url.search = query.toString()
+        this.createEventSource(url.toString())
+    }
+
+    private createEventSource(url: string) {
+        if (this.logEventSource) {
+            this.logEventSource.close()
+            this.onClear()
+        }
+
+        this.logEventSource = new EventSource(url)
+        this.logEventSource.onmessage = (e) => {
+            console.log("Got message", e.data)
+            this.onNewLoglines([JSON.parse(e.data)])
+        }
+        this.logEventSource.onerror = (err) => {
+            console.error("error", err)
+            this.logEventSource?.close()
+        }
+    }
 }
