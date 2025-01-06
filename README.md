@@ -122,7 +122,7 @@ Content-Encoding: gzip or none
 
 Logs in plain text format...
 
-### POST /api/logs/raw/stream
+### POST /api/device/{devid}/rawlogs/stream
 
 Stream raw logs to server. This is useful when logs are generated in real time and they are not stored in the device. This can be used to stream logs from the device to the server.
 

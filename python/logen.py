@@ -246,6 +246,35 @@ def generate_logs(total_logs):
         logs.append(line)
     return logs
 
+def upload_in_chunks(address, data, chunk_size=1024):
+    """Upload data to the server in chunks."""
+    with requests.Session() as session:
+        headers = {"Transfer-Encoding": "chunked"}
+        response = session.post(
+            address, data=chunked_data_generator(data, chunk_size), headers=headers
+        )
+        return response
+
+def chunked_data_generator(data, chunk_size):
+    """Yield chunks of data split by lines."""
+    lines = data.splitlines(keepends=True)
+    chunk = []
+    chunk_size_accum = 0
+
+    for line in lines:
+        print(f"Line: {line}")
+        yield line
+    #     chunk.append(line)
+    #     chunk_size_accum += len(line)
+    #     if chunk_size_accum >= chunk_size:
+    #         yield ''.join(chunk)
+    #         chunk = []
+    #         chunk_size_accum = 0
+
+    # if chunk:
+    #     yield ''.join(chunk)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate synthetic log lines for anomaly detection without angle-bracket tags."
@@ -263,6 +292,11 @@ def main():
     rawupload.add_argument(
         "address", type=str,
         help="Server URL to upload raw logdata (example: http://localhost:8080)"
+    )
+    rawstream = subparsers.add_parser("rawstream")
+    rawstream.add_argument(
+        "address", type=str,
+        help="Server URL to stream raw logdata (example: ws://localhost:8080)"
     )
 
     args = parser.parse_args()
@@ -288,14 +322,9 @@ def main():
         res = requests.post(args.address, data=logs_str, headers=headers)
         
         print(res.status_code)
-
-
-    # log_entries = generate_logs(args.count)
-    # with open(args.output, "w") as f:
-    #     for entry in log_entries:
-    #         f.write(entry + "\n")
-
-    # print(f"Generated {args.count} log lines in {args.output}.")
+    if args.command == "rawstream":
+        print(f"Streaming raw log data to {args.address}...")
+        upload_in_chunks(args.address, logs_str)
 
 if __name__ == "__main__":
     main()
