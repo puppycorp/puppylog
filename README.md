@@ -4,7 +4,7 @@
 
 ### Logfile
 
-Logfile stores logs in binary structure format. It starts with header followed by loglines.
+Logfile stores logs in binary structure format. It starts with header followed by loglines. Logfiles are stored in tar.gz format and in folder `{LOGPATH}/year/month/day/yyyy-mm-dd-deviceid.tar.gz` in the server.
 
 **Header**
 | Field         | Size | Description                    |
@@ -12,21 +12,38 @@ Logfile stores logs in binary structure format. It starts with header followed b
 | Magic         | 7    | PUPYLOG                        |
 | Version       | 1    | Version of the log file format |
 | Logline count | 4    | Number of loglines in the file |
-| Loglines 	    | x    | Loglines                       |
+| LogEntries 	| x    | Loglines                       |
 
-### Logline
+### Logentry
 
 Logline is a binary structure which stores log information.
 
-| Field     | Size | Description             |
-|-----------|------|-------------------------|
-| Timestamp | 8    | Timestamp of the log    |
-| LogLevel  | 1    | Log level               |
-| Project   | 4    | Project identifier      |
-| Env       | 4    | Environment identifier  |
-| Device    | 4    | Device identifier       |
-| Msglen    | 4    | Length of the message   |
-| Message   | x    | Log message             |
+| Field      | Size | Description                  |
+|------------|------|------------------------------|
+| Timestamp  | 8    | Timestamp of the log         |
+| Level      | 1    | Log level                    |
+| PropsCount | 1    | Project identifier           |
+| Properties | x    | Properties of the logentry   |
+| Message    | x    | Log message payload          |
+
+
+**Loglevel**
+
+| Value | Description |
+|-------|-------------|
+| 0     | Debug       |
+| 1     | Info        |
+| 2     | Warning     |
+| 3     | Error       |
+
+**Property**
+
+| Field  | Size | Description           |
+|--------|------|-----------------------|
+| KeyLen | 1	| Length of the key     |
+| Key    | x    | Key of the property   |
+| ValLen | 1    | Length of the value   |
+| Value  | x    | Value of the property |
 
 ## API
 
