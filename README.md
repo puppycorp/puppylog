@@ -23,9 +23,9 @@ Logline is a binary structure which stores log information.
 | Timestamp  | 8    | Timestamp of the log         |
 | Level      | 1    | Log level                    |
 | PropsCount | 1    | Project identifier           |
-| Properties | x    | Properties of the logentry   |
+| Props      | x    | Properties of the logentry   |
+| MsgLen     | 4    | Length of the message        |
 | Message    | x    | Log message payload          |
-
 
 **Loglevel**
 

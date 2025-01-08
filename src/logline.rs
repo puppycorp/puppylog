@@ -1,8 +1,11 @@
 use core::time;
-use std::io::{self, Read, Write};
+use std::io::{self, Error, Read, Write};
 use byteorder::{BigEndian, LittleEndian, WriteBytesExt};
 use byteorder::ReadBytesExt;
-use chrono::{DateTime, Utc};
+use bytes::Bytes;
+use chrono::{DateTime, Timelike, Utc};
+use futures::Stream;
+use futures_util::StreamExt;
 
 #[derive(Debug, serde::Serialize)]
 pub struct Logline {
@@ -23,12 +26,12 @@ pub fn parse_logline(logline: &str) -> Logline {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum LogLevel {
 	Debug,
 	Info,
 	Warn,
-	Error,
-	Fatal
+	Error
 }
 
 impl Into<u8> for &LogLevel {
@@ -38,7 +41,6 @@ impl Into<u8> for &LogLevel {
 			LogLevel::Info => 1,
 			LogLevel::Warn => 2,
 			LogLevel::Error => 3,
-			LogLevel::Fatal => 4
 		}
 	}
 }
@@ -50,12 +52,12 @@ impl From<u8> for LogLevel {
 			1 => LogLevel::Info,
 			2 => LogLevel::Warn,
 			3 => LogLevel::Error,
-			4 => LogLevel::Fatal,
 			_ => panic!("Invalid log level")
 		}
 	}
 }
 
+#[derive(Debug)]
 pub struct LogEntry {
 	pub timestamp: DateTime<Utc>,
 	pub level: LogLevel,
@@ -65,17 +67,25 @@ pub struct LogEntry {
 
 impl LogEntry {
 	pub fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-		writer.write_i64::<LittleEndian>(self.timestamp.timestamp())?;
+		writer.write_i64::<LittleEndian>(self.timestamp.timestamp_millis())?;
 		writer.write_u8((&self.level).into())?;
 		writer.write_u8(self.props.len() as u8)?;
-
-
+		for (key, value) in &self.props {
+			writer.write_u8(key.len() as u8)?;
+			writer.write_all(key.as_bytes())?;
+			writer.write_u8(value.len() as u8)?;
+			writer.write_all(value.as_bytes())?;
+		}
+		writer.write_u32::<LittleEndian>(self.msg.len() as u32)?;
+		writer.write_all(self.msg.as_bytes())?;
 		Ok(())
 	}
 
-	pub fn deserialize<R: Read>(reader: &mut R) -> io::Result<LogEntry> {
-		let timestamp = reader.read_i64::<BigEndian>()?;
-		let timestamp = DateTime::from_timestamp_millis(timestamp).unwrap();
+	pub fn  deserialize<R: Read>(reader: &mut R) -> io::Result<LogEntry> {
+		let timestamp = reader.read_i64::<LittleEndian>()?;
+		let secs = timestamp / 1000;
+		let nanos = ((timestamp % 1000) * 1_000_000) as u32;
+		let timestamp = DateTime::from_timestamp(secs, nanos).unwrap();
 		let level = reader.read_u8()?;
 		let level = LogLevel::from(level);
 		let prop_count = reader.read_u8()?;
@@ -92,7 +102,7 @@ impl LogEntry {
 			props.push((key, value));
 		}
 
-		let msg_len = reader.read_u16::<BigEndian>()?;
+		let msg_len = reader.read_u32::<LittleEndian>()?;
 		let mut msg = vec![0; msg_len as usize];
 		reader.read_exact(&mut msg)?;
 		let msg = String::from_utf8(msg).unwrap();
@@ -103,5 +113,95 @@ impl LogEntry {
 			props,
 			msg
 		})
+	}
+}
+
+pub struct LogEntryParser {
+    buffer: Vec<u8>
+}
+
+impl LogEntryParser {
+	pub fn new() -> Self {
+		LogEntryParser {
+			buffer: vec![]
+		}
+	}
+
+	pub fn parse(&mut self, data: &[u8], mut on_entry: impl FnMut(LogEntry)) {
+		self.buffer.extend_from_slice(data);
+		loop {
+			let mut cursor = io::Cursor::new(&self.buffer);
+			match LogEntry::deserialize(&mut cursor) {
+				Ok(entry) => {
+					let pos = cursor.position() as usize;
+					self.buffer.drain(..pos);
+					on_entry(entry);
+				}
+				Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+				Err(e) => panic!("Error parsing log entry: {:?}", e)
+			}
+		}
+	}
+}
+
+
+#[cfg(test)]
+mod tests {
+	#[test]
+	fn test_serialize_and_deserialize() {
+		use std::io::Cursor;
+		use chrono::Utc;
+		use super::{LogEntry, LogLevel};
+
+		let entry = LogEntry {
+			timestamp: Utc::now(),
+			level: LogLevel::Info,
+			props: vec![
+				("key1".to_string(), "value1".to_string()),
+				("key2".to_string(), "value2".to_string())
+			],
+			msg: "Hello, world!".to_string()
+		};
+
+		let mut buffer = Cursor::new(vec![]);
+		entry.serialize(&mut buffer).unwrap();
+		buffer.set_position(0);
+		let deserialized = LogEntry::deserialize(&mut buffer).unwrap();
+
+		assert_eq!(entry.timestamp.timestamp_millis(), deserialized.timestamp.timestamp_millis());
+		assert_eq!(entry.level, deserialized.level);
+		assert_eq!(entry.props, deserialized.props);
+		assert_eq!(entry.msg, deserialized.msg);
+	}
+
+	#[test]
+	fn test_serialize_and_logentry_parser() {
+		use super::{LogEntry, LogLevel};
+		use std::io::Cursor;
+		use chrono::Utc;
+
+		let entry = LogEntry {
+			timestamp: Utc::now(),
+			level: LogLevel::Info,
+			props: vec![
+				("key1".to_string(), "value1".to_string()),
+				("key2".to_string(), "value2".to_string())
+			],
+			msg: "Hello, world!".to_string()
+		};
+
+		let mut buffer = Cursor::new(vec![]);
+		entry.serialize(&mut buffer).unwrap();
+		buffer.set_position(0);
+
+		let mut parser = super::LogEntryParser::new();
+		let mut entries = vec![];
+		parser.parse(&buffer.get_ref(), |entry| entries.push(entry));
+
+		assert_eq!(entries.len(), 1);
+		assert_eq!(entries[0].timestamp.timestamp_millis(), entry.timestamp.timestamp_millis());
+		assert_eq!(entries[0].level, entry.level);
+		assert_eq!(entries[0].props, entry.props);
+		assert_eq!(entries[0].msg, entry.msg);
 	}
 }

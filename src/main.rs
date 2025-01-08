@@ -6,6 +6,7 @@ use axum::{
 use chrono::{DateTime, Datelike, Utc};
 use futures::Stream;
 use futures_util::StreamExt;
+use logline::LogEntryParser;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::{fs, io::AsyncReadExt, sync::mpsc};
@@ -119,7 +120,8 @@ async fn main() {
             .layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
             .layer(RequestDecompressionLayer::new().gzip(true))
         .route("/api/logs", get(get_logs)).layer(cors.clone())
-        .route("/api/logs/stream", get(stream_logs)).layer(cors);
+        .route("/api/logs/stream", get(stream_logs)).layer(cors)
+		.route("/api/logs", post(upload_logs));
 
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -129,6 +131,18 @@ async fn main() {
 // basic handler that responds with a static string
 async fn root() -> &'static str {
     "Hello, World!"
+}
+
+async fn upload_logs(body: Body) {
+	let mut stream: BodyDataStream = body.into_data_stream();
+	let mut logentry_parser = LogEntryParser::new();
+
+	for chunk in stream.next().await {
+		let chunk = chunk.unwrap();
+		logentry_parser.parse(&chunk, |entry| {
+			println!("{:?}", entry);
+		});
+	}
 }
 
 async fn get_logs(Query(params): Query<GetLogsQuery>) -> Json<Value> {

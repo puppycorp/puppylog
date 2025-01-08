@@ -581,6 +581,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "byteorder",
+ "bytes",
  "chrono",
  "futures",
  "futures-util",
