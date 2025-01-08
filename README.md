@@ -1,5 +1,33 @@
 # puppylog
 
+## Data Structures
+
+### Logfile
+
+Logfile stores logs in binary structure format. It starts with header followed by loglines.
+
+**Header**
+| Field         | Size | Description                    |
+|---------------|------|--------------------------------|
+| Magic         | 7    | PUPYLOG                        |
+| Version       | 1    | Version of the log file format |
+| Logline count | 4    | Number of loglines in the file |
+| Loglines 	    | x    | Loglines                       |
+
+### Logline
+
+Logline is a binary structure which stores log information.
+
+| Field     | Size | Description             |
+|-----------|------|-------------------------|
+| Timestamp | 8    | Timestamp of the log    |
+| LogLevel  | 1    | Log level               |
+| Project   | 4    | Project identifier      |
+| Env       | 4    | Environment identifier  |
+| Device    | 4    | Device identifier       |
+| Msglen    | 4    | Length of the message   |
+| Message   | x    | Log message             |
+
 ## API
 
 ### GET /api/logs
