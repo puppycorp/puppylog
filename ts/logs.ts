@@ -1,8 +1,17 @@
 
+export type LogLevel = "Debug" | "Info" | "Warn" | "Error"
+export const logColors = {
+	Debug: "blue",
+	Info: "green",
+	Warn: "orange",
+	Error: "red"
+}
+
 export type LogRow = {
     timestamp: string
-    tags: string[]
-    message: string
+	level: "debug" | "info" | "warn" | "error"
+    props: string[]
+    msg: string
 }
 
 export type SortDir = "asc" | "desc";
@@ -17,7 +26,7 @@ export class Logtable {
     constructor() {
         this.root = document.createElement('table')
         this.header = document.createElement('tr')
-        this.header.innerHTML = `<th>Timestamp</th><th>message</th>`
+        this.header.innerHTML = `<th>Timestamp</th><th>Level</th><th>message</th>`
         this.root.appendChild(this.header)
         this.body = document.createElement('tbody') 
         this.root.appendChild(this.body)
@@ -44,7 +53,7 @@ export class Logtable {
         console.log("Adding rows", rows)
         for (const r of rows) {
             const row = document.createElement('tr')
-            row.innerHTML = `<td>${r.timestamp}</td><td>${r.message}</td>`
+            row.innerHTML = `<td>${r.timestamp}</td><td style="color: ${logColors[r.level]}">${r.level}</td><td>${r.msg}</td>`
 
             if (this.sortDir === "asc") {
                 this.body.prepend(row)

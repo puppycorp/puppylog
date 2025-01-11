@@ -1,4 +1,11 @@
 // ts/logs.ts
+var logColors = {
+  Debug: "blue",
+  Info: "green",
+  Warn: "orange",
+  Error: "red"
+};
+
 class Logtable {
   root;
   header;
@@ -8,7 +15,7 @@ class Logtable {
   constructor() {
     this.root = document.createElement("table");
     this.header = document.createElement("tr");
-    this.header.innerHTML = `<th>Timestamp</th><th>message</th>`;
+    this.header.innerHTML = `<th>Timestamp</th><th>Level</th><th>message</th>`;
     this.root.appendChild(this.header);
     this.body = document.createElement("tbody");
     this.root.appendChild(this.body);
@@ -26,7 +33,7 @@ class Logtable {
     console.log("Adding rows", rows);
     for (const r of rows) {
       const row = document.createElement("tr");
-      row.innerHTML = `<td>${r.timestamp}</td><td>${r.message}</td>`;
+      row.innerHTML = `<td>${r.timestamp}</td><td style="color: ${logColors[r.level]}">${r.level}</td><td>${r.msg}</td>`;
       if (this.sortDir === "asc") {
         this.body.prepend(row);
       } else {

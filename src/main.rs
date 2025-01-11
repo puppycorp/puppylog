@@ -6,9 +6,11 @@ use axum::{
 use chrono::{DateTime, Datelike, Utc};
 use futures::Stream;
 use futures_util::StreamExt;
+use log::LevelFilter;
 use puppylog::{LogEntry, LogEntryParser, LogLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string, Value};
+use simple_logger::SimpleLogger;
 use tokio::{fs, io::AsyncReadExt, sync::mpsc};
 use tower_http::{cors::{AllowMethods, Any, CorsLayer}, decompression::{DecompressionLayer, RequestDecompressionLayer}};
 use types::{Context, LogsQuery, SubscribeReq};
@@ -32,7 +34,7 @@ struct GetLogsQuery {
 	pub start: Option<DateTime<Utc>>,
 	pub end: Option<DateTime<Utc>>,
 	pub level: Option<LogLevel>,
-	pub props: Vec<(String, String)>,
+	pub props: Option<Vec<(String, String)>>,
 	pub search: Option<String>,
 }
 
@@ -103,6 +105,7 @@ fn get_days(year: u32, month: u32) -> Vec<u32> {
 async fn main() {
     // initialize tracing
     //tracing_subscriber::fmt::init();
+	SimpleLogger::new().with_level(LevelFilter::Info).init().unwrap();
 
     let ctx = Context::new();
 	let ctx = Arc::new(ctx);
@@ -139,53 +142,27 @@ async fn root() -> &'static str {
 
 async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
     let mut stream: BodyDataStream = body.into_data_stream();
-    let mut buffer = Vec::new();
-    let mut unprocessed_start = 0;
-
+	let mut buffer = Vec::new();
+	
     while let Some(chunk_result) = stream.next().await {
         match chunk_result {
             Ok(chunk) => {
-                // Append new chunk to buffer
                 buffer.extend_from_slice(&chunk);
-
-                // Process as many complete log entries as possible
-                let mut read_cursor = 0;
-                while let Ok(entry) = LogEntry::deserialize(&mut std::io::Cursor::new(&buffer[unprocessed_start..])) {
-                    // Track how much data we read
-                    read_cursor += std::io::Cursor::new(&buffer[unprocessed_start + read_cursor..])
-                        .position() as usize;
-                    
-                    // Publish the entry
-                    if let Err(e) = ctx.publisher.send(entry).await {
-                        eprintln!("Failed to publish log entry: {}", e);
-                        return;
-                    }
-                }
-                
-                // Update the unprocessed data pointer
-                unprocessed_start += read_cursor;
-
-                // If we've processed a significant portion of the buffer, compact it
-                if unprocessed_start > buffer.len() / 2 {
-                    // Copy remaining unprocessed data to start of buffer
-                    buffer.copy_within(unprocessed_start.., 0);
-                    buffer.truncate(buffer.len() - unprocessed_start);
-                    unprocessed_start = 0;
-                }
+				let offset = {
+					let mut cursor = std::io::Cursor::new(&mut buffer);
+					while let Ok(entry) = LogEntry::deserialize(&mut cursor) {
+						log::info!("log entry: {:?}", entry);
+						if let Err(e) = ctx.publisher.send(entry).await {
+							log::error!("Failed to publish log entry: {}", e);
+							break;
+						}
+					}
+					cursor.position() as usize
+				};
+				buffer.rotate_left(offset);
             }
             Err(e) => {
-                eprintln!("Error receiving chunk: {}", e);
-                return;
-            }
-        }
-    }
-
-    // Process any remaining complete entries in the buffer
-    if unprocessed_start < buffer.len() {
-        let mut cursor = std::io::Cursor::new(&buffer[unprocessed_start..]);
-        while let Ok(entry) = LogEntry::deserialize(&mut cursor) {
-            if let Err(e) = ctx.publisher.send(entry).await {
-                eprintln!("Failed to publish final log entry: {}", e);
+                log::error!("Error receiving chunk: {}", e);
                 return;
             }
         }
@@ -290,8 +267,8 @@ async fn stream_logs(
         end: params.end,
         level: params.level,
         search: params.search,
-        props: params.props
-    });
+        props: params.props.unwrap_or_default()
+    }).await;
 
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
         .map(|p| {

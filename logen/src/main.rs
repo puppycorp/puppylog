@@ -67,6 +67,8 @@ struct Cli {
     /// Number of log lines to generate
     #[arg(short, long, default_value_t = 1000)]
     count: usize,
+	#[arg(short, long, default_value_t = 0)]
+	interval: u64,
 	address: String,
 }
 

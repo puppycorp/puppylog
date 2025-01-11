@@ -24,6 +24,7 @@ impl Worker {
 	}
 
 	async fn handle_entry(&mut self, entry: LogEntry) {
+		log::info!("handle_entry {:?}", entry);
 		let mut i = self.subs.len();
 		while i > 0 {
 			i -= 1;
@@ -41,6 +42,7 @@ impl Worker {
 				req = self.subrx.recv() => {
 					match req {
 						Some(req) => {
+							log::info!("subscribe {:?}", req.query);
 							self.subs.push(Subscriber {
 								res_tx: req.res_tx,
 								query: req.query,

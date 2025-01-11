@@ -15,12 +15,12 @@ impl Subscriber {
 		}
 	}
 
-	pub fn subscribe(&self, query: LogsQuery) -> mpsc::Receiver<LogEntry> {
+	pub async fn subscribe(&self, query: LogsQuery) -> mpsc::Receiver<LogEntry> {
 		let (res_tx, res_rx) = mpsc::channel(100);
-		let _ = self.tx.send(SubscribeReq {
+		self.tx.send(SubscribeReq {
 			res_tx,
 			query,
-		});
+		}).await;
 		res_rx
 	}
 }
