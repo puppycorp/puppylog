@@ -1,5 +1,7 @@
+[workspace] 
+members = ["core","logen"]
 [package]
-name = "puppylog"
+name = "puppylog-server"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,11 +9,18 @@ edition = "2021"
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["macros"] }
 serde = { version = "1", features = ["derive"] }
-chrono = { version = "0.4", features = ["serde"] }
 tower-http = { version = "0.6", features = ["decompression-gzip", "cors"] }
 futures-util = "0.3"
 serde_json = "1"
 futures = "0.3"
 tokio-stream = "0.1"
-byteorder = "1"
 bytes = "1"
+puppylog = { path = "core" }
+chrono = { workspace = true }
+
+[workspace.dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+
+[[bin]]
+name = "puppylog"
+path = "src/main.rs"

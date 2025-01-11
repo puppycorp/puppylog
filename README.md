@@ -56,11 +56,9 @@ Get logs
 | --------- | -------- | --------------------------------- |
 | start     | DateTime | Start time for logs               |
 | end       | DateTime | End time for logs                 |
-| order     | int      | Order of the logs                  |
+| order     | int      | Order of the logs                 |
 | loglevel  | enum[]   | Debug, Info, Warning, Error       |
-| project   | int[]    | Project identifier                |
-| env       | int[]    | env type prod, dev ....           |
-| device    | int[]    | Id of the device                  |
+| props	 	| string[] | Properties of the logentry        |
 | search    | string[] | Message payload of the logmessage |
 
 #### Response
@@ -126,9 +124,9 @@ Event stream which receives commands from server. This can be used to control th
 | Start date  | 8    | Earliest logline to send |
 | End date    | 8    | Lastest logline to send  |
 
-### POST /api/logs
+### POST /api/logs/{group}
 
-Device can send batch of loglines to server in compressed format like tar.gz. Payload will have one or more loglines is specified format.
+Device can send batch of loglines to server in compressed format like tar.gz. Payload will have one or more loglines in specified format.
 
 Content-Encoding: gzip or none
 
