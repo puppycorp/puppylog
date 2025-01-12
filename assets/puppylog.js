@@ -12,8 +12,8 @@ class VirtualTable {
     this.rowHeight = args.rowHeight;
     this.rowCount = args.rowCount;
     this.root = document.createElement("div");
-    this.root.style.height = "500px";
-    this.root.style.width = "800px";
+    this.root.style.height = "800px";
+    this.root.style.width = "100%";
     this.root.style.overflow = "scroll";
     this.container = document.createElement("div");
     this.container.style.position = "relative";
@@ -47,6 +47,7 @@ class VirtualTable {
     this.container.appendChild(content);
   }
   setRowCount(rowCount) {
+    console.log("Setting row count", rowCount);
     this.rowCount = rowCount;
     this.container.style.height = `${this.rowHeight * rowCount + this.rowHeight * 3}px`;
     this.updateVisibleRows();
@@ -68,10 +69,10 @@ class Logtable {
   body;
   sortDir = "desc";
   logSearcher;
-  rows = [];
   constructor() {
-    this.header = document.createElement("tr");
-    this.header.innerHTML = `<th>Timestamp</th><th>Level</th><th>message</th>`;
+    this.root = document.createElement("div");
+    this.header = document.createElement("head");
+    this.header.innerHTML = `<tr><th>Timestamp</th><th>Level</th><th>message</th></tr>`;
     this.table.appendChild(this.header);
     this.body = document.createElement("tbody");
     this.table.appendChild(this.body);
@@ -81,7 +82,7 @@ class Logtable {
       drawRow: (start, end) => {
         let body = "";
         for (let i = start;i < end; i++) {
-          const r = this.rows[i];
+          const r = this.logSearcher.logEntries[i];
           body += `
                     <tr style="height: 35px">
                         <td>${r.timestamp}</td>
@@ -94,24 +95,19 @@ class Logtable {
         return this.table;
       }
     });
-    this.root = virtual.root;
     this.logSearcher = new LogSearcher({
-      onNewLoglines: (rows) => {
-        this.rows.push(...rows);
-        this.rows.sort((a, b) => {
-          if (this.sortDir === "asc") {
-            return a.timestamp.localeCompare(b.timestamp);
-          } else {
-            return b.timestamp.localeCompare(a.timestamp);
-          }
-        });
-        virtual.setRowCount(this.rows.length);
+      onNewLoglines: () => {
+        virtual.setRowCount(this.logSearcher.logEntries.length);
       },
       onClear: () => {
         this.body.innerHTML;
       }
     });
-    this.root = virtual.root;
+    const searchOptions = new LogSearchOptions({
+      searcher: this.logSearcher
+    });
+    this.root.appendChild(searchOptions.root);
+    this.root.appendChild(virtual.root);
     this.logSearcher.search({
       count: 1e5
     });
@@ -125,17 +121,23 @@ class Logtable {
   }
 }
 
-class LogSearch {
+class LogSearchOptions {
   root;
   input;
   button;
   startDate;
   endDate;
-  constructor() {
+  searcher;
+  constructor(args) {
     this.root = document.createElement("div");
     this.input = document.createElement("input");
     this.input.type = "text";
     this.button = document.createElement("button");
+    this.button.onclick = () => {
+      this.searcher.search({
+        search: [this.input.value]
+      });
+    };
     this.button.innerHTML = "Search";
     this.root.appendChild(this.input);
     this.root.appendChild(this.button);
@@ -145,6 +147,7 @@ class LogSearch {
     this.endDate = document.createElement("input");
     this.endDate.type = "date";
     this.root.appendChild(this.endDate);
+    this.searcher = args.searcher;
   }
   getQuery() {
     return this.input.value;
@@ -155,6 +158,7 @@ class LogSearcher {
   logEventSource;
   onClear;
   onNewLoglines;
+  logEntries = [];
   constructor(args) {
     this.onClear = args.onClear;
     this.onNewLoglines = args.onNewLoglines;
@@ -173,6 +177,9 @@ class LogSearcher {
     if (args.search) {
       for (const s of args.search) {
         query.append("search", s);
+        this.logEntries = this.logEntries.filter((l) => {
+          return l.msg.includes(s);
+        });
       }
     }
     if (args.count) {
@@ -180,8 +187,15 @@ class LogSearcher {
     }
     const url = new URL("http://localhost:3000/api/logs");
     url.search = query.toString();
+    this.onNewLoglines();
     fetch(url.toString()).then((res) => res.json()).then((data) => {
-      this.onNewLoglines(data);
+      this.logEntries.push(...data);
+      if (args.order === "asc") {
+        this.logEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      } else {
+        this.logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      }
+      this.onNewLoglines();
     });
   }
   createEventSource(url) {
@@ -192,7 +206,7 @@ class LogSearcher {
     this.logEventSource = new EventSource(url);
     this.logEventSource.onmessage = (e) => {
       console.log("Got message", e.data);
-      this.onNewLoglines([JSON.parse(e.data)]);
+      this.logEntries.push(JSON.parse(e.data));
     };
     this.logEventSource.onerror = (err) => {
       console.error("error", err);
@@ -207,8 +221,6 @@ window.onload = () => {
   if (!body) {
     throw new Error("No body element found");
   }
-  const logSearch = new LogSearch;
   const t = new Logtable;
-  body.appendChild(logSearch.root);
   body.appendChild(t.root);
 };

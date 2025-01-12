@@ -62,6 +62,11 @@ impl LogsQuery {
 				return false;
 			}
 		}
+		if let Some(search) = &self.search {
+			if !entry.msg.contains(search) {
+				return false;
+			}
+		}
 		true
 	}
 }

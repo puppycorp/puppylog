@@ -8,7 +8,7 @@ export const logColors = {
 	Error: "red"
 }
 
-export type LogRow = {
+export type LogEntry = {
     timestamp: string
 	level: LogLevel
     props: string[]
@@ -18,21 +18,22 @@ export type LogRow = {
 export type SortDir = "asc" | "desc";
 
 export class Logtable {
-	public root: HTMLElement 
+	public root: HTMLElement
     private table = document.createElement("table")
     private header: HTMLElement
     private body: HTMLElement
     public sortDir: SortDir = "desc"
     private logSearcher: LogSearcher
-    private rows: LogRow[] = []
 
     constructor() {
-        // this.root = document.createElement('table')
-        this.header = document.createElement('tr')
-        this.header.innerHTML = `<th>Timestamp</th><th>Level</th><th>message</th>`
+        this.root = document.createElement('div')
+
+        this.header = document.createElement('head')
+        this.header.innerHTML = `<tr><th>Timestamp</th><th>Level</th><th>message</th></tr>`
         this.table.appendChild(this.header)
         this.body = document.createElement('tbody') 
         this.table.appendChild(this.body)
+
 
         const virtual = new VirtualTable({
             rowCount: 0,
@@ -40,7 +41,7 @@ export class Logtable {
             drawRow: (start, end) => {
                 let body = ""
                 for (let i = start; i < end; i++) {
-                    const r = this.rows[i]
+                    const r = this.logSearcher.logEntries[i]
                     body += `
                     <tr style="height: 35px">
                         <td>${r.timestamp}</td>
@@ -53,27 +54,30 @@ export class Logtable {
                 return this.table
             }
         })
-        this.root = virtual.root
 
         this.logSearcher = new LogSearcher({
-            onNewLoglines: (rows) => {
-                this.rows.push(...rows)
-                this.rows.sort((a, b) => {
-                    if (this.sortDir === "asc") {
-                        return a.timestamp.localeCompare(b.timestamp)
-                    }
-                    else {
-                        return b.timestamp.localeCompare(a.timestamp)
-                    }
-                })
-                virtual.setRowCount(this.rows.length)
+            onNewLoglines: () => {
+                // this.rows.push(...rows)
+                // this.rows.sort((a, b) => {
+                //     if (this.sortDir === "asc") {
+                //         return a.timestamp.localeCompare(b.timestamp)
+                //     }
+                //     else {
+                //         return b.timestamp.localeCompare(a.timestamp)
+                //     }
+                // })
+                virtual.setRowCount(this.logSearcher.logEntries.length)
             },
             onClear: () => {
                 this.body.innerHTML
             }
         })
 
-        this.root = virtual.root
+        const searchOptions = new LogSearchOptions({
+            searcher: this.logSearcher
+        })
+        this.root.appendChild(searchOptions.root)
+        this.root.appendChild(virtual.root)
 
         this.logSearcher.search({
             count: 100000
@@ -105,18 +109,26 @@ export class Logtable {
     }
 }
 
-export class LogSearch {
+export class LogSearchOptions {
     public root: HTMLElement
     private input: HTMLInputElement
     private button: HTMLButtonElement
     private startDate: HTMLInputElement
     private endDate: HTMLInputElement
+    private searcher: LogSearcher
 
-    constructor() {
+    constructor(args: {
+        searcher: LogSearcher
+    }) {
         this.root = document.createElement('div')
         this.input = document.createElement('input')
         this.input.type = "text"
         this.button = document.createElement('button')
+        this.button.onclick = () => {
+            this.searcher.search({
+                search: [this.input.value],
+            })
+        }
         this.button.innerHTML = "Search"
         this.root.appendChild(this.input)
         this.root.appendChild(this.button)
@@ -126,6 +138,7 @@ export class LogSearch {
         this.endDate = document.createElement('input')
         this.endDate.type = "date"
         this.root.appendChild(this.endDate)
+        this.searcher = args.searcher
     }
 
     public getQuery(): string {
@@ -136,11 +149,12 @@ export class LogSearch {
 export class LogSearcher {
     private logEventSource?: EventSource
     private onClear: () => void
-    private onNewLoglines: (rows: LogRow[]) => void
+    private onNewLoglines: () => void
+    public logEntries: LogEntry[] = []
 
     public constructor(args: {
         onClear: () => void
-        onNewLoglines: (rows: LogRow[]) => void
+        onNewLoglines: () => void
     }) {
         this.onClear = args.onClear
         this.onNewLoglines = args.onNewLoglines
@@ -153,6 +167,7 @@ export class LogSearcher {
     public search(args: {
         startDate?: string
         endDate?: string
+        order?: "asc" | "desc"
         search?: string[]
         count?: number
     }) {
@@ -166,6 +181,10 @@ export class LogSearcher {
         if (args.search) {
             for (const s of args.search) {
                 query.append("search", s)
+
+                this.logEntries = this.logEntries.filter((l) => {
+                    return l.msg.includes(s)
+                })
             }
         }
         if (args.count) {
@@ -174,9 +193,16 @@ export class LogSearcher {
 
         const url = new URL("http://localhost:3000/api/logs")
         url.search = query.toString()
+        this.onNewLoglines()
 
         fetch(url.toString()).then((res) => res.json()).then((data) => {
-            this.onNewLoglines(data)
+            this.logEntries.push(...data)
+            if (args.order === "asc") {
+                this.logEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+            } else {
+                this.logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+            }
+            this.onNewLoglines()
         })
     }
 
@@ -189,7 +215,7 @@ export class LogSearcher {
         this.logEventSource = new EventSource(url)
         this.logEventSource.onmessage = (e) => {
             console.log("Got message", e.data)
-            this.onNewLoglines([JSON.parse(e.data)])
+            this.logEntries.push(JSON.parse(e.data))
         }
         this.logEventSource.onerror = (err) => {
             console.error("error", err)

@@ -1,8 +1,8 @@
-import { LogRow, LogSearch, Logtable } from "./logs";
+import { LogEntry, LogSearchOptions, Logtable } from "./logs";
 import { VirtualTable } from "./virtual-table";
 
-const generateFakeLogRows = (n: number): LogRow[] => {
-	const rows: LogRow[] = []
+const generateFakeLogRows = (n: number): LogEntry[] => {
+	const rows: LogEntry[] = []
 	for (let i = 0; i < n; i++) {
 		rows.push({
 			timestamp: new Date().toISOString(),
@@ -20,9 +20,7 @@ window.onload = () => {
 		throw new Error("No body element found")
 	}
 	
-	const logSearch = new LogSearch()
 	const t = new Logtable()
-	body.appendChild(logSearch.root)
 	body.appendChild(t.root)
 
 	// const tableElement = document.createElement("table")
