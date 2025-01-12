@@ -1,3 +1,4 @@
+import { VirtualTable } from "./virtual-table"
 
 export type LogLevel = "Debug" | "Info" | "Warn" | "Error"
 export const logColors = {
@@ -9,7 +10,7 @@ export const logColors = {
 
 export type LogRow = {
     timestamp: string
-	level: "debug" | "info" | "warn" | "error"
+	level: LogLevel
     props: string[]
     msg: string
 }
@@ -18,46 +19,86 @@ export type SortDir = "asc" | "desc";
 
 export class Logtable {
 	public root: HTMLElement 
+    private table = document.createElement("table")
     private header: HTMLElement
     private body: HTMLElement
     public sortDir: SortDir = "desc"
     private logSearcher: LogSearcher
+    private rows: LogRow[] = []
 
     constructor() {
-        this.root = document.createElement('table')
+        // this.root = document.createElement('table')
         this.header = document.createElement('tr')
         this.header.innerHTML = `<th>Timestamp</th><th>Level</th><th>message</th>`
-        this.root.appendChild(this.header)
+        this.table.appendChild(this.header)
         this.body = document.createElement('tbody') 
-        this.root.appendChild(this.body)
+        this.table.appendChild(this.body)
+
+        const virtual = new VirtualTable({
+            rowCount: 0,
+            rowHeight: 20, 
+            drawRow: (start, end) => {
+                let body = ""
+                for (let i = start; i < end; i++) {
+                    const r = this.rows[i]
+                    body += `
+                    <tr>
+                        <td>${r.timestamp}</td>
+                        <td style="color: ${logColors[r.level]}">${r.level}</td>
+                        <td>${i} - ${r.msg}</td>
+                    </tr>
+                    `
+                }
+                this.body.innerHTML = body
+                return this.table
+            }
+        })
+        this.root = virtual.root
 
         this.logSearcher = new LogSearcher({
             onNewLoglines: (rows) => {
-                this.addRows(rows)
+                this.rows.push(...rows)
+                this.rows.sort((a, b) => {
+                    if (this.sortDir === "asc") {
+                        return a.timestamp.localeCompare(b.timestamp)
+                    }
+                    else {
+                        return b.timestamp.localeCompare(a.timestamp)
+                    }
+                })
+                virtual.setRowCount(this.rows.length)
             },
             onClear: () => {
                 this.body.innerHTML
             }
         })
 
-        this.logSearcher.search({})
+        this.root = virtual.root
+
+        this.logSearcher.search({
+            count: 100000
+        })
         this.logSearcher.stream()
+
+        window.addEventListener("scroll", (e) => {
+            console.log("scroll", e)
+        })
     }
 
-    public addRows(rows: LogRow[]) {
-        console.log("Adding rows", rows)
-        for (const r of rows) {
-            const row = document.createElement('tr')
-            row.innerHTML = `<td>${r.timestamp}</td><td style="color: ${logColors[r.level]}">${r.level}</td><td>${r.msg}</td>`
+    // public addRows(rows: LogRow[]) {
+    //     console.log("Adding rows", rows)
+    //     for (const r of rows) {
+    //         const row = document.createElement('tr')
+    //         row.innerHTML = `<td>${r.timestamp}</td><td style="color: ${logColors[r.level]}">${r.level}</td><td>${r.msg}</td>`
 
-            if (this.sortDir === "asc") {
-                this.body.prepend(row)
-            }
-            else {
-                this.body.appendChild(row)
-            }
-        }
-    }
+    //         if (this.sortDir === "asc") {
+    //             this.body.prepend(row)
+    //         }
+    //         else {
+    //             this.body.appendChild(row)
+    //         }
+    //     }
+    // }
 
     public sort(dir: SortDir) {
         this.sortDir = dir

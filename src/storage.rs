@@ -52,7 +52,7 @@ pub async fn search_logs(query: LogsQuery) -> anyhow::Result<Vec<LogEntry>> {
 	let mut logs: Vec<LogEntry> = Vec::new();
 	let mut d = start;
 	let mut parser = LogEntryParser::new();
-	while logs.len() < count {
+	'main: while logs.len() < count {
 		let path = logspath.join(format!("{}/{}/{}/{}-{}-{}.log", d.year(), d.month(), d.day(), d.year(), d.month(), d.day()));
 			if path.exists() {
 				let file = OpenOptions::new().read(true).open(&path).await?;
@@ -67,6 +67,9 @@ pub async fn search_logs(query: LogsQuery) -> anyhow::Result<Vec<LogEntry>> {
 					for entry in parser.log_entries.drain(..) {
 						if query.matches(&entry) {
 							logs.push(entry);
+							if logs.len() >= count {
+								break 'main;
+							}
 						}
 					}
 				}

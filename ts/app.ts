@@ -1,4 +1,5 @@
 import { LogRow, LogSearch, Logtable } from "./logs";
+import { VirtualTable } from "./virtual-table";
 
 const generateFakeLogRows = (n: number): LogRow[] => {
 	const rows: LogRow[] = []
@@ -23,4 +24,40 @@ window.onload = () => {
 	const t = new Logtable()
 	body.appendChild(logSearch.root)
 	body.appendChild(t.root)
+
+	// const tableElement = document.createElement("table")
+	// const header = document.createElement("head")
+	// header.innerHTML = `
+	// <tr>
+	// 	<th>Timestamp</th>
+	// 	<th>Tags</th>
+	// 	<th>Message</th>
+	// </tr>
+	// `
+	// tableElement.appendChild(header)
+	// const tableBody = document.createElement("tbody")
+	// tableElement.appendChild(tableBody)
+
+	// const table = new VirtualTable({
+	// 	rowCount: 100000,
+	// 	rowHeight: 20,
+	// 	drawRow: (start, end) => {
+	// 		console.log("Drawing rows", start, end)
+
+	// 		let body = ""
+	// 		for (let i = start; i < end; i++) {
+	// 			body += `
+	// 			<tr>
+	// 				<td>${new Date().toISOString()}</td>
+	// 				<td>APP, INFO</td>
+	// 				<td>[${i}] line</td>
+	// 			</tr>
+	// 			`
+	// 		}
+
+	// 		tableBody.innerHTML = body
+	// 		return tableElement
+	// 	}
+	// })
+	// body.appendChild(table.root)
 }

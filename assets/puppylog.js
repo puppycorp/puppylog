@@ -1,3 +1,59 @@
+// ts/virtual-table.ts
+class VirtualTable {
+  root;
+  container;
+  table;
+  rowHeight;
+  rowCount;
+  bufferSize = 10;
+  drawRow;
+  constructor(args) {
+    this.drawRow = args.drawRow;
+    this.rowHeight = args.rowHeight;
+    this.rowCount = args.rowCount;
+    this.root = document.createElement("div");
+    this.root.style.height = "500px";
+    this.root.style.width = "800px";
+    this.root.style.overflow = "scroll";
+    this.container = document.createElement("div");
+    this.container.style.overflow = "scroll";
+    this.container.style.position = "relative";
+    this.root.appendChild(this.container);
+    this.container.style.height = `${args.rowHeight * args.rowCount}px`;
+    this.container.style.width = "100%";
+    this.container.style.border = "1px solid black";
+    this.container.innerHTML = "Virtual Table";
+    this.table = document.createElement("table");
+    this.container.appendChild(this.table);
+    this.root.addEventListener("scroll", (e) => {
+      this.onScroll(e);
+    });
+    this.updateVisibleRows();
+  }
+  onScroll(e) {
+    requestAnimationFrame(() => this.updateVisibleRows());
+  }
+  updateVisibleRows() {
+    const scrollTop = this.root.scrollTop;
+    const containerHeight = this.root.clientHeight;
+    console.log("containerHeight", containerHeight);
+    console.log("o", this.root.scrollHeight);
+    const startIndex = Math.max(0, Math.floor(scrollTop / this.rowHeight) - this.bufferSize);
+    const endIndex = Math.min(this.rowCount, Math.ceil((scrollTop + containerHeight) / this.rowHeight) + this.bufferSize);
+    console.log("Visible range", startIndex, endIndex);
+    const content = this.drawRow(startIndex, endIndex);
+    content.style.position = "absolute";
+    content.style.top = `${startIndex * this.rowHeight}px`;
+    this.container.innerHTML = "";
+    this.container.appendChild(content);
+  }
+  setRowCount(rowCount) {
+    this.rowCount = rowCount;
+    this.container.style.height = `${this.rowHeight * rowCount}px`;
+    this.updateVisibleRows();
+  }
+}
+
 // ts/logs.ts
 var logColors = {
   Debug: "blue",
@@ -8,39 +64,62 @@ var logColors = {
 
 class Logtable {
   root;
+  table = document.createElement("table");
   header;
   body;
   sortDir = "desc";
   logSearcher;
+  rows = [];
   constructor() {
-    this.root = document.createElement("table");
     this.header = document.createElement("tr");
     this.header.innerHTML = `<th>Timestamp</th><th>Level</th><th>message</th>`;
-    this.root.appendChild(this.header);
+    this.table.appendChild(this.header);
     this.body = document.createElement("tbody");
-    this.root.appendChild(this.body);
+    this.table.appendChild(this.body);
+    const virtual = new VirtualTable({
+      rowCount: 0,
+      rowHeight: 20,
+      drawRow: (start, end) => {
+        let body = "";
+        for (let i = start;i < end; i++) {
+          const r = this.rows[i];
+          body += `
+                    <tr>
+                        <td>${r.timestamp}</td>
+                        <td style="color: ${logColors[r.level]}">${r.level}</td>
+                        <td>${i} - ${r.msg}</td>
+                    </tr>
+                    `;
+        }
+        this.body.innerHTML = body;
+        return this.table;
+      }
+    });
+    this.root = virtual.root;
     this.logSearcher = new LogSearcher({
       onNewLoglines: (rows) => {
-        this.addRows(rows);
+        this.rows.push(...rows);
+        this.rows.sort((a, b) => {
+          if (this.sortDir === "asc") {
+            return a.timestamp.localeCompare(b.timestamp);
+          } else {
+            return b.timestamp.localeCompare(a.timestamp);
+          }
+        });
+        virtual.setRowCount(this.rows.length);
       },
       onClear: () => {
         this.body.innerHTML;
       }
     });
-    this.logSearcher.search({});
+    this.root = virtual.root;
+    this.logSearcher.search({
+      count: 1e5
+    });
     this.logSearcher.stream();
-  }
-  addRows(rows) {
-    console.log("Adding rows", rows);
-    for (const r of rows) {
-      const row = document.createElement("tr");
-      row.innerHTML = `<td>${r.timestamp}</td><td style="color: ${logColors[r.level]}">${r.level}</td><td>${r.msg}</td>`;
-      if (this.sortDir === "asc") {
-        this.body.prepend(row);
-      } else {
-        this.body.appendChild(row);
-      }
-    }
+    window.addEventListener("scroll", (e) => {
+      console.log("scroll", e);
+    });
   }
   sort(dir) {
     this.sortDir = dir;

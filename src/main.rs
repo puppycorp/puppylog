@@ -141,13 +141,17 @@ async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
     let mut stream: BodyDataStream = body.into_data_stream();
     let mut parser = LogEntryParser::new();
     let mut storage = Storage::new();
+    let mut i = 0;
 	
     while let Some(chunk_result) = stream.next().await {
         match chunk_result {
             Ok(chunk) => {
                 parser.parse(&chunk);
                 for entry in parser.log_entries.drain(..) {
-                    log::info!("log entry: {:?}", entry);
+                    if i % 1000 == 0 {
+                        log::info!("[{}] parsed", i);
+                    }
+                    i += 1;
                     if let Err(err) = storage.save_log_entry(&entry).await {
                         log::error!("Failed to save log entry: {}", err);
                         return;
@@ -178,7 +182,7 @@ async fn get_logs(
         props: params.props.unwrap_or_default(),
         search: params.search
     }).await.unwrap();
-    log::info!("log_entries: {:?}", log_entries);
+    // log::info!("log_entries: {:?}", log_entries);
     Json(serde_json::to_value(&log_entries).unwrap())
     // let logs_path = log_path();
     // let mut years = get_years();
