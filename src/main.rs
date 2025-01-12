@@ -4,6 +4,7 @@ use axum::{
     body::{Body, BodyDataStream}, extract::{DefaultBodyLimit, Path, Query, State}, http::StatusCode, response::{sse::{Event, KeepAlive}, Sse}, routing::{get, post}, Json, Router
 };
 use chrono::{DateTime, Datelike, Utc};
+use config::log_path;
 use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
@@ -11,6 +12,7 @@ use puppylog::{LogEntry, LogEntryParser, LogLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string, Value};
 use simple_logger::SimpleLogger;
+use storage::Storage;
 use tokio::{fs, io::AsyncReadExt, sync::mpsc};
 use tower_http::{cors::{AllowMethods, Any, CorsLayer}, decompression::{DecompressionLayer, RequestDecompressionLayer}};
 use types::{Context, LogsQuery, SubscribeReq};
@@ -22,6 +24,7 @@ mod picker;
 mod types;
 mod worker;
 mod subscriber;
+mod config;
 
 #[derive(Deserialize, Debug)]
 enum SortDir {
@@ -36,13 +39,6 @@ struct GetLogsQuery {
 	pub level: Option<LogLevel>,
 	pub props: Option<Vec<(String, String)>>,
 	pub search: Option<String>,
-}
-
-fn log_path() -> std::path::PathBuf {
-    match std::env::var("LOG_PATH") {
-        Ok(val) => std::path::Path::new(&val).to_owned(),
-        Err(_) => std::path::Path::new("./logs").to_owned()
-    }
 }
 
 fn get_years() -> Vec<u32> {
@@ -143,6 +139,8 @@ async fn root() -> &'static str {
 async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
     let mut stream: BodyDataStream = body.into_data_stream();
 	let mut buffer = Vec::new();
+
+    let mut storage = Storage::new();
 	
     while let Some(chunk_result) = stream.next().await {
         match chunk_result {
@@ -152,6 +150,10 @@ async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
 					let mut cursor = std::io::Cursor::new(&mut buffer);
 					while let Ok(entry) = LogEntry::deserialize(&mut cursor) {
 						log::info!("log entry: {:?}", entry);
+                        if let Err(err) = storage.save_log_entry(&entry).await {
+                            log::error!("Failed to save log entry: {}", err);
+                            return;
+                        }
 						if let Err(e) = ctx.publisher.send(entry).await {
 							log::error!("Failed to publish log entry: {}", e);
 							break;

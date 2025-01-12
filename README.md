@@ -4,7 +4,7 @@
 
 ### Logfile
 
-Logfile stores logs in binary structure format. It starts with header followed by loglines. Logfiles are stored in tar.gz format and in folder `{LOGPATH}/year/month/day/yyyy-mm-dd-deviceid.tar.gz` in the server.
+Logfile stores logs in binary structure format. It starts with header followed by loglines. Logfiles are stored in tar.gz format and in folder `{LOGPATH}/year/month/day/yyyy-mm-dd.tar.gz` in the server.
 
 **Header**
 | Field         | Size | Description                    |
