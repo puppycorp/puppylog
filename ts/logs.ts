@@ -36,13 +36,13 @@ export class Logtable {
 
         const virtual = new VirtualTable({
             rowCount: 0,
-            rowHeight: 20, 
+            rowHeight: 35, 
             drawRow: (start, end) => {
                 let body = ""
                 for (let i = start; i < end; i++) {
                     const r = this.rows[i]
                     body += `
-                    <tr>
+                    <tr style="height: 35px">
                         <td>${r.timestamp}</td>
                         <td style="color: ${logColors[r.level]}">${r.level}</td>
                         <td>${i} - ${r.msg}</td>

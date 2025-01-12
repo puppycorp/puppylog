@@ -16,7 +16,6 @@ class VirtualTable {
     this.root.style.width = "800px";
     this.root.style.overflow = "scroll";
     this.container = document.createElement("div");
-    this.container.style.overflow = "scroll";
     this.container.style.position = "relative";
     this.root.appendChild(this.container);
     this.container.style.height = `${args.rowHeight * args.rowCount}px`;
@@ -49,7 +48,7 @@ class VirtualTable {
   }
   setRowCount(rowCount) {
     this.rowCount = rowCount;
-    this.container.style.height = `${this.rowHeight * rowCount}px`;
+    this.container.style.height = `${this.rowHeight * rowCount + this.rowHeight * 3}px`;
     this.updateVisibleRows();
   }
 }
@@ -78,13 +77,13 @@ class Logtable {
     this.table.appendChild(this.body);
     const virtual = new VirtualTable({
       rowCount: 0,
-      rowHeight: 20,
+      rowHeight: 35,
       drawRow: (start, end) => {
         let body = "";
         for (let i = start;i < end; i++) {
           const r = this.rows[i];
           body += `
-                    <tr>
+                    <tr style="height: 35px">
                         <td>${r.timestamp}</td>
                         <td style="color: ${logColors[r.level]}">${r.level}</td>
                         <td>${i} - ${r.msg}</td>

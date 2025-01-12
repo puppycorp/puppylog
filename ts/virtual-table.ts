@@ -21,7 +21,7 @@ export class VirtualTable {
         this.root.style.width = "800px"
         this.root.style.overflow = "scroll"
         this.container = document.createElement("div")
-        this.container.style.overflow = "scroll"
+        // this.container.style.overflow = "scroll"
         this.container.style.position = "relative"
         this.root.appendChild(this.container)
         this.container.style.height = `${args.rowHeight * args.rowCount}px`
@@ -65,7 +65,7 @@ export class VirtualTable {
 
     public setRowCount(rowCount: number) {
         this.rowCount = rowCount;
-        this.container.style.height = `${this.rowHeight * rowCount}px`;
+        this.container.style.height = `${this.rowHeight * rowCount + this.rowHeight * 3}px`;
         this.updateVisibleRows();
     }
 }
