@@ -4,6 +4,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Timelike, Utc};
 use futures::Stream;
 use futures_util::StreamExt;
+use puppylog::LogEntry;
 
 #[derive(Debug, serde::Serialize)]
 pub struct Logline {

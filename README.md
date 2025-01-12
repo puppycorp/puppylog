@@ -52,14 +52,15 @@ Get logs
 
 #### Query
 
-| Field     | DataType | Description                       |
-| --------- | -------- | --------------------------------- |
-| start     | DateTime | Start time for logs               |
-| end       | DateTime | End time for logs                 |
-| order     | int      | Order of the logs                 |
-| loglevel  | enum[]   | Debug, Info, Warning, Error       |
-| props	 	| string[] | Properties of the logentry        |
-| search    | string[] | Message payload of the logmessage |
+| Field     | DataType | Description                           |
+| --------- | -------- | --------------------------------------|
+| start     | DateTime | Start time for logs                   |
+| end       | DateTime | End time for logs                     |
+| order     | int      | Order of the logs                     |
+| count     | int      | Number of logs to return (default 50) |
+| loglevel  | enum[]   | Debug, Info, Warning, Error           |
+| props	 	| string[] | Properties of the logentry            |
+| search    | string[] | Message payload of the logmessage     |
 
 #### Response
 
@@ -83,9 +84,7 @@ Get logs
 | Field     | DataType | Description                       |
 | --------- | -------- | --------------------------------- |
 | loglevel  | enum[]   | Debug, Info, Warning, Error       |
-| project   | int[]    | Project identifier                |
-| env       | int[]    | env type prod, dev ....           |
-| device    | int[]    | Id of the device                  |
+| props	 	| string[] | Properties of the logentry        |
 | search    | string[] | Message payload of the logmessage |
 
 #### Response

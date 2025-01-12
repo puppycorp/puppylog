@@ -12,7 +12,7 @@ use puppylog::{LogEntry, LogEntryParser, LogLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string, Value};
 use simple_logger::SimpleLogger;
-use storage::Storage;
+use storage::{search_logs, Storage};
 use tokio::{fs, io::AsyncReadExt, sync::mpsc};
 use tower_http::{cors::{AllowMethods, Any, CorsLayer}, decompression::{DecompressionLayer, RequestDecompressionLayer}};
 use types::{Context, LogsQuery, SubscribeReq};
@@ -37,6 +37,7 @@ struct GetLogsQuery {
 	pub start: Option<DateTime<Utc>>,
 	pub end: Option<DateTime<Utc>>,
 	pub level: Option<LogLevel>,
+    pub count: Option<usize>,
 	pub props: Option<Vec<(String, String)>>,
 	pub search: Option<String>,
 }
@@ -138,30 +139,23 @@ async fn root() -> &'static str {
 
 async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
     let mut stream: BodyDataStream = body.into_data_stream();
-	let mut buffer = Vec::new();
-
+    let mut parser = LogEntryParser::new();
     let mut storage = Storage::new();
 	
     while let Some(chunk_result) = stream.next().await {
         match chunk_result {
             Ok(chunk) => {
-                buffer.extend_from_slice(&chunk);
-				let offset = {
-					let mut cursor = std::io::Cursor::new(&mut buffer);
-					while let Ok(entry) = LogEntry::deserialize(&mut cursor) {
-						log::info!("log entry: {:?}", entry);
-                        if let Err(err) = storage.save_log_entry(&entry).await {
-                            log::error!("Failed to save log entry: {}", err);
-                            return;
-                        }
-						if let Err(e) = ctx.publisher.send(entry).await {
-							log::error!("Failed to publish log entry: {}", e);
-							break;
-						}
-					}
-					cursor.position() as usize
-				};
-				buffer.rotate_left(offset);
+                parser.parse(&chunk);
+                for entry in parser.log_entries.drain(..) {
+                    log::info!("log entry: {:?}", entry);
+                    if let Err(err) = storage.save_log_entry(&entry).await {
+                        log::error!("Failed to save log entry: {}", err);
+                        return;
+                    }
+                    if let Err(e) = ctx.publisher.send(entry).await {
+                        log::error!("Failed to publish log entry: {}", e);
+                    }
+                }
             }
             Err(e) => {
                 log::error!("Error receiving chunk: {}", e);
@@ -175,7 +169,17 @@ async fn get_logs(
 	State(ctx): State<Arc<Context>>, 
 	Query(params): Query<GetLogsQuery>
 ) -> Json<Value> {
-	todo!()
+    log::info!("get_logs {:?}", params);
+    let log_entries = search_logs(LogsQuery { 
+        start: params.start,
+        end: params.end,
+        level: params.level,
+        count: params.count,
+        props: params.props.unwrap_or_default(),
+        search: params.search
+    }).await.unwrap();
+    log::info!("log_entries: {:?}", log_entries);
+    Json(serde_json::to_value(&log_entries).unwrap())
     // let logs_path = log_path();
     // let mut years = get_years();
 
@@ -269,6 +273,7 @@ async fn stream_logs(
         end: params.end,
         level: params.level,
         search: params.search,
+        count: Some(50),
         props: params.props.unwrap_or_default()
     }).await;
 

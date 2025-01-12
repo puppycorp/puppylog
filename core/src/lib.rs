@@ -104,33 +104,30 @@ impl LogEntry {
 }
 
 pub struct LogEntryParser {
-    buffer: Vec<u8>
+    buffer: Vec<u8>,
+    pub log_entries: Vec<LogEntry>,
 }
 
 impl LogEntryParser {
-	pub fn new() -> Self {
-		LogEntryParser {
-			buffer: vec![]
-		}
-	}
+    pub fn new() -> Self {
+        LogEntryParser {
+            buffer: Vec::new(),
+            log_entries: Vec::new(),
+        }
+    }
 
-	pub fn parse(&mut self, data: &[u8], mut on_entry: impl FnMut(LogEntry)) {
-		self.buffer.extend_from_slice(data);
-		loop {
-			let mut cursor = io::Cursor::new(&self.buffer);
-			match LogEntry::deserialize(&mut cursor) {
-				Ok(entry) => {
-					let pos = cursor.position() as usize;
-					self.buffer.drain(..pos);
-					on_entry(entry);
-				}
-				Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-				Err(e) => panic!("Error parsing log entry: {:?}", e)
-			}
-		}
-	}
+    pub fn parse(&mut self, data: &[u8]) {
+        self.buffer.extend_from_slice(data);
+        let offset = {
+            let mut cursor = std::io::Cursor::new(&mut self.buffer);
+            while let Ok(entry) = LogEntry::deserialize(&mut cursor) {
+                self.log_entries.push(entry);
+            }
+            cursor.position() as usize
+        };
+        self.buffer.rotate_left(offset);
+    }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -35,6 +35,7 @@ pub struct LogsQuery {
 	pub start: Option<DateTime<Utc>>,
 	pub end: Option<DateTime<Utc>>,
 	pub level: Option<LogLevel>,
+	pub count: Option<usize>,
 	pub props: Vec<(String, String)>,
 	pub search: Option<String>,
 }

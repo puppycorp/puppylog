@@ -31,12 +31,6 @@ export class Logtable {
         this.body = document.createElement('tbody') 
         this.root.appendChild(this.body)
 
-        // fetch("http://localhost:3000/api/logs?count=10").then((res) => res.json()).then((data) => {
-        //     this.addRows(data)
-        // })
-
-        
-
         this.logSearcher = new LogSearcher({
             onNewLoglines: (rows) => {
                 this.addRows(rows)
@@ -47,6 +41,7 @@ export class Logtable {
         })
 
         this.logSearcher.search({})
+        this.logSearcher.stream()
     }
 
     public addRows(rows: LogRow[]) {
@@ -110,10 +105,15 @@ export class LogSearcher {
         this.onNewLoglines = args.onNewLoglines
     }
 
+    public stream() {
+        this.createEventSource("http://localhost:3000/api/logs/stream")
+    }
+
     public search(args: {
         startDate?: string
         endDate?: string
         search?: string[]
+        count?: number
     }) {
         const query = new URLSearchParams()
         if (args.startDate) {
@@ -127,10 +127,16 @@ export class LogSearcher {
                 query.append("search", s)
             }
         }
+        if (args.count) {
+            query.append("count", args.count.toString())
+        }
 
-        const url = new URL("http://localhost:3000/api/logs/stream")
+        const url = new URL("http://localhost:3000/api/logs")
         url.search = query.toString()
-        this.createEventSource(url.toString())
+
+        fetch(url.toString()).then((res) => res.json()).then((data) => {
+            this.onNewLoglines(data)
+        })
     }
 
     private createEventSource(url: string) {

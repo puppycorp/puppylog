@@ -28,6 +28,7 @@ class Logtable {
       }
     });
     this.logSearcher.search({});
+    this.logSearcher.stream();
   }
   addRows(rows) {
     console.log("Adding rows", rows);
@@ -80,6 +81,9 @@ class LogSearcher {
     this.onClear = args.onClear;
     this.onNewLoglines = args.onNewLoglines;
   }
+  stream() {
+    this.createEventSource("http://localhost:3000/api/logs/stream");
+  }
   search(args) {
     const query = new URLSearchParams;
     if (args.startDate) {
@@ -93,9 +97,14 @@ class LogSearcher {
         query.append("search", s);
       }
     }
-    const url = new URL("http://localhost:3000/api/logs/stream");
+    if (args.count) {
+      query.append("count", args.count.toString());
+    }
+    const url = new URL("http://localhost:3000/api/logs");
     url.search = query.toString();
-    this.createEventSource(url.toString());
+    fetch(url.toString()).then((res) => res.json()).then((data) => {
+      this.onNewLoglines(data);
+    });
   }
   createEventSource(url) {
     if (this.logEventSource) {
