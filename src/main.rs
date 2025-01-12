@@ -42,61 +42,6 @@ struct GetLogsQuery {
 	pub search: Option<String>,
 }
 
-fn get_years() -> Vec<u32> {
-    let logs_path = log_path();
-    let mut years = read_dir(logs_path).unwrap();
-    let mut years_vec = Vec::new();
-    loop {
-        let year = match years.next() {
-            Some(year) => year.unwrap(),
-            None => break
-        };
-
-        let year = year.file_name().into_string().unwrap().parse::<u32>().unwrap();
-        years_vec.push(year);
-    }
-
-    years_vec
-}
-
-fn get_monts(year: u32) -> Vec<u32> {
-    let logs_path = log_path();
-    let mut months = read_dir(logs_path.join(year.to_string())).unwrap();
-    let mut months_vec = Vec::new();
-    loop {
-        let month = match months.next() {
-            Some(month) => month.unwrap(),
-            None => break
-        };
-
-        let month = month.file_name().into_string().unwrap().parse::<u32>().unwrap();
-        months_vec.push(month);
-    }
-
-    months_vec
-}
-
-fn get_days(year: u32, month: u32) -> Vec<u32> {
-    let logs_path = log_path();
-    let mut days = read_dir(logs_path.join(year.to_string()).join(month.to_string())).unwrap();
-    let mut days_vec = Vec::new();
-    loop {
-        let day = match days.next() {
-            Some(day) => day.unwrap(),
-            None => break
-        };
-        println!("{:?}", day);
-
-        let day = match day.file_name().into_string().unwrap().parse::<u32>() {
-            Ok(day) => day,
-            Err(_) => continue
-        };
-        days_vec.push(day);
-    }
-
-    days_vec
-}
-
 
 #[tokio::main]
 async fn main() {
