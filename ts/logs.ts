@@ -44,9 +44,9 @@ export class Logtable {
                     const r = this.logSearcher.logEntries[i]
                     body += `
                     <tr style="height: 35px">
-                        <td>${r.timestamp}</td>
+                        <td style="white-space: nowrap">${r.timestamp}</td>
                         <td style="color: ${logColors[r.level]}">${r.level}</td>
-                        <td>${i} - ${r.msg}</td>
+                        <td style="word-break: break-all">${r.msg}</td>
                     </tr>
                     `
                 }
@@ -161,7 +161,7 @@ export class LogSearcher {
     }
 
     public stream() {
-        this.createEventSource("http://localhost:3000/api/logs/stream")
+        this.createEventSource("http://localhost:3337/api/logs/stream")
     }
 
     public search(args: {
@@ -191,7 +191,7 @@ export class LogSearcher {
             query.append("count", args.count.toString())
         }
 
-        const url = new URL("http://localhost:3000/api/logs")
+        const url = new URL("http://localhost:3337/api/logs")
         url.search = query.toString()
         this.onNewLoglines()
 
