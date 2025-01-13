@@ -100,7 +100,7 @@ impl LogEntry {
 		let msg_len = reader.read_u32::<LittleEndian>()?;
 		let mut msg = vec![0; msg_len as usize];
 		reader.read_exact(&mut msg)?;
-		let msg = String::from_utf8(msg).unwrap();
+		let msg = String::from_utf8_lossy(&msg).to_string();
 		Ok(LogEntry {
 			timestamp,
 			level,
