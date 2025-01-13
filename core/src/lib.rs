@@ -1,5 +1,6 @@
 mod logfile;
 mod circle_buffer;
+mod chunk_reader;
 
 use std::io;
 use std::io::Cursor;
@@ -12,13 +13,16 @@ use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 use serde::Deserialize;
 use serde::Serialize;
+pub use circle_buffer::CircularBuffer;
+pub use chunk_reader::ChunckReader;
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
 pub enum LogLevel {
 	Debug,
 	Info,
 	Warn,
-	Error
+	Error,
+	Uknown
 }
 
 impl Into<u8> for &LogLevel {
@@ -28,6 +32,7 @@ impl Into<u8> for &LogLevel {
 			LogLevel::Info => 1,
 			LogLevel::Warn => 2,
 			LogLevel::Error => 3,
+			LogLevel::Uknown => 4
 		}
 	}
 }

@@ -1,14 +1,15 @@
-use std::{collections::HashMap, fs::read_dir, io::{Read, Write}, sync::Arc};
+use std::{collections::{HashMap, VecDeque}, fs::read_dir, io::{Read, Write}, process::Child, sync::Arc};
 
 use axum::{
     body::{Body, BodyDataStream}, extract::{DefaultBodyLimit, Path, Query, State}, http::StatusCode, response::{sse::{Event, KeepAlive}, Sse}, routing::{get, post}, Json, Router
 };
+use bytes::Bytes;
 use chrono::{DateTime, Datelike, Utc};
 use config::log_path;
 use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
-use puppylog::{LogEntry, LogEntryParser, LogLevel};
+use puppylog::{ChunckReader, CircularBuffer, LogEntry, LogEntryParser, LogLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string, Value};
 use simple_logger::SimpleLogger;
@@ -84,27 +85,37 @@ async fn root() -> &'static str {
 
 async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
     let mut stream: BodyDataStream = body.into_data_stream();
-    let mut parser = LogEntryParser::new();
     let mut storage = Storage::new();
     let mut i = 0;
+	//let mut buffer = CircularBuffer::new(30000);
+	let mut chunk_reader = ChunckReader::new();
 	
     while let Some(chunk_result) = stream.next().await {
         match chunk_result {
             Ok(chunk) => {
-                parser.parse(&chunk);
-                for entry in parser.log_entries.drain(..) {
-                    if i % 1000 == 0 {
-                        log::info!("[{}] parsed", i);
-                    }
-                    i += 1;
-                    if let Err(err) = storage.save_log_entry(&entry).await {
-                        log::error!("Failed to save log entry: {}", err);
-                        return;
-                    }
-                    if let Err(e) = ctx.publisher.send(entry).await {
-                        log::error!("Failed to publish log entry: {}", e);
-                    }
-                }
+				log::info!("Received chunk of size {}", chunk.len());
+				chunk_reader.add_chunk(chunk);
+				loop {
+					match LogEntry::deserialize(&mut chunk_reader) {
+						Ok(entry) => {
+							chunk_reader.commit();
+							log::info!("[{}] parsed", i);
+							i += 1;
+							if let Err(err) = storage.save_log_entry(&entry).await {
+								log::error!("Failed to save log entry: {}", err);
+								return;
+							}
+							if let Err(e) = ctx.publisher.send(entry).await {
+								log::error!("Failed to publish log entry: {}", e);
+							}
+						},
+						Err(err) => {
+							chunk_reader.rollback();
+							log::error!("{}", err);
+							break;
+						}
+					}
+				}
             }
             Err(e) => {
                 log::error!("Error receiving chunk: {}", e);

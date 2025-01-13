@@ -1,5 +1,7 @@
 use std::mem::MaybeUninit;
 
+use bytes::Bytes;
+
 #[derive(Debug)]
 pub enum BufferError {
 	Full,
@@ -62,7 +64,7 @@ impl<T> CircularBuffer<T> {
 	}
 
 	pub fn is_empty(&self) -> bool {
-        self.size == 0
+        self.new_size == 0
     }
 
     pub fn is_full(&self) -> bool {
@@ -91,9 +93,21 @@ impl std::io::Read for CircularBuffer<u8> {
 			buf[read] = self.pop().unwrap();
 			read += 1;
 		}
+		//log::info!("Read {} bytes", read);
 		Ok(read)
 	}	
 }
+
+// impl std::io::Read for CircularBuffer<Bytes> {
+// 	fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+// 		let mut read = 0;
+// 		while read < buf.len() && !self.is_empty() {
+// 			buf[read] = self.pop().unwrap();
+// 		}
+// 		log::info!("Read {} bytes", read);
+// 		Ok(read)
+// 	}	
+// }
 
 #[cfg(test)]
 mod tests {
