@@ -86,6 +86,9 @@ async fn get_days(year: u32, month: u32) -> Vec<u32> {
 
 pub async fn search_logs(query: LogsQuery) -> anyhow::Result<Vec<LogEntry>> {
 	let logspath = log_path();
+	if !logspath.exists() {
+		tokio::fs::create_dir_all(&logspath).await?;
+	}
 	let start = query.start.unwrap_or(Utc::now());
 	let count = query.count.unwrap_or(50);
 	let mut logs: Vec<LogEntry> = Vec::new();
