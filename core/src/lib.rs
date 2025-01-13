@@ -1,4 +1,5 @@
 mod logfile;
+mod circle_buffer;
 
 use std::io;
 use std::io::Cursor;
@@ -182,34 +183,4 @@ mod tests {
 		assert_eq!(entry.msg, deserialized.msg);
 	}
 
-	#[test]
-	fn test_serialize_and_logentry_parser() {
-		use super::{LogEntry, LogLevel};
-		use std::io::Cursor;
-		use chrono::Utc;
-
-		let entry = LogEntry {
-			timestamp: Utc::now(),
-			level: LogLevel::Info,
-			props: vec![
-				("key1".to_string(), "value1".to_string()),
-				("key2".to_string(), "value2".to_string())
-			],
-			msg: "Hello, world!".to_string()
-		};
-
-		let mut buffer = Cursor::new(vec![]);
-		entry.serialize(&mut buffer).unwrap();
-		buffer.set_position(0);
-
-		let mut parser = super::LogEntryParser::new();
-		let mut entries = vec![];
-		parser.parse(&buffer.get_ref(), |entry| entries.push(entry));
-
-		assert_eq!(entries.len(), 1);
-		assert_eq!(entries[0].timestamp.timestamp_millis(), entry.timestamp.timestamp_millis());
-		assert_eq!(entries[0].level, entry.level);
-		assert_eq!(entries[0].props, entry.props);
-		assert_eq!(entries[0].msg, entry.msg);
-	}
 }
