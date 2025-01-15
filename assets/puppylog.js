@@ -6,28 +6,42 @@ class VirtualTable {
   rowHeight;
   rowCount;
   bufferSize = 10;
+  needMoreRows = false;
   drawRow;
+  fetchMore;
   constructor(args) {
     this.drawRow = args.drawRow;
+    this.fetchMore = args.fetchMore;
     this.rowHeight = args.rowHeight;
     this.rowCount = args.rowCount;
     this.root = document.createElement("div");
     this.root.style.height = "800px";
     this.root.style.width = "100%";
-    this.root.style.overflow = "scroll";
+    this.root.style.overflow = "auto";
     this.container = document.createElement("div");
     this.container.style.position = "relative";
     this.root.appendChild(this.container);
     this.container.style.height = `${args.rowHeight * args.rowCount}px`;
     this.container.style.width = "100%";
-    this.container.style.border = "1px solid black";
+    this.container.style.marginBottom = "50px";
     this.container.innerHTML = "Virtual Table";
     this.table = document.createElement("table");
     this.container.appendChild(this.table);
     this.root.addEventListener("scroll", (e) => {
       this.onScroll(e);
     });
-    this.updateVisibleRows();
+    const handleObserver = (entries) => {
+      console.log("Intersection observer", entries);
+    };
+    const observer = new IntersectionObserver(handleObserver, {
+      root: this.root,
+      rootMargin: "0px",
+      threshold: 0.1
+    });
+    setTimeout(() => {
+      if (this.fetchMore)
+        this.fetchMore();
+    });
   }
   onScroll(e) {
     requestAnimationFrame(() => this.updateVisibleRows());
@@ -35,22 +49,32 @@ class VirtualTable {
   updateVisibleRows() {
     const scrollTop = this.root.scrollTop;
     const containerHeight = this.root.clientHeight;
-    console.log("containerHeight", containerHeight);
-    console.log("o", this.root.scrollHeight);
     const startIndex = Math.max(0, Math.floor(scrollTop / this.rowHeight) - this.bufferSize);
     const endIndex = Math.min(this.rowCount, Math.ceil((scrollTop + containerHeight) / this.rowHeight) + this.bufferSize);
-    console.log("Visible range", startIndex, endIndex);
     const content = this.drawRow(startIndex, endIndex);
     content.style.position = "absolute";
     content.style.top = `${startIndex * this.rowHeight}px`;
     this.container.innerHTML = "";
     this.container.appendChild(content);
+    const rootRect = this.root.getBoundingClientRect();
+    const containerRect = this.container.getBoundingClientRect();
+    const rootBottom = rootRect.bottom;
+    const containerBottom = containerRect.bottom;
+    if (containerBottom < rootBottom + 3 * this.rowHeight) {
+      console.log("need more rows");
+      if (this.needMoreRows)
+        return;
+      this.needMoreRows = true;
+      if (this.fetchMore)
+        this.fetchMore();
+    }
   }
   setRowCount(rowCount) {
     console.log("Setting row count", rowCount);
     this.rowCount = rowCount;
     this.container.style.height = `${this.rowHeight * rowCount + this.rowHeight * 3}px`;
     this.updateVisibleRows();
+    this.needMoreRows = false;
   }
 }
 
@@ -69,6 +93,7 @@ class Logtable {
   body;
   sortDir = "desc";
   logSearcher;
+  virtual;
   constructor() {
     this.root = document.createElement("div");
     this.header = document.createElement("head");
@@ -76,7 +101,12 @@ class Logtable {
     this.table.appendChild(this.header);
     this.body = document.createElement("tbody");
     this.table.appendChild(this.body);
-    const virtual = new VirtualTable({
+    this.logSearcher = new LogSearcher({
+      onNewLoglines: this.onNewLoglines.bind(this),
+      onClear: () => {
+      }
+    });
+    this.virtual = new VirtualTable({
       rowCount: 0,
       rowHeight: 35,
       drawRow: (start, end) => {
@@ -93,27 +123,29 @@ class Logtable {
         }
         this.body.innerHTML = body;
         return this.table;
-      }
-    });
-    this.logSearcher = new LogSearcher({
-      onNewLoglines: () => {
-        virtual.setRowCount(this.logSearcher.logEntries.length);
       },
-      onClear: () => {
-        this.body.innerHTML;
-      }
+      fetchMore: this.fetchMore.bind(this)
     });
     const searchOptions = new LogSearchOptions({
       searcher: this.logSearcher
     });
     this.root.appendChild(searchOptions.root);
-    this.root.appendChild(virtual.root);
-    this.logSearcher.search({
-      count: 1e5
-    });
+    this.root.appendChild(this.virtual.root);
     this.logSearcher.stream();
     window.addEventListener("scroll", (e) => {
       console.log("scroll", e);
+    });
+  }
+  onNewLoglines() {
+    console.log("onNewLoglines");
+    this.virtual.setRowCount(this.logSearcher.logEntries.length);
+  }
+  fetchMore() {
+    if (!this.logSearcher)
+      return;
+    console.log("fetchMore");
+    this.logSearcher.search({
+      startDate: this.logSearcher.lastDate
     });
   }
   sort(dir) {
@@ -156,9 +188,12 @@ class LogSearchOptions {
 
 class LogSearcher {
   logEventSource;
+  sortDir = "desc";
   onClear;
   onNewLoglines;
   logEntries = [];
+  firstDate;
+  lastDate;
   constructor(args) {
     this.onClear = args.onClear;
     this.onNewLoglines = args.onNewLoglines;
@@ -190,11 +225,7 @@ class LogSearcher {
     this.onNewLoglines();
     fetch(url.toString()).then((res) => res.json()).then((data) => {
       this.logEntries.push(...data);
-      if (args.order === "asc") {
-        this.logEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      } else {
-        this.logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      }
+      this.handleSort();
       this.onNewLoglines();
     });
   }
@@ -207,11 +238,21 @@ class LogSearcher {
     this.logEventSource.onmessage = (e) => {
       console.log("Got message", e.data);
       this.logEntries.push(JSON.parse(e.data));
+      this.handleSort;
+      this.onNewLoglines();
     };
     this.logEventSource.onerror = (err) => {
       console.error("error", err);
       this.logEventSource?.close();
     };
+  }
+  handleSort() {
+    if (this.sortDir === "asc")
+      this.logEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    else
+      this.logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    this.firstDate = this.logEntries[0].timestamp;
+    this.lastDate = this.logEntries[this.logEntries.length - 1].timestamp;
   }
 }
 

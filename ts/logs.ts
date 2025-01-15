@@ -24,6 +24,7 @@ export class Logtable {
     private body: HTMLElement
     public sortDir: SortDir = "desc"
     private logSearcher: LogSearcher
+	private virtual: VirtualTable
 
     constructor() {
         this.root = document.createElement('div')
@@ -34,8 +35,11 @@ export class Logtable {
         this.body = document.createElement('tbody') 
         this.table.appendChild(this.body)
 
-
-        const virtual = new VirtualTable({
+		this.logSearcher = new LogSearcher({
+            onNewLoglines: this.onNewLoglines.bind(this),
+            onClear: () => {}
+        })
+        this.virtual = new VirtualTable({
             rowCount: 0,
             rowHeight: 35, 
             drawRow: (start, end) => {
@@ -52,36 +56,18 @@ export class Logtable {
                 }
                 this.body.innerHTML = body
                 return this.table
-            }
-        })
-
-        this.logSearcher = new LogSearcher({
-            onNewLoglines: () => {
-                // this.rows.push(...rows)
-                // this.rows.sort((a, b) => {
-                //     if (this.sortDir === "asc") {
-                //         return a.timestamp.localeCompare(b.timestamp)
-                //     }
-                //     else {
-                //         return b.timestamp.localeCompare(a.timestamp)
-                //     }
-                // })
-                virtual.setRowCount(this.logSearcher.logEntries.length)
             },
-            onClear: () => {
-                this.body.innerHTML
-            }
+			fetchMore: this.fetchMore.bind(this)
         })
-
         const searchOptions = new LogSearchOptions({
             searcher: this.logSearcher
         })
         this.root.appendChild(searchOptions.root)
-        this.root.appendChild(virtual.root)
+        this.root.appendChild(this.virtual.root)
 
-        this.logSearcher.search({
-            count: 100000
-        })
+        // this.logSearcher.search({
+        //     count: 100
+        // })
         this.logSearcher.stream()
 
         window.addEventListener("scroll", (e) => {
@@ -89,20 +75,18 @@ export class Logtable {
         })
     }
 
-    // public addRows(rows: LogRow[]) {
-    //     console.log("Adding rows", rows)
-    //     for (const r of rows) {
-    //         const row = document.createElement('tr')
-    //         row.innerHTML = `<td>${r.timestamp}</td><td style="color: ${logColors[r.level]}">${r.level}</td><td>${r.msg}</td>`
+	private onNewLoglines() {
+		console.log("onNewLoglines")
+		this.virtual.setRowCount(this.logSearcher.logEntries.length)
+	}
 
-    //         if (this.sortDir === "asc") {
-    //             this.body.prepend(row)
-    //         }
-    //         else {
-    //             this.body.appendChild(row)
-    //         }
-    //     }
-    // }
+	private fetchMore() {
+		if (!this.logSearcher) return
+		console.log("fetchMore")
+		this.logSearcher.search({
+			startDate: this.logSearcher.lastDate
+		})
+	}
 
     public sort(dir: SortDir) {
         this.sortDir = dir
@@ -148,9 +132,12 @@ export class LogSearchOptions {
 
 export class LogSearcher {
     private logEventSource?: EventSource
+	private sortDir: SortDir = "desc"
     private onClear: () => void
     private onNewLoglines: () => void
     public logEntries: LogEntry[] = []
+	public firstDate?: string
+	public lastDate?: string
 
     public constructor(args: {
         onClear: () => void
@@ -167,7 +154,7 @@ export class LogSearcher {
     public search(args: {
         startDate?: string
         endDate?: string
-        order?: "asc" | "desc"
+        sort?: SortDir
         search?: string[]
         count?: number
     }) {
@@ -197,11 +184,7 @@ export class LogSearcher {
 
         fetch(url.toString()).then((res) => res.json()).then((data) => {
             this.logEntries.push(...data)
-            if (args.order === "asc") {
-                this.logEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-            } else {
-                this.logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-            }
+			this.handleSort()
             this.onNewLoglines()
         })
     }
@@ -216,10 +199,19 @@ export class LogSearcher {
         this.logEventSource.onmessage = (e) => {
             console.log("Got message", e.data)
             this.logEntries.push(JSON.parse(e.data))
+			this.handleSort
+			this.onNewLoglines()
         }
         this.logEventSource.onerror = (err) => {
             console.error("error", err)
             this.logEventSource?.close()
         }
     }
+
+	private handleSort() {
+		if (this.sortDir === "asc") this.logEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+		else this.logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+		this.firstDate = this.logEntries[0].timestamp
+		this.lastDate = this.logEntries[this.logEntries.length - 1].timestamp
+	}
 }
