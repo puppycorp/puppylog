@@ -30,6 +30,7 @@ export class VirtualTable {
         this.root.appendChild(this.container)
         this.container.style.height = `${args.rowHeight * args.rowCount}px`
         this.container.style.width = "100%"
+		this.container.style.marginTop = "50px"
 		this.container.style.marginBottom = "50px"
         //this.container.style.border = "1px solid black"
         this.container.innerHTML = "Virtual Table"
@@ -88,12 +89,14 @@ export class VirtualTable {
 		const rootBottom = rootRect.bottom
 		const containerBottom = containerRect.bottom
 
-		if (containerBottom < rootBottom + 3*this.rowHeight) {
-			console.log("need more rows")
-			if (this.needMoreRows) return
-			this.needMoreRows = true
-			if (this.fetchMore) this.fetchMore()
-		}
+		requestAnimationFrame(() => {
+			if (containerBottom < rootBottom + 3*this.rowHeight) {
+				console.log("need more rows")
+				if (this.needMoreRows) return
+				this.needMoreRows = true
+				if (this.fetchMore) this.fetchMore()
+			}
+		})
     }
 
     public setRowCount(rowCount: number) {

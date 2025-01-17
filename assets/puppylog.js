@@ -23,6 +23,7 @@ class VirtualTable {
     this.root.appendChild(this.container);
     this.container.style.height = `${args.rowHeight * args.rowCount}px`;
     this.container.style.width = "100%";
+    this.container.style.marginTop = "50px";
     this.container.style.marginBottom = "50px";
     this.container.innerHTML = "Virtual Table";
     this.table = document.createElement("table");
@@ -60,14 +61,16 @@ class VirtualTable {
     const containerRect = this.container.getBoundingClientRect();
     const rootBottom = rootRect.bottom;
     const containerBottom = containerRect.bottom;
-    if (containerBottom < rootBottom + 3 * this.rowHeight) {
-      console.log("need more rows");
-      if (this.needMoreRows)
-        return;
-      this.needMoreRows = true;
-      if (this.fetchMore)
-        this.fetchMore();
-    }
+    requestAnimationFrame(() => {
+      if (containerBottom < rootBottom + 3 * this.rowHeight) {
+        console.log("need more rows");
+        if (this.needMoreRows)
+          return;
+        this.needMoreRows = true;
+        if (this.fetchMore)
+          this.fetchMore();
+      }
+    });
   }
   setRowCount(rowCount) {
     console.log("Setting row count", rowCount);
@@ -97,7 +100,7 @@ class Logtable {
   constructor() {
     this.root = document.createElement("div");
     this.header = document.createElement("head");
-    this.header.innerHTML = `<tr><th>Timestamp</th><th>Level</th><th>message</th></tr>`;
+    this.header.innerHTML = `<tr><th>Timestamp</th><th>Level</th><th>Props</th><th>Message</th></tr>`;
     this.table.appendChild(this.header);
     this.body = document.createElement("tbody");
     this.table.appendChild(this.body);
@@ -117,6 +120,7 @@ class Logtable {
                     <tr style="height: 35px">
                         <td style="white-space: nowrap">${r.timestamp}</td>
                         <td style="color: ${logColors[r.level]}">${r.level}</td>
+						<td>${r.props.map((p) => p.join("=")).join(", ")}</td>
                         <td style="word-break: break-all">${r.msg}</td>
                     </tr>
                     `;
@@ -157,13 +161,24 @@ class LogSearchOptions {
   root;
   input;
   button;
-  startDate;
-  endDate;
   searcher;
   constructor(args) {
     this.root = document.createElement("div");
-    this.input = document.createElement("input");
-    this.input.type = "text";
+    this.root.style.display = "flex";
+    this.root.style.gap = "10px";
+    this.input = document.createElement("textarea");
+    this.input.rows = 4;
+    this.input.style.width = "400px";
+    this.input.onkeydown = (e) => {
+      console.log("key: ", e.key, " shift: ", e.shiftKey);
+      if (e.key === "Enter" && !e.shiftKey) {
+        console.log("preventing default");
+        e.preventDefault();
+        this.searcher.search({
+          search: [this.input.value]
+        });
+      }
+    };
     this.button = document.createElement("button");
     this.button.onclick = () => {
       this.searcher.search({
@@ -173,12 +188,6 @@ class LogSearchOptions {
     this.button.innerHTML = "Search";
     this.root.appendChild(this.input);
     this.root.appendChild(this.button);
-    this.startDate = document.createElement("input");
-    this.startDate.type = "date";
-    this.root.appendChild(this.startDate);
-    this.endDate = document.createElement("input");
-    this.endDate.type = "date";
-    this.root.appendChild(this.endDate);
     this.searcher = args.searcher;
   }
   getQuery() {
@@ -247,6 +256,8 @@ class LogSearcher {
     };
   }
   handleSort() {
+    if (this.logEntries.length === 0)
+      return;
     if (this.sortDir === "asc")
       this.logEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     else

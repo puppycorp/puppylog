@@ -11,7 +11,7 @@ export const logColors = {
 export type LogEntry = {
     timestamp: string
 	level: LogLevel
-    props: string[]
+    props: string[][]
     msg: string
 }
 
@@ -30,7 +30,7 @@ export class Logtable {
         this.root = document.createElement('div')
 
         this.header = document.createElement('head')
-        this.header.innerHTML = `<tr><th>Timestamp</th><th>Level</th><th>message</th></tr>`
+        this.header.innerHTML = `<tr><th>Timestamp</th><th>Level</th><th>Props</th><th>Message</th></tr>`
         this.table.appendChild(this.header)
         this.body = document.createElement('tbody') 
         this.table.appendChild(this.body)
@@ -50,6 +50,7 @@ export class Logtable {
                     <tr style="height: 35px">
                         <td style="white-space: nowrap">${r.timestamp}</td>
                         <td style="color: ${logColors[r.level]}">${r.level}</td>
+						<td>${r.props.map((p) => p.join("=")).join(", ")}</td>
                         <td style="word-break: break-all">${r.msg}</td>
                     </tr>
                     `
@@ -95,18 +96,32 @@ export class Logtable {
 
 export class LogSearchOptions {
     public root: HTMLElement
-    private input: HTMLInputElement
+    private input: HTMLTextAreaElement
     private button: HTMLButtonElement
-    private startDate: HTMLInputElement
-    private endDate: HTMLInputElement
+    // private startDate: HTMLInputElement
+    // private endDate: HTMLInputElement
     private searcher: LogSearcher
 
     constructor(args: {
         searcher: LogSearcher
     }) {
         this.root = document.createElement('div')
-        this.input = document.createElement('input')
-        this.input.type = "text"
+		this.root.style.display = "flex"
+		this.root.style.gap = "10px"
+        this.input = document.createElement('textarea')
+        this.input.rows = 4
+		this.input.style.width = "400px"
+		this.input.onkeydown = (e) => {
+			console.log("key: ", e.key, " shift: ", e.shiftKey)
+			if (e.key === "Enter" && !e.shiftKey) {
+				console.log("preventing default")
+				e.preventDefault()
+				this.searcher.search({
+					search: [this.input.value]
+				})
+			}
+		}
+				
         this.button = document.createElement('button')
         this.button.onclick = () => {
             this.searcher.search({
@@ -116,12 +131,12 @@ export class LogSearchOptions {
         this.button.innerHTML = "Search"
         this.root.appendChild(this.input)
         this.root.appendChild(this.button)
-        this.startDate = document.createElement('input')
-        this.startDate.type = "date"
-        this.root.appendChild(this.startDate)
-        this.endDate = document.createElement('input')
-        this.endDate.type = "date"
-        this.root.appendChild(this.endDate)
+        // this.startDate = document.createElement('input')
+        // this.startDate.type = "date"
+        // this.root.appendChild(this.startDate)
+        // this.endDate = document.createElement('input')
+        // this.endDate.type = "date"
+        // this.root.appendChild(this.endDate)
         this.searcher = args.searcher
     }
 
@@ -209,6 +224,7 @@ export class LogSearcher {
     }
 
 	private handleSort() {
+		if (this.logEntries.length === 0) return
 		if (this.sortDir === "asc") this.logEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
 		else this.logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
 		this.firstDate = this.logEntries[0].timestamp
