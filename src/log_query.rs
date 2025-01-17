@@ -27,9 +27,9 @@ pub enum LogLevel {
 
 #[derive(Debug, PartialEq)]
 pub struct Condition {
-    field: String,
+    left: Value,
     operator: Operator,
-    value: Value,
+    right: Value,
 }
 
 #[derive(Debug, PartialEq)]
@@ -106,6 +106,8 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                     }
                     word.push(chars.next().unwrap());
                 }
+
+				println!("word: {}", word);
                 
                 match word.as_str() {
                     "and" => tokens.push(Token::And),
@@ -115,28 +117,37 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                     "=" => tokens.push(Token::Operator(Operator::Equal)),
                     "like" => tokens.push(Token::Operator(Operator::Like)),
                     _ => {
-                        // Try to parse as a field or value
-                        if tokens.last().map_or(true, |t| matches!(t, Token::OpenParen | Token::And | Token::Or)) {
-                            tokens.push(Token::Field(word));
-                        } else {
-                            // Parse value based on the field type
-                            if let Some(Token::Field(field)) = tokens.iter().last().cloned() {
-                                let value = match field.as_str() {
-                                    "start" | "end" => {
-                                        let date = NaiveDate::parse_from_str(&word, "%d.%m.%Y")
-                                            .map_err(|e| format!("Invalid date format: {}", e))?;
-                                        Value::Date(date)
-                                    },
-                                    "level" => {
-                                        let level = LogLevel::from_str(&word)?;
-                                        Value::Level(level)
-                                    },
-                                    "msg" => Value::String(word),
-                                    _ => Value::String(word)
-                                };
-                                tokens.push(Token::Value(value));
-                            }
-                        }
+						let value = if let Ok(date) = NaiveDate::parse_from_str(&word, "%d.%m.%Y") {
+							Value::Date(date)
+						} else if let Ok(num) = word.parse::<i64>() {
+							Value::Number(num)
+						} else {
+							Value::String(word)
+						};
+						tokens.push(Token::Value(value));
+
+                        // // Try to parse as a field or value
+                        // if tokens.last().map_or(true, |t| matches!(t, Token::OpenParen | Token::And | Token::Or)) {
+                        //     tokens.push(Token::Field(word));
+                        // } else {
+                        //     // Parse value based on the field type
+                        //     if let Some(Token::Field(field)) = tokens.iter().last().cloned() {
+                        //         let value = match field.as_str() {
+                        //             "start" | "end" => {
+                        //                 let date = NaiveDate::parse_from_str(&word, "%d.%m.%Y")
+                        //                     .map_err(|e| format!("Invalid date format: {}", e))?;
+                        //                 Value::Date(date)
+                        //             },
+                        //             "level" => {
+                        //                 let level = LogLevel::from_str(&word)?;
+                        //                 Value::Level(level)
+                        //             },
+                        //             "msg" => Value::String(word),
+                        //             _ => Value::String(word)
+                        //         };
+                        //         tokens.push(Token::Value(value));
+                        //     }
+                        // }
                     }
                 }
             }
@@ -147,19 +158,24 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
 
 fn parse_tokens(tokens: &[Token]) -> Result<Expression, String> {
     fn parse_condition(tokens: &[Token], start: usize) -> Result<(Expression, usize), String> {
+		println!("tokens: {:?} start: {}", tokens, start);
+		
         if tokens.len() - start < 3 {
-            return Err("Invalid condition format".to_string());
+			println!("tokens: {:?} start: {}", tokens, start);
+            return Err("Condition requires 3 tokens format: FIELD OPERATOR VALUE".to_string()); 
         }
         
         match (&tokens[start], &tokens[start + 1], &tokens[start + 2]) {
-            (Token::Field(field), Token::Operator(op), Token::Value(val)) => {
+            (Token::Value(left), Token::Operator(op), Token::Value(right)) => {
                 Ok((Expression::Condition(Condition {
-                    field: field.clone(),
+                    left: left.clone(),
                     operator: op.clone(),
-                    value: val.clone(),
+                    right: right.clone(),
                 }), start + 3))
             },
-            _ => Err("Invalid condition format".to_string()),
+            _ => {
+				Err(format!("Expected VALUE OPERATOR VALUE got {:?}", (&tokens[start], &tokens[start + 1], &tokens[start + 2])))
+			},
         }
     }
 
@@ -218,22 +234,24 @@ mod tests {
 
     #[test]
     fn test_simple_query() {
-        let query = r#"start>=01.10.2024 and end<=12.12.2024"#;
+        let query = r#"start >= 01.10.2024 and end <= 12.12.2024"#;
         let ast = parse_log_query(query).unwrap();
         
         match ast.root {
             Expression::And(left, right) => {
                 match *left {
                     Expression::Condition(c) => {
-                        assert_eq!(c.field, "start");
+                        assert_eq!(c.left, Value::String("start".to_string()));
                         assert_eq!(c.operator, Operator::GreaterThanOrEqual);
+						assert_eq!(c.right, Value::Date(NaiveDate::from_ymd(2024, 10, 1)));
                     },
                     _ => panic!("Expected Condition"),
                 }
                 match *right {
                     Expression::Condition(c) => {
-                        assert_eq!(c.field, "end");
+                        assert_eq!(c.left, Value::String("end".to_string()));
                         assert_eq!(c.operator, Operator::LessThanOrEqual);
+						assert_eq!(c.right, Value::Date(NaiveDate::from_ymd(2024, 12, 12)));
                     },
                     _ => panic!("Expected Condition"),
                 }
