@@ -2,7 +2,7 @@ use std::io::Cursor;
 use std::{collections::HashMap, time::Instant};
 use std::path::PathBuf;
 use chrono::{Datelike, Utc};
-use puppylog::{LogEntry, LogEntryParser};
+use puppylog::LogEntry;
 use tokio::{fs::{read_dir, File, OpenOptions}, io::{AsyncReadExt, AsyncWriteExt}};
 use crate::config::log_path;
 use crate::log_query::{Expr, Operator, QueryAst, Value};
@@ -96,7 +96,6 @@ pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 	let offset = query.offset.unwrap_or(0);
 	let count = query.limit.unwrap_or(200);
 	let mut logs: Vec<LogEntry> = Vec::new();
-	let mut parser = LogEntryParser::new();
 	let mut years = get_years().await;
 	years.sort_by(|a, b| b.cmp(a));
 	'main: for year in years {

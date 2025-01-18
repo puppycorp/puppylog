@@ -3,7 +3,6 @@ mod circle_buffer;
 mod chunk_reader;
 
 use std::io;
-use std::io::Cursor;
 use std::io::Read;
 use std::io::Write;
 use byteorder::LittleEndian;
@@ -170,55 +169,6 @@ impl LogEntry {
 			props,
 			msg
 		})
-	}
-}
-
-pub struct LogEntryParser {
-	buffer: Cursor<Vec<u8>>,
-	filled: usize,
-    pub log_entries: Vec<LogEntry>,
-}
-
-impl LogEntryParser {
-    pub fn new() -> Self {
-        LogEntryParser {
-            log_entries: Vec::new(),
-			buffer: Cursor::new(vec![]),
-			filled: 0
-        }
-    }
-
-    pub fn parse(&mut self, data: &[u8]) {
-		if self.filled + data.len() > self.buffer.get_ref().len() {
-			let new_capacity = (self.buffer.get_ref().len() + data.len()).max(self.buffer.get_ref().len() * 2);
-			log::info!("Resizing buffer to {}", new_capacity);
-			self.buffer.get_mut().resize(new_capacity, 0);
-			self.buffer.set_position(self.filled as u64);
-		}
-
-		self.buffer.get_mut()[self.filled..self.filled + data.len()].copy_from_slice(data);
-		self.filled += data.len();
-		while let Ok(entry) = LogEntry::deserialize(&mut self.buffer) {
-            self.log_entries.push(entry);
-        }
-		log::info!("filled: {}", self.filled);
-		log::info!("pos: {}", self.buffer.position());
-
-		if self.buffer.position() as usize > self.buffer.get_ref().len() / 2 {
-			log::info!("Moving buffer to the left");
-			let pos = self.buffer.position() as usize;
-			log::info!("pos: {}", pos);
-			log::info!("filled: {}", self.filled);
-			self.buffer.get_mut().copy_within(pos..self.filled, 0);
-			self.filled -= pos;
-			self.buffer.set_position(0);
-		}
-    }
-}
-
-fn move_to_left(buffer: &mut Vec<u8>, offset: usize) {
-	for i in 0..buffer.len() - offset {
-		buffer[i] = buffer[i + offset];
 	}
 }
 
