@@ -231,8 +231,9 @@ class LogSearcher {
   setQuery(query) {
     this.query = query;
     this.alreadyFetched = false;
-    this.fetchMore();
     setQueryParam("query", query);
+    this.logEntries = [];
+    this.fetchMore();
   }
   fetchMore() {
     if (this.alreadyFetched)
@@ -258,6 +259,7 @@ class LogSearcher {
       return res.json();
     }).then((data) => {
       this.logEntries.push(...data);
+      this.handleSort();
       this.onNewLoglines();
     }).catch((err) => {
       console.error("error", err);

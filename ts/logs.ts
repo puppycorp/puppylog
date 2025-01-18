@@ -178,8 +178,9 @@ export class LogSearcher {
     public setQuery(query: string) {
         this.query = query
         this.alreadyFetched = false
-        this.fetchMore()
         setQueryParam("query", query)
+        this.logEntries = []
+        this.fetchMore()
     }
 
     public fetchMore() {
@@ -206,6 +207,7 @@ export class LogSearcher {
             return res.json()
         }).then((data) => {
             this.logEntries.push(...data)
+            this.handleSort()
             this.onNewLoglines()
         }).catch((err) => {
             console.error("error", err)
