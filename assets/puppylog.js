@@ -1,3 +1,14 @@
+// ts/utility.ts
+var setQueryParam = (field, value) => {
+  const url = new URL(window.location.href);
+  url.searchParams.set(field, value);
+  window.history.pushState({}, "", url.toString());
+};
+var getQueryParam = (field) => {
+  const url = new URL(window.location.href);
+  return url.searchParams.get(field);
+};
+
 // ts/virtual-table.ts
 class VirtualTable {
   root;
@@ -97,6 +108,7 @@ class Logtable {
   sortDir = "desc";
   logSearcher;
   virtual;
+  errorText;
   constructor() {
     this.root = document.createElement("div");
     this.header = document.createElement("head");
@@ -107,6 +119,9 @@ class Logtable {
     this.logSearcher = new LogSearcher({
       onNewLoglines: this.onNewLoglines.bind(this),
       onClear: () => {
+      },
+      onError: (err) => {
+        this.errorText.innerHTML = err;
       }
     });
     this.virtual = new VirtualTable({
@@ -120,7 +135,7 @@ class Logtable {
                     <tr style="height: 35px">
                         <td style="white-space: nowrap">${r.timestamp}</td>
                         <td style="color: ${logColors[r.level]}">${r.level}</td>
-						<td>${r.props.map((p) => p.join("=")).join(", ")}</td>
+\t\t\t\t\t\t<td>${r.props.map((p) => p.join("=")).join(", ")}</td>
                         <td style="word-break: break-all">${r.msg}</td>
                     </tr>
                     `;
@@ -134,6 +149,9 @@ class Logtable {
       searcher: this.logSearcher
     });
     this.root.appendChild(searchOptions.root);
+    this.errorText = document.createElement("div");
+    this.errorText.style.color = "red";
+    this.root.appendChild(this.errorText);
     this.root.appendChild(this.virtual.root);
     this.logSearcher.stream();
     window.addEventListener("scroll", (e) => {
@@ -148,9 +166,7 @@ class Logtable {
     if (!this.logSearcher)
       return;
     console.log("fetchMore");
-    this.logSearcher.search({
-      startDate: this.logSearcher.lastDate
-    });
+    this.logSearcher.fetchMore();
   }
   sort(dir) {
     this.sortDir = dir;
@@ -167,6 +183,7 @@ class LogSearchOptions {
     this.root.style.display = "flex";
     this.root.style.gap = "10px";
     this.input = document.createElement("textarea");
+    this.input.value = getQueryParam("query") || "";
     this.input.rows = 4;
     this.input.style.width = "400px";
     this.input.onkeydown = (e) => {
@@ -174,16 +191,12 @@ class LogSearchOptions {
       if (e.key === "Enter" && !e.shiftKey) {
         console.log("preventing default");
         e.preventDefault();
-        this.searcher.search({
-          search: [this.input.value]
-        });
+        this.searcher.setQuery(this.input.value);
       }
     };
     this.button = document.createElement("button");
     this.button.onclick = () => {
-      this.searcher.search({
-        search: [this.input.value]
-      });
+      this.searcher.setQuery(this.input.value);
     };
     this.button.innerHTML = "Search";
     this.root.appendChild(this.input);
@@ -200,42 +213,54 @@ class LogSearcher {
   sortDir = "desc";
   onClear;
   onNewLoglines;
+  onError;
   logEntries = [];
   firstDate;
   lastDate;
+  query = "";
+  alreadyFetched = false;
   constructor(args) {
     this.onClear = args.onClear;
     this.onNewLoglines = args.onNewLoglines;
+    this.onError = args.onError;
+    this.query = getQueryParam("query") || "";
   }
   stream() {
     this.createEventSource("http://localhost:3337/api/logs/stream");
   }
-  search(args) {
-    const query = new URLSearchParams;
-    if (args.startDate) {
-      query.append("startDate", args.startDate);
-    }
-    if (args.endDate) {
-      query.append("endDate", args.endDate);
-    }
-    if (args.search) {
-      for (const s of args.search) {
-        query.append("search", s);
-        this.logEntries = this.logEntries.filter((l) => {
-          return l.msg.includes(s);
-        });
-      }
-    }
-    if (args.count) {
-      query.append("count", args.count.toString());
+  setQuery(query) {
+    this.query = query;
+    this.alreadyFetched = false;
+    this.fetchMore();
+    setQueryParam("query", query);
+  }
+  fetchMore() {
+    if (this.alreadyFetched)
+      return;
+    this.alreadyFetched = true;
+    const offsetInMinutes = new Date().getTimezoneOffset();
+    const offsetInHours = -offsetInMinutes / 60;
+    const urlQuery = new URLSearchParams;
+    urlQuery.append("timezone", offsetInHours.toString());
+    if (this.query) {
+      urlQuery.append("query", this.query);
     }
     const url = new URL("http://localhost:3337/api/logs");
-    url.search = query.toString();
-    this.onNewLoglines();
-    fetch(url.toString()).then((res) => res.json()).then((data) => {
+    url.search = urlQuery.toString();
+    fetch(url.toString()).then(async (res) => {
+      if (res.status === 400) {
+        const err = await res.json();
+        this.onError(err.error);
+        console.log("res", res);
+        throw new Error("Failed to fetch logs");
+      }
+      this.onError("");
+      return res.json();
+    }).then((data) => {
       this.logEntries.push(...data);
-      this.handleSort();
       this.onNewLoglines();
+    }).catch((err) => {
+      console.error("error", err);
     });
   }
   createEventSource(url) {

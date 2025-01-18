@@ -3,7 +3,9 @@ use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operator {
+    GreaterThan,
     GreaterThanOrEqual,
+    LessThan,
     LessThanOrEqual,
     Equal,
     Like,
@@ -38,10 +40,17 @@ pub enum Expr {
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
     Value(Value),
+    Empty,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct Query {
+impl Default for Expr {
+    fn default() -> Self {
+        Expr::Empty
+    }
+}
+
+#[derive(Debug, PartialEq, Default)]
+pub struct QueryAst {
     root: Expr,
 }
 
@@ -111,6 +120,8 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                 match word.as_str() {
                     "and" => tokens.push(Token::And),
                     "or" => tokens.push(Token::Or),
+                    ">" => tokens.push(Token::Operator(Operator::GreaterThan)),
+                    "<" => tokens.push(Token::Operator(Operator::LessThan)),
                     ">=" => tokens.push(Token::Operator(Operator::GreaterThanOrEqual)),
                     "<=" => tokens.push(Token::Operator(Operator::LessThanOrEqual)),
                     "=" => tokens.push(Token::Operator(Operator::Equal)),
@@ -218,10 +229,10 @@ fn parse_tokens(tokens: &[Token]) -> Result<Expr, String> {
     Ok(expr)
 }
 
-pub fn parse_log_query(src: &str) -> Result<Query, String> {
+pub fn parse_log_query(src: &str) -> Result<QueryAst, String> {
     let tokens = tokenize(src)?;
     let root = parse_tokens(&tokens)?;
-    Ok(Query { root })
+    Ok(QueryAst { root })
 }
 
 #[cfg(test)]
@@ -230,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_simple_query() {
-        let query = r#"start >= 01.10.2024 and end <= 12.12.2024"#;
+        let query = r#"start >= 01.10.2024 and end <= 12.12.2024s"#;
         let ast = parse_log_query(query).unwrap();
         
         match ast.root {

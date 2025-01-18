@@ -1,3 +1,4 @@
+import { getQueryParam, setQueryParam } from "./utility"
 import { VirtualTable } from "./virtual-table"
 
 export type LogLevel = "Debug" | "Info" | "Warn" | "Error"
@@ -25,6 +26,7 @@ export class Logtable {
     public sortDir: SortDir = "desc"
     private logSearcher: LogSearcher
 	private virtual: VirtualTable
+    private errorText: HTMLElement
 
     constructor() {
         this.root = document.createElement('div')
@@ -37,7 +39,10 @@ export class Logtable {
 
 		this.logSearcher = new LogSearcher({
             onNewLoglines: this.onNewLoglines.bind(this),
-            onClear: () => {}
+            onClear: () => {},
+            onError: (err) => {
+                this.errorText.innerHTML = err
+            }
         })
         this.virtual = new VirtualTable({
             rowCount: 0,
@@ -64,6 +69,9 @@ export class Logtable {
             searcher: this.logSearcher
         })
         this.root.appendChild(searchOptions.root)
+        this.errorText = document.createElement('div')
+        this.errorText.style.color = "red"
+        this.root.appendChild(this.errorText)
         this.root.appendChild(this.virtual.root)
 
         // this.logSearcher.search({
@@ -84,9 +92,7 @@ export class Logtable {
 	private fetchMore() {
 		if (!this.logSearcher) return
 		console.log("fetchMore")
-		this.logSearcher.search({
-			startDate: this.logSearcher.lastDate
-		})
+		this.logSearcher.fetchMore()
 	}
 
     public sort(dir: SortDir) {
@@ -109,6 +115,7 @@ export class LogSearchOptions {
 		this.root.style.display = "flex"
 		this.root.style.gap = "10px"
         this.input = document.createElement('textarea')
+        this.input.value = getQueryParam("query") || ""
         this.input.rows = 4
 		this.input.style.width = "400px"
 		this.input.onkeydown = (e) => {
@@ -116,17 +123,13 @@ export class LogSearchOptions {
 			if (e.key === "Enter" && !e.shiftKey) {
 				console.log("preventing default")
 				e.preventDefault()
-				this.searcher.search({
-					search: [this.input.value]
-				})
+                this.searcher.setQuery(this.input.value)
 			}
 		}
 				
         this.button = document.createElement('button')
         this.button.onclick = () => {
-            this.searcher.search({
-                search: [this.input.value],
-            })
+            this.searcher.setQuery(this.input.value)
         }
         this.button.innerHTML = "Search"
         this.root.appendChild(this.input)
@@ -150,59 +153,110 @@ export class LogSearcher {
 	private sortDir: SortDir = "desc"
     private onClear: () => void
     private onNewLoglines: () => void
+    private onError: (err: string) => void
     public logEntries: LogEntry[] = []
 	public firstDate?: string
 	public lastDate?: string
+    private query: string = ""
+    private alreadyFetched: boolean = false
 
     public constructor(args: {
         onClear: () => void
         onNewLoglines: () => void
+        onError: (err: string) => void
     }) {
         this.onClear = args.onClear
         this.onNewLoglines = args.onNewLoglines
+        this.onError = args.onError
+        this.query = getQueryParam("query") || ""
     }
 
     public stream() {
         this.createEventSource("http://localhost:3337/api/logs/stream")
     }
 
-    public search(args: {
-        startDate?: string
-        endDate?: string
-        sort?: SortDir
-        search?: string[]
-        count?: number
-    }) {
-        const query = new URLSearchParams()
-        if (args.startDate) {
-            query.append("startDate", args.startDate)
-        }
-        if (args.endDate) {
-            query.append("endDate", args.endDate)
-        }
-        if (args.search) {
-            for (const s of args.search) {
-                query.append("search", s)
+    public setQuery(query: string) {
+        this.query = query
+        this.alreadyFetched = false
+        this.fetchMore()
+        setQueryParam("query", query)
+    }
 
-                this.logEntries = this.logEntries.filter((l) => {
-                    return l.msg.includes(s)
-                })
-            }
-        }
-        if (args.count) {
-            query.append("count", args.count.toString())
-        }
+    public fetchMore() {
+        if (this.alreadyFetched) return
+        this.alreadyFetched = true
+        const offsetInMinutes = new Date().getTimezoneOffset();
+        const offsetInHours = -offsetInMinutes / 60;
 
+        const urlQuery = new URLSearchParams()
+        urlQuery.append("timezone", offsetInHours.toString())
+        if (this.query) {
+            urlQuery.append("query", this.query)
+        }
         const url = new URL("http://localhost:3337/api/logs")
-        url.search = query.toString()
-        this.onNewLoglines()
-
-        fetch(url.toString()).then((res) => res.json()).then((data) => {
+        url.search = urlQuery.toString()
+        fetch(url.toString()).then(async (res) => {
+            if (res.status === 400) {
+                const err = await res.json()
+                this.onError(err.error)
+                console.log("res", res)
+                throw new Error("Failed to fetch logs")
+            }
+            this.onError("")
+            return res.json()
+        }).then((data) => {
             this.logEntries.push(...data)
-			this.handleSort()
             this.onNewLoglines()
+        }).catch((err) => {
+            console.error("error", err)
         })
     }
+
+    // public search(args: {
+    //     startDate?: string
+    //     endDate?: string
+    //     sort?: SortDir
+    //     search?: string[]
+    //     count?: number
+    // }) {
+    //     const query = new URLSearchParams()
+    //     if (args.startDate) {
+    //         query.append("startDate", args.startDate)
+    //     }
+    //     if (args.endDate) {
+    //         query.append("endDate", args.endDate)
+    //     }
+    //     if (args.search) {
+    //         for (const s of args.search) {
+    //             query.append("search", s)
+
+    //             this.logEntries = this.logEntries.filter((l) => {
+    //                 return l.msg.includes(s)
+    //             })
+    //         }
+    //     }
+    //     if (args.count) {
+    //         query.append("count", args.count.toString())
+    //     }
+
+    //     const url = new URL("http://localhost:3337/api/logs")
+    //     url.search = query.toString()
+    //     this.onNewLoglines()
+
+    //     fetch(url.toString()).then((res) => {
+    //         if (res.status !== 200) {
+    //             throw new Error("Failed to fetch logs")
+    //         }
+
+    //         return res.json()
+    //     }).then((data) => {
+    //         this.logEntries.push(...data)
+	// 		this.handleSort()
+    //         this.onNewLoglines()
+    //     }).catch((err) => {
+    //         this.onError(err)
+    //     })
+    // }
 
     private createEventSource(url: string) {
         if (this.logEventSource) {

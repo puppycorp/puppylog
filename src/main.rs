@@ -1,7 +1,7 @@
 use std::{collections::{HashMap, VecDeque}, fs::read_dir, io::{Read, Write}, process::Child, sync::Arc};
 
 use axum::{
-    body::{Body, BodyDataStream}, extract::{DefaultBodyLimit, Path, Query, State}, http::StatusCode, response::{sse::{Event, KeepAlive}, Sse}, routing::{get, post}, Json, Router
+    body::{Body, BodyDataStream}, extract::{DefaultBodyLimit, Path, Query, State}, http::StatusCode, response::{sse::{Event, KeepAlive}, IntoResponse, Response, Sse}, routing::{get, post}, Json, Router
 };
 use bytes::Bytes;
 use chrono::{DateTime, Datelike, Utc};
@@ -9,6 +9,7 @@ use config::log_path;
 use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
+use log_query::{parse_log_query, QueryAst};
 use puppylog::{ChunckReader, CircularBuffer, LogEntry, LogEntryParser, LogLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string, Value};
@@ -42,6 +43,9 @@ struct GetLogsQuery {
     pub count: Option<usize>,
 	pub props: Option<Vec<(String, String)>>,
 	pub search: Option<String>,
+    pub query: Option<String>,
+    pub timezone: Option<i32>,
+    pub offset: Option<i32>,
 }
 
 
@@ -126,101 +130,47 @@ async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
     }
 }
 
+#[derive(Debug)]
+struct BadRequestError(String);
+
+impl IntoResponse for BadRequestError {
+    fn into_response(self) -> Response {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": self.0
+            }))
+        ).into_response()
+    }
+}
+
 async fn get_logs(
 	State(ctx): State<Arc<Context>>, 
 	Query(params): Query<GetLogsQuery>
-) -> Json<Value> {
+) -> Result<Json<Value>, BadRequestError> {
     log::info!("get_logs {:?}", params);
-    let log_entries = search_logs(LogsQuery { 
-        start: params.start,
-        end: params.end,
-        level: params.level,
-        count: params.count,
-        props: params.props.unwrap_or_default(),
-        search: params.search
-    }).await.unwrap();
-    // log::info!("log_entries: {:?}", log_entries);
-    Json(serde_json::to_value(&log_entries).unwrap())
-    // let logs_path = log_path();
-    // let mut years = get_years();
+    let query = match params.query {
+        Some(ref query) => match parse_log_query(query) {
+            Ok(query) => query,
+            Err(err) => return Err(BadRequestError(err.to_string()))
+        }
+        None => QueryAst::default()
+    };
 
-    // let mut loglines = Vec::new();
+    log::info!("query: {:?}", query);
 
-    // // if let Some(sort) = &params.sort {
-    // //     match sort {
-    // //         SortDir::Asc => years.sort(),
-    // //         SortDir::Desc => years.sort_by(|a, b| b.cmp(a))
-    // //     }
-    // // }
+    return Ok(Json(json!([])));
 
-    // if let Some(start) = params.start {
-    //     years.retain(|year| year >= &(start.year() as u32));
-    // }
-
-    // if let Some(end) = params.end {
-    //     years.retain(|year| year <= &(end.year() as u32));
-    // }
-
-    // 'year_loop: for year in years {
-    //     let mut months = get_monts(year);
-
-    //     if let Some(sort) = &params.sort {
-    //         match sort {
-    //             SortDir::Asc => months.sort(),
-    //             SortDir::Desc => months.sort_by(|a, b| b.cmp(a))
-    //         }
-    //     }
-
-    //     if let Some(start) = params.start {
-    //         months.retain(|month| month >= &(start.month() as u32));
-    //     }
-
-    //     if let Some(end) = params.end {
-    //         months.retain(|month| month <= &(end.month() as u32));
-    //     }
-
-    //     for month in months {
-    //         let mut days = get_days(year, month);
-
-    //         if let Some(sort) = &params.sort {
-    //             match sort {
-    //                 SortDir::Asc => days.sort(),
-    //                 SortDir::Desc => days.sort_by(|a, b| b.cmp(a))
-    //             }
-    //         }
-
-    //         if let Some(start) = params.start {
-    //             days.retain(|day| day >= &(start.day() as u32));
-    //         }
-
-    //         if let Some(end) = params.end {
-    //             days.retain(|day| day <= &(end.day() as u32));
-    //         }
-
-    //         for day in days {
-    //             let files = read_dir(logs_path.join(year.to_string()).join(month.to_string()).join(day.to_string())).unwrap();
-    //             for file in files {
-    //                 //let devid = file.unwrap().file_name().into_string().unwrap().replace(".log", "");
-                    
-    //                 let mut file = std::fs::File::open(file.unwrap().path()).unwrap();
-    //                 let mut contents = String::new();
-    //                 file.read_to_string(&mut contents).unwrap();
-    //                 for line in contents.lines() {
-    //                     let logline = logline::parse_logline(line);
-    //                     loglines.push(logline);
-
-    //                     if let Some(limit) = params.count {
-    //                         if loglines.len() >= limit as usize {
-    //                             break 'year_loop;
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-
-    // Json(serde_json::to_value(loglines).unwrap())
+    // let log_entries = search_logs(LogsQuery { 
+    //     start: params.start,
+    //     end: params.end,
+    //     level: params.level,
+    //     count: params.count,
+    //     props: params.props.unwrap_or_default(),
+    //     search: params.search
+    // }).await.unwrap();
+    // // log::info!("log_entries: {:?}", log_entries);
+    // Json(serde_json::to_value(&log_entries).unwrap())
 }
 
 async fn stream_logs(
