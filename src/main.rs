@@ -160,18 +160,9 @@ async fn get_logs(
 
     log::info!("query: {:?}", query);
 
-    return Ok(Json(json!([])));
-
-    // let log_entries = search_logs(LogsQuery { 
-    //     start: params.start,
-    //     end: params.end,
-    //     level: params.level,
-    //     count: params.count,
-    //     props: params.props.unwrap_or_default(),
-    //     search: params.search
-    // }).await.unwrap();
-    // // log::info!("log_entries: {:?}", log_entries);
-    // Json(serde_json::to_value(&log_entries).unwrap())
+    let log_entries = search_logs(query).await.unwrap();
+    // log::info!("log_entries: {:?}", log_entries);
+    Ok(Json(serde_json::to_value(&log_entries).unwrap()))
 }
 
 async fn stream_logs(

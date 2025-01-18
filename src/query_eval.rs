@@ -65,18 +65,16 @@ fn does_field_match(field: FieldType, value: &Value, operator: &Operator, loglin
 fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String> {
     match (cond.left.as_ref(), cond.right.as_ref()) {
         (Expr::Value(Value::String(left)), Expr::Value(val)) => {
-            let left_field = match match_field(&left, logline) {
-                Some(field) => field,
-                None => panic!("Field not found")
-            };
-            does_field_match(left_field, val, &cond.operator, logline)
+            match match_field(&left, logline) {
+                Some(field) => does_field_match(field , val, &cond.operator, logline),
+                None => Ok(false)
+            }
         },
         (Expr::Value(val), Expr::Value(Value::String(right))) => {
-            let right_field = match match_field(&right, logline) {
-                Some(field) => field,
-                None => panic!("Field not found")
-            };
-            does_field_match(right_field, val, &cond.operator, logline)
+            match match_field(&right, logline) {
+                Some(field) => does_field_match(field, val, &cond.operator, logline),
+                None => Ok(false)
+            }
         },
         _ => {
             panic!("Nothing makes sense anymore {:?} logline: {:?}", cond, logline)
@@ -84,14 +82,14 @@ fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String>
     }
 }
 
-pub fn check_expr(expr: Expr, logline: &LogEntry) -> Result<bool, String> {
+pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 	match expr {
 		Expr::Condition(cond) => check_condition(&cond, logline),
-		Expr::And(expr, expr1) => Ok(check_expr(*expr, &logline)? && check_expr(*expr1, logline)?),
-		Expr::Or(expr, expr1) => Ok(check_expr(*expr, &logline)? || check_expr(*expr1, logline)?),
+		Expr::And(expr, expr1) => Ok(check_expr(expr, &logline)? && check_expr(expr1, logline)?),
+		Expr::Or(expr, expr1) => Ok(check_expr(expr, &logline)? || check_expr(expr1, logline)?),
 		Expr::Value(value) => match value {
 			Value::String(value) => Ok(value != ""),
-			Value::Number(value) => Ok(value > 0),
+			Value::Number(value) => Ok(*value > 0),
 			Value::Date(value) => Ok(true),
 		},
 		Expr::Empty => Ok(true)
