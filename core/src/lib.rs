@@ -135,7 +135,66 @@ impl LogEntry {
 		Ok(())
 	}
 
-	pub fn  deserialize<R: Read>(reader: &mut R) -> io::Result<LogEntry> {
+	pub fn deserialize2(data: &[u8], ptr: &mut usize) -> Result<LogEntry, ()> {
+		if *ptr + 10 > data.len() {
+			return Err(());
+		}
+		let timestamp = i64::from_le_bytes(data[*ptr..(*ptr+8)].try_into().unwrap());
+		*ptr += 8;
+		let timestamp = match DateTime::from_timestamp_millis(timestamp) {
+			Some(timestamp) => timestamp,
+			None => {
+				log::error!("Invalid timestamp");
+				return Err(())
+			}
+		};
+		let level = LogLevel::from(data[*ptr]);
+		*ptr += 1;
+		let prop_count = data[*ptr];
+		*ptr += 1;
+		let mut props = Vec::with_capacity(prop_count as usize);
+		for _ in 0..prop_count {
+			if *ptr + 1 > data.len() {
+				return Err(());
+			}
+			let key_len = data[*ptr] as usize;
+			*ptr += 1;
+			if *ptr + key_len + 1 > data.len() {
+				return Err(());
+			}
+			let key = String::from_utf8_lossy(&data[*ptr..*ptr + key_len]).to_string();
+			*ptr += key_len;
+			if *ptr + 1 > data.len() {
+				return Err(());
+			}
+			let value_len = data[*ptr] as usize;
+			*ptr += 1;
+			if *ptr + value_len > data.len() {
+				return Err(());
+			}
+			let value = String::from_utf8_lossy(&data[*ptr..*ptr + value_len]).to_string();
+			*ptr += value_len;
+			props.push((key, value));
+		}
+		if *ptr + 4 > data.len() {
+			return Err(());
+		}
+		let msg_len = u32::from_le_bytes(data[*ptr..*ptr + 4].try_into().unwrap()) as usize;
+		*ptr += 4;
+		if *ptr + msg_len > data.len() {
+			return Err(());
+		}
+		let msg = String::from_utf8_lossy(&data[*ptr..*ptr + msg_len]).to_string();
+		*ptr += msg_len;
+		Ok(LogEntry {
+			timestamp,
+			level,
+			props,
+			msg
+		})
+	}
+
+	pub fn deserialize<R: Read>(reader: &mut R) -> io::Result<LogEntry> {
 		let timestamp = reader.read_i64::<LittleEndian>()?;
 		let secs = timestamp / 1000;
 		let nanos = ((timestamp % 1000) * 1_000_000) as u32;

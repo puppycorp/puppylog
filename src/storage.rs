@@ -122,17 +122,20 @@ pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 					let mut reader = tokio::io::BufReader::new(file);
 					let mut buffer = Vec::new();
 					reader.read_to_end(&mut buffer).await?;
-					log::info!("Read {} bytes in {:?}", buffer.len(), timer.elapsed());
-					let mut buffer = Cursor::new(buffer);
+					log::info!("Read {} bytes in {:?}", buffer.len(), timer.elapsed());	
 					let timer = Instant::now();
 					let mut total_loglines = 0;
-					while let Ok(log_entry) = LogEntry::deserialize(&mut buffer) {
+					let mut total_expr_time = 0;
+					let mut ptr = 0;
+					while let Ok(log_entry) = LogEntry::deserialize2(&buffer, &mut ptr) {
 						total_loglines += 1;
+						let timer = Instant::now();
 						if check_expr(&query.root, &log_entry).unwrap() {
 							logs.push(log_entry);
 						}
+						total_expr_time += timer.elapsed().as_nanos();
 					}
-					log::info!("Parsed {} loglines in {:?}", total_loglines, timer.elapsed());
+					log::info!("Parsed {} loglines in {:?} expr time {}", total_loglines, timer.elapsed(), total_expr_time / 1000000);
 					let timer = Instant::now();
 					logs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 					log::info!("sorting {} logs in {:?}", logs.len(), timer.elapsed());
