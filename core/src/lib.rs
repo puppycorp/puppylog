@@ -16,13 +16,39 @@ use serde::Serialize;
 pub use circle_buffer::CircularBuffer;
 pub use chunk_reader::ChunckReader;
 
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub enum LogLevel {
 	Debug,
 	Info,
 	Warn,
 	Error,
 	Uknown
+}
+
+impl LogLevel {
+	pub fn from_string(value: &str) -> Self {
+		match value {
+			"debug" => LogLevel::Debug,
+			"info" => LogLevel::Info,
+			"warn" => LogLevel::Warn,
+			"error" => LogLevel::Error,
+			"INFO" => LogLevel::Info,
+			"DEBUG" => LogLevel::Debug,
+			"WARN" => LogLevel::Warn,
+			"ERROR" => LogLevel::Error,
+			_ => LogLevel::Uknown
+		}
+	}
+
+	pub fn from_i64(value: i64) -> Self {
+		match value {
+			0 => LogLevel::Debug,
+			1 => LogLevel::Info,
+			2 => LogLevel::Warn,
+			3 => LogLevel::Error,
+			_ => LogLevel::Uknown
+		}
+	}
 }
 
 impl Into<u8> for &LogLevel {
@@ -48,6 +74,43 @@ impl From<u8> for LogLevel {
 		}
 	}
 }
+
+impl ToString for LogLevel {
+	fn to_string(&self) -> String {
+		match self {
+			LogLevel::Debug => "debug".to_string(),
+			LogLevel::Info => "info".to_string(),
+			LogLevel::Warn => "warn".to_string(),
+			LogLevel::Error => "error".to_string(),
+			LogLevel::Uknown => "unknown".to_string()
+		}
+	}
+}
+
+impl From<&String> for LogLevel {
+	fn from(value: &String) -> Self {
+		LogLevel::from_string(value)
+	}
+}
+
+
+// impl TryFrom<&String> for LogLevel {
+// 	type Error = &'static str;
+
+// 	fn try_from(value: &String) -> Result<Self, Self::Error> {
+// 		match value.as_str() {
+// 			"debug" => Ok(LogLevel::Debug),
+// 			"info" => Ok(LogLevel::Info),
+// 			"warn" => Ok(LogLevel::Warn),
+// 			"error" => Ok(LogLevel::Error),
+// 			"DEBUG" => Ok(LogLevel::Debug),
+// 			"INFO" => Ok(LogLevel::Info),
+// 			"WARN" => Ok(LogLevel::Warn),
+// 			"ERROR" => Ok(LogLevel::Error),
+// 			_ => Err("Invalid log level")
+// 		}
+// 	}
+// }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEntry {

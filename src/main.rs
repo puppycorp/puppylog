@@ -28,6 +28,7 @@ mod worker;
 mod subscriber;
 mod config;
 mod log_query;
+mod query_eval;
 
 #[derive(Deserialize, Debug)]
 enum SortDir {

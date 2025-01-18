@@ -5,6 +5,7 @@ use chrono::{Datelike, Utc};
 use puppylog::{LogEntry, LogEntryParser};
 use tokio::{fs::{read_dir, File, OpenOptions}, io::{AsyncReadExt, AsyncWriteExt}};
 use crate::config::log_path;
+use crate::log_query::{Expr, Operator, QueryAst, Value};
 use crate::types::LogsQuery;
 
 pub struct Storage {
@@ -84,59 +85,68 @@ async fn get_days(year: u32, month: u32) -> Vec<u32> {
 	days_vec
 }
 
-pub async fn search_logs(query: LogsQuery) -> anyhow::Result<Vec<LogEntry>> {
-	let logspath = log_path();
-	if !logspath.exists() {
-		tokio::fs::create_dir_all(&logspath).await?;
-	}
-	let start = query.start.unwrap_or(Utc::now());
-	let count = query.count.unwrap_or(50);
-	let mut logs: Vec<LogEntry> = Vec::new();
-	let mut parser = LogEntryParser::new();
-	let mut years = get_years().await;
-	years.sort_by(|a, b| b.cmp(a));
-	'main: for year in years {
-		if year < start.year() as u32 {
-			break;
-		}
-		let mut months = get_months(year).await;
-		months.sort_by(|a, b| b.cmp(a));
-		for month in months {
-			if year == start.year() as u32 && month < start.month() as u32 {
-				break;
-			}
-			let mut days = get_days(year, month).await;
-			days.sort_by(|a, b| b.cmp(a));
-			for day in days {
-				if year == start.year() as u32 && month == start.month() as u32 && day < start.day() as u32 {
-					break;
-				}
-				log::info!("Searching logs for {}/{}/{}", year, month, day);
-				let path = logspath.join(format!("{}/{}/{}/{}-{}-{}.log", year, month, day, year, month, day));
-				if path.exists() {
-					let timer = Instant::now();
-					let file = OpenOptions::new().read(true).open(&path).await?;
-					let mut reader = tokio::io::BufReader::new(file);
-					let mut buffer = Vec::new();
-					reader.read_to_end(&mut buffer).await?;
-					log::info!("Read {} bytes in {:?}", buffer.len(), timer.elapsed());
-					let mut buffer = Cursor::new(buffer);
-					let timer = Instant::now();
-					while let Ok(log_entry) = LogEntry::deserialize(&mut buffer) {
-						if query.matches(&log_entry) {
-							logs.push(log_entry);
-							if logs.len() >= count {
-								break 'main;
-							}
-						}
-					}
-					log::info!("Parsed {} bytes in {:?}", buffer.position(), timer.elapsed());
-				}
-			}
-		}
-	}
+pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
+	todo!();
 
-	log::info!("Found {} logs", logs.len());
+	// let logspath = log_path();
+	// if !logspath.exists() {
+	// 	tokio::fs::create_dir_all(&logspath).await?;
+	// }
+	// let start = query.start.unwrap_or(Utc::now());
+	// let count = query.count.unwrap_or(50);
+	// let mut logs: Vec<LogEntry> = Vec::new();
+	// let mut parser = LogEntryParser::new();
+	// let mut years = get_years().await;
+	// years.sort_by(|a, b| b.cmp(a));
+	// 'main: for year in years {
+	// 	if year < start.year() as u32 {
+	// 		break;
+	// 	}
+	// 	let mut months = get_months(year).await;
+	// 	months.sort_by(|a, b| b.cmp(a));
+	// 	for month in months {
+	// 		if year == start.year() as u32 && month < start.month() as u32 {
+	// 			break;
+	// 		}
+	// 		let mut days = get_days(year, month).await;
+	// 		days.sort_by(|a, b| b.cmp(a));
+	// 		for day in days {
+	// 			if year == start.year() as u32 && month == start.month() as u32 && day < start.day() as u32 {
+	// 				break;
+	// 			}
+	// 			log::info!("Searching logs for {}/{}/{}", year, month, day);
+	// 			let path = logspath.join(format!("{}/{}/{}/{}-{}-{}.log", year, month, day, year, month, day));
+	// 			if path.exists() {
+	// 				let timer = Instant::now();
+	// 				let file = OpenOptions::new().read(true).open(&path).await?;
+	// 				let mut reader = tokio::io::BufReader::new(file);
+	// 				let mut buffer = Vec::new();
+	// 				reader.read_to_end(&mut buffer).await?;
+	// 				log::info!("Read {} bytes in {:?}", buffer.len(), timer.elapsed());
+	// 				let mut buffer = Cursor::new(buffer);
+	// 				let timer = Instant::now();
+	// 				while let Ok(log_entry) = LogEntry::deserialize(&mut buffer) {
+	// 					if check_expr(query.root, log_entry) {
+	// 						logs.push(log_entry);
+	// 						if logs.len() >= count {
+	// 							break 'main;
+	// 						}
+	// 					}
 
-	Ok(logs)
+	// 					// if query.matches(&log_entry) {
+	// 					// 	logs.push(log_entry);
+	// 					// 	if logs.len() >= count {
+	// 					// 		break 'main;
+	// 					// 	}
+	// 					// }
+	// 				}
+	// 				log::info!("Parsed {} bytes in {:?}", buffer.position(), timer.elapsed());
+	// 			}
+	// 		}
+	// 	}
+	// }
+
+	// log::info!("Found {} logs", logs.len());
+
+	// Ok(logs)
 }

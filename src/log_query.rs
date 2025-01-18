@@ -1,4 +1,5 @@
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
+use puppylog::LogEntry;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -11,27 +12,33 @@ pub enum Operator {
     Like,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Value {
-    Date(NaiveDate),
+    Date(DateTime<Utc>),
     String(String),
     Number(i64),
-    Level(LogLevel),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum LogLevel {
-    Info,
-    Warning,
-    Error,
-    Debug,
-}
+// impl Ord for Value {
+//     fn cmp(&self, other: &Self) -> Ordering {
+//         // You can customize the comparison logic here
+//         self.value.cmp(&other.value)
+//     }
+// }
+
+// #[derive(Debug, Clone, PartialEq)]
+// pub enum LogLevel {
+//     Info,
+//     Warning,
+//     Error,
+//     Debug,
+// }
 
 #[derive(Debug, PartialEq)]
 pub struct Condition {
-    left: Box<Expr>,
-    operator: Operator,
-    right: Box<Expr>,
+    pub left: Box<Expr>,
+    pub operator: Operator,
+    pub right: Box<Expr>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -49,22 +56,29 @@ impl Default for Expr {
     }
 }
 
-#[derive(Debug, PartialEq, Default)]
-pub struct QueryAst {
-    root: Expr,
+#[derive(Debug, PartialEq)]
+pub enum OrderDir {
+    Asc,
+    Desc,
 }
 
-impl FromStr for LogLevel {
-    type Err = String;
+#[derive(Debug, PartialEq)]
+pub struct OrderBy {
+    fields: Vec<String>,
+    direction: OrderDir,
+}
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "info" => Ok(LogLevel::Info),
-            "warning" => Ok(LogLevel::Warning),
-            "error" => Ok(LogLevel::Error),
-            "debug" => Ok(LogLevel::Debug),
-            _ => Err(format!("Invalid log level: {}", s)),
-        }
+#[derive(Debug, PartialEq, Default)]
+pub struct QueryAst {
+    pub root: Expr,
+    pub order_by: Option<OrderBy>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+impl QueryAst {
+    pub fn matches(&self, entry: &LogEntry) -> bool {
+        todo!()
     }
 }
 
@@ -128,7 +142,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                     "like" => tokens.push(Token::Operator(Operator::Like)),
                     _ => {
 						let value = if let Ok(date) = NaiveDate::parse_from_str(&word, "%d.%m.%Y") {
-							Value::Date(date)
+							Value::Date(DateTime::<Utc>::from_naive_utc_and_offset(date.into(), Utc))
 						} else if let Ok(num) = word.parse::<i64>() {
 							Value::Number(num)
 						} else {
@@ -232,12 +246,16 @@ fn parse_tokens(tokens: &[Token]) -> Result<Expr, String> {
 pub fn parse_log_query(src: &str) -> Result<QueryAst, String> {
     let tokens = tokenize(src)?;
     let root = parse_tokens(&tokens)?;
-    Ok(QueryAst { root })
+    Ok(QueryAst { root, ..Default::default() })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn datetime(year: i32, month: u32, day: u32) -> DateTime<Utc> {
+        DateTime::<Utc>::from_utc(NaiveDate::from_ymd(year, month, day).and_hms(0, 0, 0), Utc)
+    }
 
     #[test]
     fn test_simple_query() {
@@ -250,7 +268,7 @@ mod tests {
                     Expr::Condition(c) => {
                         assert_eq!(c.left, Box::new(Expr::Value(Value::String("start".to_string()))));
                         assert_eq!(c.operator, Operator::GreaterThanOrEqual);
-						assert_eq!(c.right, Box::new(Expr::Value(Value::Date(NaiveDate::from_ymd(2024, 10, 1)))));
+						assert_eq!(c.right, Box::new(Expr::Value(Value::Date(datetime(2024, 10, 1)))));
                     },
                     _ => panic!("Expected Condition"),
                 }
@@ -258,7 +276,7 @@ mod tests {
                     Expr::Condition(c) => {
                         assert_eq!(c.left, Box::new(Expr::Value(Value::String("end".to_string()))));
                         assert_eq!(c.operator, Operator::LessThanOrEqual);
-						assert_eq!(c.right, Box::new(Expr::Value(Value::Date(NaiveDate::from_ymd(2024, 12, 12)))));
+						assert_eq!(c.right, Box::new(Expr::Value(Value::Date(datetime(2024, 12, 12)))));
                     },
                     _ => panic!("Expected Condition"),
                 }
@@ -280,7 +298,7 @@ mod tests {
                             Expr::Condition(c) => {
                                 assert_eq!(c.left, Box::new(Expr::Value(Value::String("start".to_string()))));
                                 assert_eq!(c.operator, Operator::GreaterThanOrEqual);
-                                assert_eq!(c.right, Box::new(Expr::Value(Value::Date(NaiveDate::from_ymd(2024, 10, 1)))));
+                                assert_eq!(c.right, Box::new(Expr::Value(Value::Date(datetime(2024, 10, 1)))));
                             },
                             _ => panic!("Expected Condition"),
                         }
@@ -288,7 +306,7 @@ mod tests {
                             Expr::Condition(c) => {
                                 assert_eq!(c.left, Box::new(Expr::Value(Value::String("end".to_string()))));
                                 assert_eq!(c.operator, Operator::LessThanOrEqual);
-                                assert_eq!(c.right, Box::new(Expr::Value(Value::Date(NaiveDate::from_ymd(2024, 12, 12)))));
+                                assert_eq!(c.right, Box::new(Expr::Value(Value::Date(datetime(2024, 12, 12)))));
                             },
                             _ => panic!("Expected Condition"),
                         }
@@ -338,12 +356,7 @@ mod tests {
                                     Expr::Value(Value::String("start".to_string()))
                                 );
                                 assert_eq!(c.operator, Operator::GreaterThanOrEqual);
-                                assert_eq!(
-                                    *c.right,
-                                    Expr::Value(Value::Date(
-                                        NaiveDate::from_ymd(2024, 10, 1)
-                                    ))
-                                );
+                                assert_eq!(*c.right, Expr::Value(Value::Date(datetime(2024, 10, 1))));
                             },
                             _ => panic!("Expected Condition"),
                         }
@@ -455,12 +468,7 @@ mod tests {
                                     Expr::Value(Value::String("start".to_string()))
                                 );
                                 assert_eq!(c.operator, Operator::GreaterThanOrEqual);
-                                assert_eq!(
-                                    *c.right,
-                                    Expr::Value(Value::Date(
-                                        NaiveDate::from_ymd(2024, 10, 1)
-                                    ))
-                                );
+                                assert_eq!(*c.right, Expr::Value(Value::Date(datetime(2024, 10, 1))));
                             },
                             _ => panic!("Expected Condition"),
                         }
