@@ -116,7 +116,7 @@ mod tests {
             operator: Operator::Equal,
             right: Box::new(Expr::Value(Value::String("Hello".to_string())))
         });
-        assert!(!check_expr(expr, &logline).unwrap());
+        assert!(!check_expr(&expr, &logline).unwrap());
     }
 
     #[test]
@@ -133,7 +133,7 @@ mod tests {
             operator: Operator::Equal,
             right: Box::new(Expr::Value(Value::String("Hello, world!".to_string())))
         });
-        assert!(check_expr(expr, &logline).unwrap());
+        assert!(check_expr(&expr, &logline).unwrap());
     }
 
     fn create_test_log_entry() -> LogEntry {
@@ -188,14 +188,14 @@ mod tests {
             operator: Operator::Equal,
             right: Box::new(Expr::Value(Value::String("INFO".to_string())))
         });
-        assert!(check_expr(expr, &log).unwrap());
+        assert!(check_expr(&expr, &log).unwrap());
         
         let expr = Expr::Condition(Condition {
             left: Box::new(Expr::Value(Value::String("level".to_string()))),
             operator: Operator::Equal,
             right: Box::new(Expr::Value(Value::String("ERROR".to_string())))
         });
-        assert!(!check_expr(expr, &log).unwrap());
+        assert!(!check_expr(&expr, &log).unwrap());
     }
 
     #[test]
@@ -207,14 +207,14 @@ mod tests {
             operator: Operator::Equal,
             right: Box::new(Expr::Value(Value::String("auth".to_string())))
         });
-        assert!(check_expr(expr, &log).unwrap());
+        assert!(check_expr(&expr, &log).unwrap());
         
         let expr = Expr::Condition(Condition {
             left: Box::new(Expr::Value(Value::String("duration_ms".to_string()))),
             operator: Operator::Equal,
             right: Box::new(Expr::Value(Value::Number(150)))
         });
-        assert!(check_expr(expr, &log).unwrap());
+        assert!(check_expr(&expr, &log).unwrap());
     }
 
     #[test]
@@ -226,14 +226,14 @@ mod tests {
             operator: Operator::Like,
             right: Box::new(Expr::Value(Value::String("login".to_string())))
         });
-        assert!(check_expr(expr, &log).unwrap());
+        assert!(check_expr(&expr, &log).unwrap());
         
         let expr = Expr::Condition(Condition {
             left: Box::new(Expr::Value(Value::String("msg".to_string()))),
             operator: Operator::Like,
             right: Box::new(Expr::Value(Value::String("logout".to_string())))
         });
-        assert!(!check_expr(expr, &log).unwrap());
+        assert!(!check_expr(&expr, &log).unwrap());
     }
 
     #[test]
@@ -253,7 +253,7 @@ mod tests {
                 right: Box::new(Expr::Value(Value::String("123".to_string())))
             }))
         );
-        assert!(check_expr(expr, &log).unwrap());
+        assert!(check_expr(&expr, &log).unwrap());
         
         // Test OR expression
         let expr = Expr::Or(
@@ -268,7 +268,7 @@ mod tests {
                 right: Box::new(Expr::Value(Value::String("123".to_string())))
             }))
         );
-        assert!(check_expr(expr, &log).unwrap());
+        assert!(check_expr(&expr, &log).unwrap());
     }
 
     #[test]
@@ -281,7 +281,7 @@ mod tests {
             operator: Operator::Equal,
             right: Box::new(Expr::Value(Value::Date(Utc::now())))
         });
-        assert!(check_expr(expr, &log).is_err());
+        assert!(check_expr(&expr, &log).is_err());
         
         // Test invalid message comparison
         let expr = Expr::Condition(Condition {
@@ -289,18 +289,18 @@ mod tests {
             operator: Operator::Equal,
             right: Box::new(Expr::Value(Value::Date(Utc::now())))
         });
-        assert!(check_expr(expr, &log).is_err());
+        assert!(check_expr(&expr, &log).is_err());
     }
 
     #[test]
     fn test_empty_and_value_expressions() {
         let log = create_test_log_entry();
         
-        assert!(check_expr(Expr::Empty, &log).unwrap());
-        assert!(check_expr(Expr::Value(Value::String("nonempty".to_string())), &log).unwrap());
-        assert!(!check_expr(Expr::Value(Value::String("".to_string())), &log).unwrap());
-        assert!(check_expr(Expr::Value(Value::Number(1)), &log).unwrap());
-        assert!(!check_expr(Expr::Value(Value::Number(0)), &log).unwrap());
-        assert!(check_expr(Expr::Value(Value::Date(Utc::now())), &log).unwrap());
+        assert!(check_expr(&Expr::Empty, &log).unwrap());
+        assert!(check_expr(&Expr::Value(Value::String("nonempty".to_string())), &log).unwrap());
+        assert!(!check_expr(&Expr::Value(Value::String("".to_string())), &log).unwrap());
+        assert!(check_expr(&Expr::Value(Value::Number(1)), &log).unwrap());
+        assert!(!check_expr(&Expr::Value(Value::Number(0)), &log).unwrap());
+        assert!(check_expr(&Expr::Value(Value::Date(Utc::now())), &log).unwrap());
     }
 }
