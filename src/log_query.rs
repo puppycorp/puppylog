@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_simple_query() {
-        let query = r#"start >= 01.10.2024 and end <= 12.12.2024s"#;
+        let query = r#"start >= 01.10.2024 and end <= 12.12.2024"#;
         let ast = parse_log_query(query).unwrap();
         
         match ast.root {
