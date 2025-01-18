@@ -265,11 +265,12 @@ class LogSearcher {
       this.logEntries.push(...data);
       this.handleSort();
       this.onNewLoglines();
+      this.offset += this.count;
+      if (data.length >= this.count) {
+        this.alreadyFetched = false;
+      }
     }).catch((err) => {
       console.error("error", err);
-    }).finally(() => {
-      this.alreadyFetched = false;
-      this.offset += this.count;
     });
   }
   createEventSource(url) {
