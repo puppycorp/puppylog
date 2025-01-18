@@ -158,6 +158,8 @@ export class LogSearcher {
 	public firstDate?: string
 	public lastDate?: string
     private query: string = ""
+    private offset: number = 0
+    private count: number = 100
     private alreadyFetched: boolean = false
 
     public constructor(args: {
@@ -194,6 +196,8 @@ export class LogSearcher {
         if (this.query) {
             urlQuery.append("query", this.query)
         }
+        urlQuery.append("count", this.count.toString())
+        urlQuery.append("offset", this.offset.toString())
         const url = new URL("http://localhost:3337/api/logs")
         url.search = urlQuery.toString()
         fetch(url.toString()).then(async (res) => {
@@ -211,6 +215,9 @@ export class LogSearcher {
             this.onNewLoglines()
         }).catch((err) => {
             console.error("error", err)
+        }).finally(() => {
+            this.alreadyFetched = false
+            this.offset += this.count
         })
     }
 

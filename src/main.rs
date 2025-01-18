@@ -41,12 +41,12 @@ struct GetLogsQuery {
 	pub start: Option<DateTime<Utc>>,
 	pub end: Option<DateTime<Utc>>,
 	pub level: Option<LogLevel>,
+    pub offset: Option<usize>,
     pub count: Option<usize>,
 	pub props: Option<Vec<(String, String)>>,
 	pub search: Option<String>,
     pub query: Option<String>,
     pub timezone: Option<i32>,
-    pub offset: Option<i32>,
 }
 
 
@@ -150,7 +150,7 @@ async fn get_logs(
 	Query(params): Query<GetLogsQuery>
 ) -> Result<Json<Value>, BadRequestError> {
     log::info!("get_logs {:?}", params);
-    let query = match params.query {
+    let mut query = match params.query {
         Some(ref query) => match parse_log_query(query) {
             Ok(query) => query,
             Err(err) => return Err(BadRequestError(err.to_string()))
@@ -159,6 +159,8 @@ async fn get_logs(
     };
 
     log::info!("query: {:?}", query);
+    query.offset = params.offset;
+    query.limit = params.count;
 
     let log_entries = search_logs(query).await.unwrap();
     // log::info!("log_entries: {:?}", log_entries);

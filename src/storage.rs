@@ -93,7 +93,8 @@ pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 	}
 	// let start = query.start.unwrap_or(Utc::now());
 	// let count = query.count.unwrap_or(50);
-	let count = 200;
+	let offset = query.offset.unwrap_or(0);
+	let count = query.limit.unwrap_or(200);
 	let mut logs: Vec<LogEntry> = Vec::new();
 	let mut parser = LogEntryParser::new();
 	let mut years = get_years().await;
@@ -125,15 +126,21 @@ pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 					log::info!("Read {} bytes in {:?}", buffer.len(), timer.elapsed());
 					let mut buffer = Cursor::new(buffer);
 					let timer = Instant::now();
+					let mut total_loglines = 0;
 					while let Ok(log_entry) = LogEntry::deserialize(&mut buffer) {
+						total_loglines += 1;
 						if check_expr(&query.root, &log_entry).unwrap() {
 							logs.push(log_entry);
-							if logs.len() >= count {
-								break 'main;
-							}
 						}
 					}
-					log::info!("Parsed {} bytes in {:?}", buffer.position(), timer.elapsed());
+					log::info!("Parsed {} loglines in {:?}", total_loglines, timer.elapsed());
+					let timer = Instant::now();
+					logs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+					log::info!("sorting {} logs in {:?}", logs.len(), timer.elapsed());
+					let total_len = offset + count;
+					if logs.len() >= total_len {
+						break 'main;
+					}
 				}
 			}
 		}
@@ -141,5 +148,5 @@ pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 
 	log::info!("Found {} logs", logs.len());
 
-	Ok(logs)
+	Ok(logs.into_iter().skip(offset).take(count).collect())
 }

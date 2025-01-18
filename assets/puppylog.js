@@ -218,6 +218,8 @@ class LogSearcher {
   firstDate;
   lastDate;
   query = "";
+  offset = 0;
+  count = 100;
   alreadyFetched = false;
   constructor(args) {
     this.onClear = args.onClear;
@@ -246,6 +248,8 @@ class LogSearcher {
     if (this.query) {
       urlQuery.append("query", this.query);
     }
+    urlQuery.append("count", this.count.toString());
+    urlQuery.append("offset", this.offset.toString());
     const url = new URL("http://localhost:3337/api/logs");
     url.search = urlQuery.toString();
     fetch(url.toString()).then(async (res) => {
@@ -263,6 +267,9 @@ class LogSearcher {
       this.onNewLoglines();
     }).catch((err) => {
       console.error("error", err);
+    }).finally(() => {
+      this.alreadyFetched = false;
+      this.offset += this.count;
     });
   }
   createEventSource(url) {
