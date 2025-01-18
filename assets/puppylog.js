@@ -232,6 +232,7 @@ class LogSearcher {
   }
   setQuery(query) {
     this.query = query;
+    this.offset = 0;
     this.alreadyFetched = false;
     setQueryParam("query", query);
     this.logEntries = [];

@@ -179,6 +179,7 @@ export class LogSearcher {
 
     public setQuery(query: string) {
         this.query = query
+        this.offset = 0
         this.alreadyFetched = false
         setQueryParam("query", query)
         this.logEntries = []
