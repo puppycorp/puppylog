@@ -27,21 +27,22 @@ pub enum LogLevel {
 
 #[derive(Debug, PartialEq)]
 pub struct Condition {
-    left: Value,
+    left: Box<Expr>,
     operator: Operator,
-    right: Value,
+    right: Box<Expr>,
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Expression {
+pub enum Expr {
     Condition(Condition),
-    And(Box<Expression>, Box<Expression>),
-    Or(Box<Expression>, Box<Expression>),
+    And(Box<Expr>, Box<Expr>),
+    Or(Box<Expr>, Box<Expr>),
+    Value(Value),
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Query {
-    root: Expression,
+    root: Expr,
 }
 
 impl FromStr for LogLevel {
@@ -106,8 +107,6 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                     }
                     word.push(chars.next().unwrap());
                 }
-
-				println!("word: {}", word);
                 
                 match word.as_str() {
                     "and" => tokens.push(Token::And),
@@ -125,29 +124,6 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
 							Value::String(word)
 						};
 						tokens.push(Token::Value(value));
-
-                        // // Try to parse as a field or value
-                        // if tokens.last().map_or(true, |t| matches!(t, Token::OpenParen | Token::And | Token::Or)) {
-                        //     tokens.push(Token::Field(word));
-                        // } else {
-                        //     // Parse value based on the field type
-                        //     if let Some(Token::Field(field)) = tokens.iter().last().cloned() {
-                        //         let value = match field.as_str() {
-                        //             "start" | "end" => {
-                        //                 let date = NaiveDate::parse_from_str(&word, "%d.%m.%Y")
-                        //                     .map_err(|e| format!("Invalid date format: {}", e))?;
-                        //                 Value::Date(date)
-                        //             },
-                        //             "level" => {
-                        //                 let level = LogLevel::from_str(&word)?;
-                        //                 Value::Level(level)
-                        //             },
-                        //             "msg" => Value::String(word),
-                        //             _ => Value::String(word)
-                        //         };
-                        //         tokens.push(Token::Value(value));
-                        //     }
-                        // }
                     }
                 }
             }
@@ -156,30 +132,50 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
     Ok(tokens)
 }
 
-fn parse_tokens(tokens: &[Token]) -> Result<Expression, String> {
-    fn parse_condition(tokens: &[Token], start: usize) -> Result<(Expression, usize), String> {
-		println!("tokens: {:?} start: {}", tokens, start);
-		
+fn parse_tokens(tokens: &[Token]) -> Result<Expr, String> {
+    fn parse_condition(tokens: &[Token], start: usize) -> Result<(Expr, usize), String> {
         if tokens.len() - start < 3 {
-			println!("tokens: {:?} start: {}", tokens, start);
+			log::info!("tokens: {:?} start: {}", tokens, start);
             return Err("Condition requires 3 tokens format: FIELD OPERATOR VALUE".to_string()); 
         }
         
         match (&tokens[start], &tokens[start + 1], &tokens[start + 2]) {
             (Token::Value(left), Token::Operator(op), Token::Value(right)) => {
-                Ok((Expression::Condition(Condition {
-                    left: left.clone(),
+                Ok((Expr::Condition(Condition {
+                    left: Box::new(Expr::Value(left.clone())),
                     operator: op.clone(),
-                    right: right.clone(),
+                    right: Box::new(Expr::Value(right.clone())),
                 }), start + 3))
             },
+            (Token::Value(left), Token::Operator(op), Token::OpenParen) => {
+                let (expr, pos) = parse_expression(tokens, start + 3)?;
+                if pos >= tokens.len() || tokens[pos] != Token::CloseParen {
+                    return Err("Missing closing parenthesis".to_string());
+                }
+                Ok((Expr::Condition(Condition {
+                    left: Box::new(Expr::Value(left.clone())),
+                    operator: op.clone(),
+                    right: Box::new(expr),
+                }), pos + 1))
+            },
+            (Token::OpenParen, Token::Operator(op), Token::Value(right)) => {
+                let (expr, pos) = parse_expression(tokens, start + 1)?;
+                if pos >= tokens.len() || tokens[pos] != Token::CloseParen {
+                    return Err("Missing closing parenthesis".to_string());
+                }
+                Ok((Expr::Condition(Condition {
+                    left: Box::new(expr),
+                    operator: op.clone(),
+                    right: Box::new(Expr::Value(right.clone())),
+                }), pos + 1))
+            },
             _ => {
-				Err(format!("Expected VALUE OPERATOR VALUE got {:?}", (&tokens[start], &tokens[start + 1], &tokens[start + 2])))
+				Err(format!("Could not parse condition: {:?} {:?} {:?}", tokens[start], tokens[start + 1], tokens[start + 2]))
 			},
         }
     }
 
-    fn parse_expression(tokens: &[Token], start: usize) -> Result<(Expression, usize), String> {
+    fn parse_expression(tokens: &[Token], start: usize) -> Result<(Expr, usize), String> {
         if start >= tokens.len() {
             return Err("Unexpected end of input".to_string());
         }
@@ -199,12 +195,12 @@ fn parse_tokens(tokens: &[Token]) -> Result<Expression, String> {
             match &tokens[pos] {
                 Token::And => {
                     let (right, next_pos) = parse_expression(tokens, pos + 1)?;
-                    left = Expression::And(Box::new(left), Box::new(right));
+                    left = Expr::And(Box::new(left), Box::new(right));
                     pos = next_pos;
                 },
                 Token::Or => {
                     let (right, next_pos) = parse_expression(tokens, pos + 1)?;
-                    left = Expression::Or(Box::new(left), Box::new(right));
+                    left = Expr::Or(Box::new(left), Box::new(right));
                     pos = next_pos;
                 },
                 Token::CloseParen => break,
@@ -238,20 +234,20 @@ mod tests {
         let ast = parse_log_query(query).unwrap();
         
         match ast.root {
-            Expression::And(left, right) => {
+            Expr::And(left, right) => {
                 match *left {
-                    Expression::Condition(c) => {
-                        assert_eq!(c.left, Value::String("start".to_string()));
+                    Expr::Condition(c) => {
+                        assert_eq!(c.left, Box::new(Expr::Value(Value::String("start".to_string()))));
                         assert_eq!(c.operator, Operator::GreaterThanOrEqual);
-						assert_eq!(c.right, Value::Date(NaiveDate::from_ymd(2024, 10, 1)));
+						assert_eq!(c.right, Box::new(Expr::Value(Value::Date(NaiveDate::from_ymd(2024, 10, 1)))));
                     },
                     _ => panic!("Expected Condition"),
                 }
                 match *right {
-                    Expression::Condition(c) => {
-                        assert_eq!(c.left, Value::String("end".to_string()));
+                    Expr::Condition(c) => {
+                        assert_eq!(c.left, Box::new(Expr::Value(Value::String("end".to_string()))));
                         assert_eq!(c.operator, Operator::LessThanOrEqual);
-						assert_eq!(c.right, Value::Date(NaiveDate::from_ymd(2024, 12, 12)));
+						assert_eq!(c.right, Box::new(Expr::Value(Value::Date(NaiveDate::from_ymd(2024, 12, 12)))));
                     },
                     _ => panic!("Expected Condition"),
                 }
@@ -262,28 +258,302 @@ mod tests {
 
     #[test]
     fn test_complex_query() {
-        let query = r#"(start>=01.10.2024 and end<=12.12.2024) or (level=info and msg like "error")"#;
+        let query = r#"(start >= 01.10.2024 and end <= 12.12.2024) or (level = info and msg like "error")"#;
         let ast = parse_log_query(query).unwrap();
         
         match ast.root {
-            Expression::Or(left, right) => {
+            Expr::Or(left, right) => {
                 match *left {
-                    Expression::And(_, _) => (),
+                    Expr::And(left, right) => {
+                        match *left {
+                            Expr::Condition(c) => {
+                                assert_eq!(c.left, Box::new(Expr::Value(Value::String("start".to_string()))));
+                                assert_eq!(c.operator, Operator::GreaterThanOrEqual);
+                                assert_eq!(c.right, Box::new(Expr::Value(Value::Date(NaiveDate::from_ymd(2024, 10, 1)))));
+                            },
+                            _ => panic!("Expected Condition"),
+                        }
+                        match *right {
+                            Expr::Condition(c) => {
+                                assert_eq!(c.left, Box::new(Expr::Value(Value::String("end".to_string()))));
+                                assert_eq!(c.operator, Operator::LessThanOrEqual);
+                                assert_eq!(c.right, Box::new(Expr::Value(Value::Date(NaiveDate::from_ymd(2024, 12, 12)))));
+                            },
+                            _ => panic!("Expected Condition"),
+                        }
+                    },
                     _ => panic!("Expected And expression"),
                 }
                 match *right {
-                    Expression::And(_, _) => (),
+                    Expr::And(left, right) => {
+                        match *left {
+                            Expr::Condition(c) => {
+                                assert_eq!(c.left, Box::new(Expr::Value(Value::String("level".to_string()))));
+                                assert_eq!(c.operator, Operator::Equal);
+                                assert_eq!(c.right, Box::new(Expr::Value(Value::String("info".to_string()))));
+                            },
+                            _ => panic!("Expected Condition"),
+                        }
+                        match *right {
+                            Expr::Condition(c) => {
+                                assert_eq!(c.left, Box::new(Expr::Value(Value::String("msg".to_string()))));
+                                assert_eq!(c.operator, Operator::Like);
+                                assert_eq!(c.right, Box::new(Expr::Value(Value::String("error".to_string()))));
+                            },
+                            _ => panic!("Expected Condition"),
+                        }
+                    },
                     _ => panic!("Expected And expression"),
                 }
             },
             _ => panic!("Expected Or expression"),
         }
     }
+    #[test]
+    fn test_right_side_nested_parentheses() {
+        let query = r#"(start >= 01.10.2024 and (level = info or level = error)) and msg like "test""#;
+        let ast = parse_log_query(query).unwrap();
+
+        match ast.root {
+            Expr::And(ref left, ref right) => {
+                // Left side: And(Condition(...), Or(...))
+                match **left {
+                    Expr::And(ref left_inner, ref right_inner) => {
+                        // left_inner is Condition for start >= 01.10.2024
+                        match **left_inner {
+                            Expr::Condition(ref c) => {
+                                assert_eq!(
+                                    *c.left,
+                                    Expr::Value(Value::String("start".to_string()))
+                                );
+                                assert_eq!(c.operator, Operator::GreaterThanOrEqual);
+                                assert_eq!(
+                                    *c.right,
+                                    Expr::Value(Value::Date(
+                                        NaiveDate::from_ymd(2024, 10, 1)
+                                    ))
+                                );
+                            },
+                            _ => panic!("Expected Condition"),
+                        }
+                        // right_inner is Or(...)
+                        match **right_inner {
+                            Expr::Or(ref left_or, ref right_or) => {
+                                // left_or is Condition(level = info)
+                                match **left_or {
+                                    Expr::Condition(ref c) => {
+                                        assert_eq!(
+                                            *c.left,
+                                            Expr::Value(Value::String("level".to_string()))
+                                        );
+                                        assert_eq!(c.operator, Operator::Equal);
+                                        assert_eq!(
+                                            *c.right,
+                                            Expr::Value(Value::String("info".to_string()))
+                                        );
+                                    },
+                                    _ => panic!("Expected Condition"),
+                                }
+                                // right_or is Condition(level = error)
+                                match **right_or {
+                                    Expr::Condition(ref c) => {
+                                        assert_eq!(
+                                            *c.left,
+                                            Expr::Value(Value::String("level".to_string()))
+                                        );
+                                        assert_eq!(c.operator, Operator::Equal);
+                                        assert_eq!(
+                                            *c.right,
+                                            Expr::Value(Value::String("error".to_string()))
+                                        );
+                                    },
+                                    _ => panic!("Expected Condition"),
+                                }
+                            },
+                            _ => panic!("Expected Or"),
+                        }
+                    },
+                    _ => panic!("Expected And"),
+                }
+
+                // Right side: Condition(msg like "test")
+                match **right {
+                    Expr::Condition(ref c) => {
+                        assert_eq!(*c.left, Expr::Value(Value::String("msg".to_string())));
+                        assert_eq!(c.operator, Operator::Like);
+                        assert_eq!(*c.right, Expr::Value(Value::String("test".to_string())));
+                    },
+                    _ => panic!("Expected Condition"),
+                }
+            },
+            _ => panic!("Expected top-level And"),
+        }
+    }
 
     #[test]
-    fn test_nested_parentheses() {
-        let query = r#"(start>=01.10.2024 and (level=info or level=error)) and msg like "test""#;
-        assert!(parse_log_query(query).is_ok());
+    fn test_left_side_nested_parentheses() {
+        let query = r#"((level = info or level = error) and start >= 01.10.2024) and msg like "test""#;
+        let ast = parse_log_query(query).unwrap();
+
+        match ast.root {
+            Expr::And(ref left, ref right) => {
+                // Left side: And(Condition(...), Or(...))
+                match **left {
+                    Expr::And(ref left_inner, ref right_inner) => {
+                        // left_inner is Condition for start >= 01.10.2024
+                        match **left_inner {
+                            Expr::Or(ref left_or, ref right_or) => {
+                                // left_or is Condition(level = info)
+                                match **left_or {
+                                    Expr::Condition(ref c) => {
+                                        assert_eq!(
+                                            *c.left,
+                                            Expr::Value(Value::String("level".to_string()))
+                                        );
+                                        assert_eq!(c.operator, Operator::Equal);
+                                        assert_eq!(
+                                            *c.right,
+                                            Expr::Value(Value::String("info".to_string()))
+                                        );
+                                    },
+                                    _ => panic!("Expected Condition"),
+                                }
+                                // right_or is Condition(level = error)
+                                match **right_or {
+                                    Expr::Condition(ref c) => {
+                                        assert_eq!(
+                                            *c.left,
+                                            Expr::Value(Value::String("level".to_string()))
+                                        );
+                                        assert_eq!(c.operator, Operator::Equal);
+                                        assert_eq!(
+                                            *c.right,
+                                            Expr::Value(Value::String("error".to_string()))
+                                        );
+                                    },
+                                    _ => panic!("Expected Condition"),
+                                }
+                            },
+                            _ => panic!("Expected Or"),
+                        }
+                        // right_inner is Or(...)
+                        match **right_inner {
+                            Expr::Condition(ref c) => {
+                                assert_eq!(
+                                    *c.left,
+                                    Expr::Value(Value::String("start".to_string()))
+                                );
+                                assert_eq!(c.operator, Operator::GreaterThanOrEqual);
+                                assert_eq!(
+                                    *c.right,
+                                    Expr::Value(Value::Date(
+                                        NaiveDate::from_ymd(2024, 10, 1)
+                                    ))
+                                );
+                            },
+                            _ => panic!("Expected Condition"),
+                        }
+                    },
+                    _ => panic!("Expected And"),
+                }
+
+                // Right side: Condition(msg like "test")
+                match **right {
+                    Expr::Condition(ref c) => {
+                        assert_eq!(*c.left, Expr::Value(Value::String("msg".to_string())));
+                        assert_eq!(c.operator, Operator::Like);
+                        assert_eq!(*c.right, Expr::Value(Value::String("test".to_string())));
+                    },
+                    _ => panic!("Expected Condition"),
+                }
+            },
+            _ => panic!("Expected top-level And"),
+        }
+    }
+
+    #[test]
+    fn test_or_with_two_nested_parantheses() {
+        let query = r#"(level = info and msg like "test") or (level = error and msg like "error")"#;
+        let ast = parse_log_query(query).unwrap();
+
+        match ast.root {
+            Expr::Or(ref left, ref right) => {
+                // Left side: And(Condition(...), Condition(...))
+                match **left {
+                    Expr::And(ref left_inner, ref right_inner) => {
+                        // left_inner is Condition(level = info)
+                        match **left_inner {
+                            Expr::Condition(ref c) => {
+                                assert_eq!(
+                                    *c.left,
+                                    Expr::Value(Value::String("level".to_string()))
+                                );
+                                assert_eq!(c.operator, Operator::Equal);
+                                assert_eq!(
+                                    *c.right,
+                                    Expr::Value(Value::String("info".to_string()))
+                                );
+                            },
+                            _ => panic!("Expected Condition"),
+                        }
+                        // right_inner is Condition(msg like "test")
+                        match **right_inner {
+                            Expr::Condition(ref c) => {
+                                assert_eq!(
+                                    *c.left,
+                                    Expr::Value(Value::String("msg".to_string()))
+                                );
+                                assert_eq!(c.operator, Operator::Like);
+                                assert_eq!(
+                                    *c.right,
+                                    Expr::Value(Value::String("test".to_string()))
+                                );
+                            },
+                            _ => panic!("Expected Condition"),
+                        }
+                    },
+                    _ => panic!("Expected And"),
+                }
+
+                // Right side: And(Condition(...), Condition(...))
+                match **right {
+                    Expr::And(ref left_inner, ref right_inner) => {
+                        // left_inner is Condition(level = error)
+                        match **left_inner {
+                            Expr::Condition(ref c) => {
+                                assert_eq!(
+                                    *c.left,
+                                    Expr::Value(Value::String("level".to_string()))
+                                );
+                                assert_eq!(c.operator, Operator::Equal);
+                                assert_eq!(
+                                    *c.right,
+                                    Expr::Value(Value::String("error".to_string()))
+                                );
+                            },
+                            _ => panic!("Expected Condition"),
+                        }
+                        // right_inner is Condition(msg like "error")
+                        match **right_inner {
+                            Expr::Condition(ref c) => {
+                                assert_eq!(
+                                    *c.left,
+                                    Expr::Value(Value::String("msg".to_string()))
+                                );
+                                assert_eq!(c.operator, Operator::Like);
+                                assert_eq!(
+                                    *c.right,
+                                    Expr::Value(Value::String("error".to_string()))
+                                );
+                            },
+                            _ => panic!("Expected Condition"),
+                        }
+                    },
+                    _ => panic!("Expected And"),
+                }
+            },
+            _ => panic!("Expected top-level Or"),
+        }
     }
 
     #[test]
@@ -294,7 +564,7 @@ mod tests {
 
     #[test]
     fn test_invalid_operator_combination() {
-        let query = r#"start>=01.10.2024 or or end<=12.12.2024"#;
+        let query = r#"start >= 01.10.2024 or or end <= 12.12.2024"#;
         assert!(parse_log_query(query).is_err());
     }
 }
