@@ -1,6 +1,7 @@
 mod logfile;
 mod circle_buffer;
 mod chunk_reader;
+mod drain;
 
 use std::io;
 use std::io::Read;
