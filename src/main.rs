@@ -1,7 +1,7 @@
 use std::{collections::{HashMap, VecDeque}, fs::read_dir, io::{Read, Write}, process::Child, sync::Arc};
 
 use axum::{
-    body::{Body, BodyDataStream}, extract::{DefaultBodyLimit, Path, Query, State}, http::StatusCode, response::{sse::{Event, KeepAlive}, IntoResponse, Response, Sse}, routing::{get, post}, Json, Router
+    body::{Body, BodyDataStream}, extract::{DefaultBodyLimit, Path, Query, State}, http::StatusCode, response::{sse::{Event, KeepAlive}, Html, IntoResponse, Response, Sse}, routing::{get, post}, Json, Router
 };
 use bytes::Bytes;
 use chrono::{DateTime, Datelike, Utc};
@@ -67,6 +67,7 @@ async fn main() {
     // build our application with a route
     let app = Router::new()
         .route("/", get(root))
+        .route("/puppylog.js", get(js))
         .route("/api/device/{devid}/rawlogs", post(upload_raw_logs))
             .layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
             .layer(RequestDecompressionLayer::new().gzip(true))
@@ -84,9 +85,16 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
+const INDEX_HTML: &str = include_str!("../assets/index.html");
+const JS_HTML: &str = include_str!("../assets/puppylog.js");
+
 // basic handler that responds with a static string
-async fn root() -> &'static str {
-    "Hello, World!"
+async fn root() -> Html<&'static str> {
+    Html(INDEX_HTML)
+}
+
+async fn js() -> &'static str {
+    JS_HTML
 }
 
 async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
