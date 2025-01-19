@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use clap::{Parser, Subcommand};
-use puppylog::{LogEntry, LogLevel};
+use puppylog::{DrainParser, LogEntry, LogLevel};
 use rand::{distributions::Alphanumeric, prelude::*};
 use reqwest;
 use std::collections::HashMap;
@@ -64,12 +64,8 @@ const REPORT_TYPES: &[&str] = &["Sales", "Inventory", "UserActivity", "Performan
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    /// Number of log lines to generate
-    #[arg(short, long, default_value_t = 1000)]
-    count: usize,
-	#[arg(short, long, default_value_t = 0)]
-	interval: u64,
-	address: String,
+    #[command(subcommand)]
+    subcommand: Commands,
 }
 
 #[derive(Subcommand)]
@@ -89,6 +85,18 @@ enum Commands {
         /// Server address
         address: String,
     },
+    Tokenize {
+        #[command(subcommand)]
+        subcommand: TokenizeSubcommands,
+    }
+}
+
+#[derive(Subcommand)]
+enum TokenizeSubcommands {
+    Drain {
+        src: String,
+        output: Option<String>,
+    }
 }
 
 // Helper functions to generate random IDs
@@ -252,37 +260,78 @@ async fn upload_logs(address: &str, logs: &[String], compress: bool) -> Result<(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
+    let args = Cli::parse();
     
-    let logs = generate_logs(cli.count);
+    // let logs = generate_logs(cli.count);
 
-	let client = reqwest::Client::new();
+	// let client = reqwest::Client::new();
 
-	let mut buffer = Vec::new();
-	let mut cursor = std::io::Cursor::new(&mut buffer);
-	for log in logs {
-		log.serialize(&mut cursor)?;
-	}
+	// let mut buffer = Vec::new();
+	// let mut cursor = std::io::Cursor::new(&mut buffer);
+	// for log in logs {
+	// 	log.serialize(&mut cursor)?;
+	// }
 
-    let mut headers = reqwest::header::HeaderMap::new();
+    // let mut headers = reqwest::header::HeaderMap::new();
 
-	headers.insert(
-		reqwest::header::CONTENT_ENCODING,
-		reqwest::header::HeaderValue::from_static("gzip"),
-	);
+	// headers.insert(
+	// 	reqwest::header::CONTENT_ENCODING,
+	// 	reqwest::header::HeaderValue::from_static("gzip"),
+	// );
 	
-	let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-	encoder.write_all(&buffer)?;
-	let body = encoder.finish()?;
+	// let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+	// encoder.write_all(&buffer)?;
+	// let body = encoder.finish()?;
 
-    let response = client
-        .post(cli.address)
-        .headers(headers)
-        .body(body)
-        .send()
-        .await?;
+    // let response = client
+    //     .post(cli.address)
+    //     .headers(headers)
+    //     .body(body)
+    //     .send()
+    //     .await?;
 
-    println!("Upload status: {}", response.status());
+    // println!("Upload status: {}", response.status());
+
+    match args.subcommand {
+        Commands::Rawupload { address } => todo!(),
+        Commands::Rawstream { address } => todo!(),
+        Commands::Upload { address } => todo!(),
+        Commands::Tokenize { subcommand } => {
+            match subcommand {
+                TokenizeSubcommands::Drain { src, output } => {
+                    let mut parser = DrainParser::new();
+                    parser.set_token_separators(vec![' ', ':', ',', ';']);
+                    //18:07:15,793
+                    //10.10.34.29:50010 
+                    parser.set_wildcard_regex(r"(^[0-9]+$)|(^\d{4}-\d{2}-\d{2}$)|(^\d{2}:\d{2}:\d{2},\d{3}$)|(^/\d{1,3}.\d{1,3}.\d{1,3}.\d{1,3}:\d+$)");
+                    let logs = std::fs::read_to_string(src)?;
+                    let mut rows = vec![
+                        "TemplateID;Text".to_string(),
+                    ];
+                    let timer = std::time::Instant::now();
+                    for line in logs.lines() {
+                        parser.parse(line);
+                    }
+                    for (inx, line) in logs.lines().enumerate() {
+                        let template_id = parser.parse(line);
+                        let template_tokens = parser.get_template(template_id);
+                        //println!("Template ID: {} - {:?}", template_id, template_tokens.join(" "));
+                        rows.push(format!("{};{}", template_id, template_tokens.join(" ")));
+
+                        if inx % 1000 == 0 {
+                            let speed = inx as f64 / timer.elapsed().as_secs_f64();
+                            println!("[{}] lines processed in {:?} templates count {} speed {:.2} l/s", inx, timer.elapsed(), parser.get_templates_count(), speed);
+                        }
+                    }
+                    if let Some(output) = output {
+                        std::fs::write(output, rows.join("\n"))?;
+                    }
+
+                    println!("Templates count: {}", parser.get_templates_count());
+                }
+            }
+        }
+    }
     
     Ok(())
 }

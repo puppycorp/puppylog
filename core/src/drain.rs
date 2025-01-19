@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use regex::Regex;
 
-fn simseq<A>(a: &[A], b: &[A]) -> f64
+fn simseq_dp<A>(a: &[A], b: &[A]) -> f64
 where 
     A: PartialEq
 {
@@ -27,6 +27,14 @@ where
     ans as f64 / (a.len() + 1) as f64
 }
 
+fn simseq<A>(a: &[A], b: &[A]) -> f64
+where 
+    A: PartialEq
+{
+    let score = a.iter().zip(b.iter()).filter(|(x, y)| x == y).count() as f64;
+    score / a.len() as f64
+}
+
 fn tokenize(input: &str) -> impl Iterator<Item = &str> {
     input.split(" ")
 }
@@ -39,26 +47,33 @@ pub struct LogGroup {
 
 #[derive(Debug)]
 pub struct LogTemplate {
-    pub id: u32,
     pub tokens: Vec<String>,
 }
 
 #[derive(Debug)]
 pub struct DrainParser {
-    template_id: u32,
-    length_map: HashMap<u32, HashMap<String, Vec<LogTemplate>>>,
+    length_map: HashMap<u32, HashMap<String, Vec<u32>>>,
     wildcard_regex: Regex,
     token_separators: Vec<char>,
+    templates: Vec<Vec<String>>,
 }
 
 impl DrainParser {
     pub fn new() -> Self {
         DrainParser {
-            template_id: 1,
             length_map: HashMap::new(),
             wildcard_regex: Regex::new(r"^\d+$").unwrap(),
             token_separators: vec![' '],
+            templates: Vec::new(),
         }
+    }
+
+    pub fn get_templates_count(&self) -> usize {
+        self.templates.len()
+    }
+
+    pub fn get_template(&self, id: u32) -> &Vec<String> {
+        &self.templates[id as usize - 1]
     }
 
     pub fn set_wildcard_regex(&mut self, regex: &str) {
@@ -83,7 +98,8 @@ impl DrainParser {
         let mut largest_sim = 0.0;
         let mut largest_inx = 0;
         for (inx, template) in group.iter().enumerate() {
-            let score = simseq(&tokens, &template.tokens);
+            let template_tokens = &self.templates[template.clone() as usize];
+            let score = simseq(&tokens, template_tokens);
             if score > largest_sim {
                 largest_inx = inx;
                 largest_sim = score;
@@ -91,22 +107,20 @@ impl DrainParser {
         }
         
         if largest_sim > 0.5 {
-            let template = &mut group[largest_inx];
+            let template_id = &mut group[largest_inx];
+            let template_tokens = &mut self.templates[*template_id as usize];
             for i in 0..length as usize {
-                if template.tokens[i] == tokens[i] {
+                if template_tokens[i] == tokens[i] {
                     continue;
                 }
-                template.tokens[i] = "*".to_string();
+                template_tokens[i] = "*".to_string();
             }
-            group[largest_inx].id
+            *template_id + 1
         } else {
-            group.push(LogTemplate {
-                id: 1,
-                tokens: tokens.iter().map(|x| x.to_string()).collect(),
-            });
-            let next = self.template_id;
-            self.template_id += 1;
-            next
+            self.templates.push(tokens);
+            let next = self.templates.len() as u32 - 1;
+            group.push(next);
+            next + 1
         }
     }
 }
