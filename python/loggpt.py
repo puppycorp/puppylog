@@ -54,7 +54,7 @@ class TransformerBlock:
 		x = x + self.mlp(self.norm2(x))
 		return x
 
-class GPT:
+class LogGPT:
 	def __init__(self, config: GPTConfig):
 		self.config = config
 		self.token_embedding = nn.Embedding(config.vocab_size, config.embed_dim)
@@ -73,13 +73,10 @@ class GPT:
 		x = self.norm(x.sequential(self.blocks))
 
 		if targets is not None:
-			logits = self.head(x)[:, :, :self.config.vocab_size]
-			print("logits", logits.numpy())
-			print("targets", targets.numpy())
+			logits = self.head(x)[:, -1, :self.config.vocab_size]
 			loss = logits.sparse_categorical_crossentropy(targets)
 		else:
 			logits = self.head(x[:, [-1], :])[:, :, :self.config.vocab_size]
 			loss = None
 
 		return logits, loss
-
