@@ -84,9 +84,11 @@ class VirtualTable {
     });
   }
   setRowCount(rowCount) {
-    console.log("Setting row count", rowCount);
+    const scrollTop = this.root.scrollTop;
+    const oldStartIndex = Math.floor(scrollTop / this.rowHeight);
     this.rowCount = rowCount;
     this.container.style.height = `${this.rowHeight * rowCount + this.rowHeight * 3}px`;
+    this.root.scrollTop = oldStartIndex * this.rowHeight;
     this.updateVisibleRows();
     this.needMoreRows = false;
   }

@@ -99,12 +99,17 @@ export class VirtualTable {
 		})
     }
 
-    public setRowCount(rowCount: number) {
-        console.log("Setting row count", rowCount);
-		//this.needMoreRows = false
-        this.rowCount = rowCount;
-        this.container.style.height = `${this.rowHeight * rowCount + this.rowHeight * 3}px`;
-        this.updateVisibleRows();
-		this.needMoreRows = false
-    }
+	public setRowCount(rowCount: number) {
+		const scrollTop = this.root.scrollTop;
+		const oldStartIndex = Math.floor(scrollTop / this.rowHeight);
+		
+		this.rowCount = rowCount;
+		this.container.style.height = `${this.rowHeight * rowCount + this.rowHeight * 3}px`;
+		
+		// Restore scroll to keep same rows visible
+		this.root.scrollTop = oldStartIndex * this.rowHeight;
+		
+		this.updateVisibleRows();
+		this.needMoreRows = false;
+	}
 }
