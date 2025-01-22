@@ -8,6 +8,11 @@ var getQueryParam = (field) => {
   const url = new URL(window.location.href);
   return url.searchParams.get(field);
 };
+var removeQueryParam = (field) => {
+  const url = new URL(window.location.href);
+  url.searchParams.delete(field);
+  window.history.pushState({}, "", url.toString());
+};
 
 // ts/virtual-table.ts
 class VirtualTable {
@@ -194,9 +199,7 @@ class LogSearchOptions {
     this.input.rows = 4;
     this.input.style.width = "400px";
     this.input.onkeydown = (e) => {
-      console.log("key: ", e.key, " shift: ", e.shiftKey);
       if (e.key === "Enter" && !e.shiftKey) {
-        console.log("preventing default");
         e.preventDefault();
         this.searcher.setQuery(this.input.value);
       }
@@ -264,7 +267,10 @@ class LogSearcher {
     this.query = query;
     this.offset = 0;
     this.alreadyFetched = false;
-    setQueryParam("query", query);
+    if (query)
+      setQueryParam("query", query);
+    else
+      removeQueryParam("query");
     this.logEntries = [];
     this.fetchMore();
     this.stream();

@@ -1,4 +1,4 @@
-import { getQueryParam, setQueryParam } from "./utility"
+import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 import { VirtualTable } from "./virtual-table"
 
 export type LogLevel = "Debug" | "Info" | "Warn" | "Error"
@@ -125,9 +125,7 @@ export class LogSearchOptions {
         this.input.rows = 4
 		this.input.style.width = "400px"
 		this.input.onkeydown = (e) => {
-			console.log("key: ", e.key, " shift: ", e.shiftKey)
 			if (e.key === "Enter" && !e.shiftKey) {
-				console.log("preventing default")
 				e.preventDefault()
                 this.searcher.setQuery(this.input.value)
 			}
@@ -211,7 +209,8 @@ export class LogSearcher {
         this.query = query
         this.offset = 0
         this.alreadyFetched = false
-        setQueryParam("query", query)
+		if (query) setQueryParam("query", query)
+		else removeQueryParam("query")
         this.logEntries = []
         this.fetchMore()
 		this.stream()
