@@ -18,6 +18,11 @@ export type LogEntry = {
 
 export type SortDir = "asc" | "desc";
 
+const formatTimestamp = (ts: string) => {
+	const date = new Date(ts)
+	return date.toLocaleString()
+}	
+
 export class Logtable {
 	public root: HTMLElement
     private table = document.createElement("table")
@@ -54,7 +59,7 @@ export class Logtable {
                     const r = this.logSearcher.logEntries[i]
                     body += `
                     <tr style="height: 35px">
-                        <td style="white-space: nowrap">${r.timestamp}</td>
+                        <td style="white-space: nowrap">${formatTimestamp(r.timestamp)}</td>
                         <td style="color: ${logColors[r.level]}">${r.level}</td>
 						<td>${r.props.map((p) => p.join("=")).join(", ")}</td>
                         <td style="word-break: break-all">${r.msg}</td>
@@ -202,6 +207,7 @@ export class LogSearcher {
         setQueryParam("query", query)
         this.logEntries = []
         this.fetchMore()
+		this.stream()
     }
 
     public fetchMore() {

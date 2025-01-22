@@ -99,6 +99,10 @@ var logColors = {
   Warn: "orange",
   Error: "red"
 };
+var formatTimestamp = (ts) => {
+  const date = new Date(ts);
+  return date.toLocaleString();
+};
 
 class Logtable {
   root;
@@ -134,7 +138,7 @@ class Logtable {
           const r = this.logSearcher.logEntries[i];
           body += `
                     <tr style="height: 35px">
-                        <td style="white-space: nowrap">${r.timestamp}</td>
+                        <td style="white-space: nowrap">${formatTimestamp(r.timestamp)}</td>
                         <td style="color: ${logColors[r.level]}">${r.level}</td>
 \t\t\t\t\t\t<td>${r.props.map((p) => p.join("=")).join(", ")}</td>
                         <td style="word-break: break-all">${r.msg}</td>
@@ -254,6 +258,7 @@ class LogSearcher {
     setQueryParam("query", query);
     this.logEntries = [];
     this.fetchMore();
+    this.stream();
   }
   fetchMore() {
     if (this.alreadyFetched)
