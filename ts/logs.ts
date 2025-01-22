@@ -146,6 +146,13 @@ export class LogSearchOptions {
         // this.endDate = document.createElement('input')
         // this.endDate.type = "date"
         // this.root.appendChild(this.endDate)
+		const streamButton = document.createElement('button')
+		streamButton.innerHTML = "Stop<br />Stream"
+		streamButton.onclick = () => {
+			this.searcher.toggleIsStreaming()
+			streamButton.innerHTML = this.searcher.isStreaming ? "Stop<br />Stream" : "Start<br />Stream"
+		}
+		this.root.appendChild(streamButton)
         this.searcher = args.searcher
     }
 
@@ -209,6 +216,19 @@ export class LogSearcher {
         this.fetchMore()
 		this.stream()
     }
+
+	get isStreaming() {
+		return this.logEventSource != null
+	}
+
+	public toggleIsStreaming() {
+		if (this.isStreaming) {
+			this.logEventSource?.close()
+			this.logEventSource = undefined
+		} else {
+			this.stream()
+		}
+	}
 
     public fetchMore() {
         if (this.alreadyFetched) return
