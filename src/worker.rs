@@ -28,13 +28,13 @@ impl Worker {
 		let mut i = self.subs.len();
 		while i > 0 {
 			i -= 1;
-			if let Ok(v) = self.subs[i].query.matches(&entry) {
-				if !v {
-					continue;
-				}
-				if let Err(_) = self.subs[i].res_tx.send(entry.clone()).await {
-					self.subs.remove(i);
-				}
+			let m = match self.subs[i].query.matches(&entry) {
+				Ok(v) => v,
+				Err(_) => continue,
+			};
+			if !m { continue; }
+			if let Err(_) = self.subs[i].res_tx.send(entry.clone()).await {
+				self.subs.remove(i);
 			}
 		}
 	}
