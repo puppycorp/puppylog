@@ -1,5 +1,6 @@
 use puppylog::LogEntry;
 use tokio::sync::mpsc;
+use crate::log_query::QueryAst;
 use crate::types::LogsQuery;
 use crate::types::SubscribeReq;
 
@@ -15,7 +16,7 @@ impl Subscriber {
 		}
 	}
 
-	pub async fn subscribe(&self, query: LogsQuery) -> mpsc::Receiver<LogEntry> {
+	pub async fn subscribe(&self, query: QueryAst) -> mpsc::Receiver<LogEntry> {
 		let (res_tx, res_rx) = mpsc::channel(100);
 		self.tx.send(SubscribeReq {
 			res_tx,

@@ -176,26 +176,25 @@ async fn get_logs(
 }
 
 async fn stream_logs(
-    State(ctx): State<Arc<Context>>,
-    Query(params): Query<GetLogsQuery>,
-) -> Sse<impl Stream<Item = Result<Event, axum::Error>>> {
-    println!("stream logs {:?}", params);
-    
-    let rx = ctx.subscriber.subscribe(LogsQuery {
-        start: params.start,
-        end: params.end,
-        level: params.level,
-        search: params.search,
-        count: Some(50),
-        props: params.props.unwrap_or_default()
-    }).await;
+	State(ctx): State<Arc<Context>>,
+	Query(params): Query<GetLogsQuery>,
+) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, BadRequestError> {
+	log::info!("stream logs {:?}", params);
+	let query = match params.query {
+		Some(ref query) => match parse_log_query(query) {
+			Ok(query) => query,
+			Err(err) => return Err(BadRequestError(err.to_string()))
+		},
+		None => QueryAst::default(),
+	};
+	let rx = ctx.subscriber.subscribe(query).await;
+	let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
+		.map(|p| {
+			let data = to_string(&p).unwrap();
+			Ok(Event::default().data(data))
+		});
 
-    let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
-        .map(|p| {
-            let data = to_string(&p).unwrap();
-            Ok(Event::default().data(data))
-        });
-    Sse::new(stream)
+	Ok(Sse::new(stream))
 }
 
 async fn upload_raw_logs(

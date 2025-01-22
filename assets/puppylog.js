@@ -128,6 +128,7 @@ class Logtable {
       rowCount: 0,
       rowHeight: 35,
       drawRow: (start, end) => {
+        console.log(`draw start: ${start} end: ${end}`);
         let body = "";
         for (let i = start;i < end; i++) {
           const r = this.logSearcher.logEntries[i];
@@ -227,8 +228,24 @@ class LogSearcher {
     this.onError = args.onError;
     this.query = getQueryParam("query") || "";
   }
+  buildQuery(stream) {
+    const offsetInMinutes = new Date().getTimezoneOffset();
+    const offsetInHours = -offsetInMinutes / 60;
+    const urlQuery = new URLSearchParams;
+    urlQuery.append("timezone", offsetInHours.toString());
+    if (this.query) {
+      urlQuery.append("query", this.query);
+    }
+    if (!stream) {
+      urlQuery.append("count", this.count.toString());
+      urlQuery.append("offset", this.offset.toString());
+    }
+    return urlQuery;
+  }
   stream() {
-    this.createEventSource("http://localhost:3337/api/logs/stream");
+    const url = new URL("http://localhost:3337/api/logs/stream");
+    url.search = this.buildQuery(true).toString();
+    this.createEventSource(url.toString());
   }
   setQuery(query) {
     this.query = query;
@@ -242,17 +259,8 @@ class LogSearcher {
     if (this.alreadyFetched)
       return;
     this.alreadyFetched = true;
-    const offsetInMinutes = new Date().getTimezoneOffset();
-    const offsetInHours = -offsetInMinutes / 60;
-    const urlQuery = new URLSearchParams;
-    urlQuery.append("timezone", offsetInHours.toString());
-    if (this.query) {
-      urlQuery.append("query", this.query);
-    }
-    urlQuery.append("count", this.count.toString());
-    urlQuery.append("offset", this.offset.toString());
     const url = new URL("http://localhost:3337/api/logs");
-    url.search = urlQuery.toString();
+    url.search = this.buildQuery().toString();
     fetch(url.toString()).then(async (res) => {
       if (res.status === 400) {
         const err = await res.json();
@@ -283,7 +291,7 @@ class LogSearcher {
     this.logEventSource.onmessage = (e) => {
       console.log("Got message", e.data);
       this.logEntries.push(JSON.parse(e.data));
-      this.handleSort;
+      this.handleSort();
       this.onNewLoglines();
     };
     this.logEventSource.onerror = (err) => {

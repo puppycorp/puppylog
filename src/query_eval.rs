@@ -47,7 +47,7 @@ where
 
 fn does_field_match(field: FieldType, value: &Value, operator: &Operator, logline: &LogEntry) -> Result<bool, String> {
     match (field, value, operator) {
-        (FieldType::Msg, Value::String(val), Operator::Like) => Ok(logline.msg.contains(val)),
+        (FieldType::Msg, Value::String(val), Operator::Like) => Ok(logline.msg.to_lowercase().contains(&val.to_lowercase())),
         (FieldType::Timestamp, Value::Date(val), op) => Ok(magic_cmp(logline.timestamp, *val, op)),
         (FieldType::Timestamp, _ , _) => Err(format!("Invalid value for timestamp {:?}", value)),
         (FieldType::Level, Value::String(val), op) => Ok(magic_cmp(&logline.level, &LogLevel::from_string(&val), op)),

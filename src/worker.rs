@@ -1,11 +1,11 @@
 use puppylog::LogEntry;
 use tokio::sync::mpsc;
-use crate::types::LogsQuery;
+use crate::log_query::QueryAst;
 use crate::types::SubscribeReq;
 
 struct Subscriber {
 	res_tx: mpsc::Sender<LogEntry>,
-	query: LogsQuery,
+	query: QueryAst,
 }
 
 pub struct Worker {
@@ -24,11 +24,14 @@ impl Worker {
 	}
 
 	async fn handle_entry(&mut self, entry: LogEntry) {
-		log::info!("handle_entry {:?}", entry);
+		//log::info!("handle_entry {:?}", entry);
 		let mut i = self.subs.len();
 		while i > 0 {
 			i -= 1;
-			if self.subs[i].query.matches(&entry) {
+			if let Ok(v) = self.subs[i].query.matches(&entry) {
+				if !v {
+					continue;
+				}
 				if let Err(_) = self.subs[i].res_tx.send(entry.clone()).await {
 					self.subs.remove(i);
 				}

@@ -48,6 +48,7 @@ export class Logtable {
             rowCount: 0,
             rowHeight: 35, 
             drawRow: (start, end) => {
+				console.log(`draw start: ${start} end: ${end}`)
                 let body = ""
                 for (let i = start; i < end; i++) {
                     const r = this.logSearcher.logEntries[i]
@@ -173,8 +174,25 @@ export class LogSearcher {
         this.query = getQueryParam("query") || ""
     }
 
+	private buildQuery(stream?: boolean) {
+		const offsetInMinutes = new Date().getTimezoneOffset();
+        const offsetInHours = -offsetInMinutes / 60;
+		const urlQuery = new URLSearchParams()
+        urlQuery.append("timezone", offsetInHours.toString())
+        if (this.query) {
+            urlQuery.append("query", this.query)
+        }
+		if (!stream) {
+        	urlQuery.append("count", this.count.toString())
+        	urlQuery.append("offset", this.offset.toString())
+		}
+		return urlQuery
+	}
+
     public stream() {
-        this.createEventSource("http://localhost:3337/api/logs/stream")
+		const url = new URL("http://localhost:3337/api/logs/stream")
+		url.search = this.buildQuery(true).toString()
+        this.createEventSource(url.toString())
     }
 
     public setQuery(query: string) {
@@ -189,18 +207,8 @@ export class LogSearcher {
     public fetchMore() {
         if (this.alreadyFetched) return
         this.alreadyFetched = true
-        const offsetInMinutes = new Date().getTimezoneOffset();
-        const offsetInHours = -offsetInMinutes / 60;
-
-        const urlQuery = new URLSearchParams()
-        urlQuery.append("timezone", offsetInHours.toString())
-        if (this.query) {
-            urlQuery.append("query", this.query)
-        }
-        urlQuery.append("count", this.count.toString())
-        urlQuery.append("offset", this.offset.toString())
         const url = new URL("http://localhost:3337/api/logs")
-        url.search = urlQuery.toString()
+        url.search = this.buildQuery().toString()
         fetch(url.toString()).then(async (res) => {
             if (res.status === 400) {
                 const err = await res.json()
@@ -223,52 +231,6 @@ export class LogSearcher {
         })
     }
 
-    // public search(args: {
-    //     startDate?: string
-    //     endDate?: string
-    //     sort?: SortDir
-    //     search?: string[]
-    //     count?: number
-    // }) {
-    //     const query = new URLSearchParams()
-    //     if (args.startDate) {
-    //         query.append("startDate", args.startDate)
-    //     }
-    //     if (args.endDate) {
-    //         query.append("endDate", args.endDate)
-    //     }
-    //     if (args.search) {
-    //         for (const s of args.search) {
-    //             query.append("search", s)
-
-    //             this.logEntries = this.logEntries.filter((l) => {
-    //                 return l.msg.includes(s)
-    //             })
-    //         }
-    //     }
-    //     if (args.count) {
-    //         query.append("count", args.count.toString())
-    //     }
-
-    //     const url = new URL("http://localhost:3337/api/logs")
-    //     url.search = query.toString()
-    //     this.onNewLoglines()
-
-    //     fetch(url.toString()).then((res) => {
-    //         if (res.status !== 200) {
-    //             throw new Error("Failed to fetch logs")
-    //         }
-
-    //         return res.json()
-    //     }).then((data) => {
-    //         this.logEntries.push(...data)
-	// 		this.handleSort()
-    //         this.onNewLoglines()
-    //     }).catch((err) => {
-    //         this.onError(err)
-    //     })
-    // }
-
     private createEventSource(url: string) {
         if (this.logEventSource) {
             this.logEventSource.close()
@@ -279,7 +241,7 @@ export class LogSearcher {
         this.logEventSource.onmessage = (e) => {
             console.log("Got message", e.data)
             this.logEntries.push(JSON.parse(e.data))
-			this.handleSort
+			this.handleSort()
 			this.onNewLoglines()
         }
         this.logEventSource.onerror = (err) => {

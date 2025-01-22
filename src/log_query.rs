@@ -2,6 +2,8 @@ use chrono::{DateTime, NaiveDate, Utc};
 use puppylog::LogEntry;
 use std::str::FromStr;
 
+use crate::query_eval::check_expr;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operator {
     GreaterThan,
@@ -77,8 +79,8 @@ pub struct QueryAst {
 }
 
 impl QueryAst {
-    pub fn matches(&self, entry: &LogEntry) -> bool {
-        todo!()
+    pub fn matches(&self, entry: &LogEntry) -> Result<bool, String> {
+        check_expr(&self.root, entry)
     }
 }
 

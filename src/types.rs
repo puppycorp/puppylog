@@ -3,7 +3,7 @@ use puppylog::{LogEntry, LogLevel};
 use serde::Deserialize;
 use tokio::sync::mpsc::{self, Sender};
 
-use crate::{subscriber::Subscriber, worker::Worker};
+use crate::{log_query::QueryAst, subscriber::Subscriber, worker::Worker};
 
 pub struct Logfile {
 	pub log_entries: Vec<LogEntry>,
@@ -73,5 +73,5 @@ impl LogsQuery {
 
 pub struct SubscribeReq {
 	pub res_tx: mpsc::Sender<LogEntry>,
-	pub query: LogsQuery
+	pub query: QueryAst
 }
