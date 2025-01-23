@@ -2,6 +2,7 @@ mod logfile;
 mod circle_buffer;
 mod chunk_reader;
 mod drain;
+mod logger;
 
 use std::io;
 use std::io::Read;
@@ -16,6 +17,7 @@ use serde::Serialize;
 pub use circle_buffer::CircularBuffer;
 pub use chunk_reader::ChunckReader;
 pub use drain::{DrainParser, LogGroup, LogTemplate};
+pub use logger::LoggerBuilder;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub enum LogLevel {

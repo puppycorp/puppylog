@@ -1,5 +1,5 @@
 [workspace] 
-members = ["core","logen"]
+members = ["core", "examples/*","cli"]
 [package]
 name = "puppylog-server"
 version = "0.1.0"

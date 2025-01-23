@@ -10,3 +10,4 @@ serde = { version = "1", features = ["derive"] }
 log = "0.4"
 bytes = "1"
 regex = "1"
+rustls = "0.23"
