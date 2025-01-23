@@ -259,7 +259,7 @@ class LogSearcher {
     return urlQuery;
   }
   stream() {
-    const url = new URL("http://localhost:3337/api/logs/stream");
+    const url = new URL("/api/logs/stream", window.location.origin);
     url.search = this.buildQuery(true).toString();
     this.createEventSource(url.toString());
   }
@@ -290,7 +290,7 @@ class LogSearcher {
     if (this.alreadyFetched)
       return;
     this.alreadyFetched = true;
-    const url = new URL("http://localhost:3337/api/logs");
+    const url = new URL("/api/logs", window.location.origin);
     url.search = this.buildQuery().toString();
     fetch(url.toString()).then(async (res) => {
       if (res.status === 400) {

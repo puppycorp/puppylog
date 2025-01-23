@@ -199,8 +199,9 @@ export class LogSearcher {
 		return urlQuery
 	}
 
+
     public stream() {
-		const url = new URL("http://localhost:3337/api/logs/stream")
+        const url = new URL("/api/logs/stream", window.location.origin)
 		url.search = this.buildQuery(true).toString()
         this.createEventSource(url.toString())
     }
@@ -232,8 +233,8 @@ export class LogSearcher {
     public fetchMore() {
         if (this.alreadyFetched) return
         this.alreadyFetched = true
-        const url = new URL("http://localhost:3337/api/logs")
-        url.search = this.buildQuery().toString()
+        const url = new URL("/api/logs", window.location.origin)
+		url.search = this.buildQuery().toString()
         fetch(url.toString()).then(async (res) => {
             if (res.status === 400) {
                 const err = await res.json()
