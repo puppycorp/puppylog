@@ -1,5 +1,4 @@
 mod logfile;
-mod circle_buffer;
 mod chunk_reader;
 mod drain;
 mod logger;
@@ -14,7 +13,6 @@ use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 use serde::Deserialize;
 use serde::Serialize;
-pub use circle_buffer::CircularBuffer;
 pub use chunk_reader::ChunckReader;
 pub use drain::{DrainParser, LogGroup, LogTemplate};
 pub use logger::LoggerBuilder;
