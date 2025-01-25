@@ -27,6 +27,7 @@ pub enum Value {
     Date(DateTime<Utc>),
     String(String),
     Number(i64),
+    List(Vec<Value>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -42,7 +43,6 @@ pub enum Expr {
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
     Value(Value),
-    List(Vec<Expr>),
     Empty,
 }
 
@@ -211,7 +211,7 @@ fn parse_tokens(tokens: &[Token]) -> Result<Expr, String> {
                 let mut values = Vec::new();
                 while let Some(token) = tokens.get(start + 3) {
                     match token {
-                        Token::Value(v) => values.push(Expr::Value(v.clone())),
+                        Token::Value(v) => values.push(v.clone()),
                         Token::Comma => {},
                         Token::CloseParen => break,
                         _ => return Err("Unexpected token in IN condition".to_string()),
@@ -221,7 +221,7 @@ fn parse_tokens(tokens: &[Token]) -> Result<Expr, String> {
                 Ok((Expr::Condition(Condition {
                     left: Box::new(Expr::Value(left.clone())),
                     operator: op.clone(),
-                    right: Box::new(Expr::List(values)),
+                    right: Box::new(Expr::Value(Value::List(values))),
                 }), start + 4))
             },
             (Token::Value(left), Token::Operator(op), Token::OpenParen) => {
@@ -719,10 +719,10 @@ mod tests {
             Expr::Condition(c) => {
                 assert_eq!(c.left, Box::new(Expr::Value(Value::String("level".to_string()))));
                 assert_eq!(c.operator, Operator::In);
-                assert_eq!(c.right, Box::new(Expr::List(vec![
-                    Expr::Value(Value::String("info".to_string())),
-                    Expr::Value(Value::String("error".to_string())),
-                ])));
+                assert_eq!(c.right, Box::new(Expr::Value(Value::List(vec![
+                    Value::String("info".to_string()),
+                    Value::String("error".to_string()),
+                ]))));
             },
             _ => panic!("Expected Condition"),
         }
@@ -732,10 +732,10 @@ mod tests {
             Expr::Condition(c) => {
                 assert_eq!(c.left, Box::new(Expr::Value(Value::String("level".to_string()))));
                 assert_eq!(c.operator, Operator::NotIn);
-                assert_eq!(c.right, Box::new(Expr::List(vec![
-                    Expr::Value(Value::String("info".to_string())),
-                    Expr::Value(Value::String("error".to_string())),
-                ])));
+                assert_eq!(c.right, Box::new(Expr::Value(Value::List(vec![
+                    Value::String("info".to_string()),
+                    Value::String("error".to_string()),
+                ]))));
             },
             _ => panic!("Expected Condition"),
         }

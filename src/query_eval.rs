@@ -1,6 +1,7 @@
 use puppylog::{LogEntry, LogLevel};
 use crate::log_query::{Condition, Expr, Operator, Value};
 
+#[derive(Debug)]
 enum FieldType {
     Timestamp,
     Level,
@@ -8,7 +9,7 @@ enum FieldType {
     Prop(String, String),
 }
 
-fn match_field(v: &str, logline: &LogEntry) -> Option<FieldType> {
+fn find_field(v: &str, logline: &LogEntry) -> Option<FieldType> {
     if v == "timestamp" {
         return Some(FieldType::Timestamp);
     }
@@ -45,9 +46,19 @@ where
     }
 }
 
-fn does_field_match(field: FieldType, value: &Value, operator: &Operator, logline: &LogEntry) -> Result<bool, String> {
+fn any(field: &FieldType, values: &[Value], op: &Operator, logline: &LogEntry) -> Result<bool, String> {
+    for value in values {
+        if does_field_match(field, value, op, logline)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn does_field_match(field: &FieldType, value: &Value, operator: &Operator, logline: &LogEntry) -> Result<bool, String> {
     match (field, value, operator) {
         (FieldType::Msg, Value::String(val), Operator::Like) => Ok(logline.msg.to_lowercase().contains(&val.to_lowercase())),
+        (FieldType::Msg, Value::String(val), Operator::NotLike) => Ok(!logline.msg.to_lowercase().contains(&val.to_lowercase())),
         (FieldType::Timestamp, Value::Date(val), op) => Ok(magic_cmp(logline.timestamp, *val, op)),
         (FieldType::Timestamp, _ , _) => Err(format!("Invalid value for timestamp {:?}", value)),
         (FieldType::Level, Value::String(val), op) => Ok(magic_cmp(&logline.level, &LogLevel::from_string(&val), op)),
@@ -56,31 +67,67 @@ fn does_field_match(field: FieldType, value: &Value, operator: &Operator, loglin
         (FieldType::Msg, Value::String(val), op) => Ok(magic_cmp(&logline.msg, val, op)),
         (FieldType::Msg, Value::Number(n), op) => Ok(magic_cmp(&logline.msg, &n.to_string(), op)),
         (FieldType::Msg, Value::Date(d), _) => Err(format!("Invalid value for msg {:?}", d)),
-        (FieldType::Prop(_, val1), Value::String(val2), op) => Ok(magic_cmp(&val1, val2, op)),
-        (FieldType::Prop(_, val1), Value::Number(val2), op) => Ok(magic_cmp(&val1, &val2.to_string(), op)),
-        (FieldType::Prop(_, val1), Value::Date(val2), op) => todo!(),
+        (FieldType::Prop(_, val1), Value::String(val2), op) => Ok(magic_cmp(val1, val2, op)),
+        (FieldType::Prop(_, val1), Value::Number(val2), op) => Ok(magic_cmp(val1, &val2.to_string(), op)),
+        (FieldType::Prop(_, _), Value::Date(_), _) => todo!(),
+        (field_type, Value::List(vec), Operator::In) => any(field_type, vec, &Operator::Equal, logline),
+        (field_type, Value::List(vec), Operator::NotIn) => Ok(!any(field_type, vec, &Operator::Equal, logline)?),
+        _ => Err(format!("Invalid comparison {:?} {:?} {:?}", field, value, operator))
     }
 }
 
 fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String> {
-    match (cond.left.as_ref(), cond.right.as_ref()) {
-        (Expr::Value(Value::String(left)), Expr::Value(val)) => {
-            match match_field(&left, logline) {
-                Some(field) => does_field_match(field , val, &cond.operator, logline),
-                None => Ok(false)
-            }
-        },
-        (Expr::Value(val), Expr::Value(Value::String(right))) => {
-            match match_field(&right, logline) {
-                Some(field) => does_field_match(field, val, &cond.operator, logline),
-                None => Ok(false)
-            }
-        },
-        _ => {
-            panic!("Nothing makes sense anymore {:?} logline: {:?}", cond, logline)
+    fn match_field(field: &str, val: &Value, op: &Operator, logline: &LogEntry) -> Result<bool, String> {
+        match find_field(field, logline) {
+            Some(field) => does_field_match(&field, val, op, logline),
+            None => Ok(false)
         }
     }
+    match (cond.left.as_ref(), cond.right.as_ref(), &cond.operator) {
+        (Expr::Value(Value::String(left)), Expr::Value(val), op) => match_field(left, val, op, logline),
+        (Expr::Value(val), Expr::Value(Value::String(right)), op) => match_field(right, val, op, logline),
+        (Expr::Value(Value::String(left)), Expr::Empty, Operator::Exists) => Ok(find_field(left, logline).is_some()),
+        (Expr::Value(Value::String(left)), Expr::Empty, Operator::NotExists) => Ok(find_field(left, logline).is_none()), 
+        _ => panic!("Nothing makes sense anymore {:?} logline: {:?}", cond, logline)
+    }
 }
+
+
+    // match (cond.left.as_ref(), cond.right.as_ref()) {
+    //     (Expr::Value(Value::String(left)), Expr::Value(val)) => {
+    //         match find_field(&left, logline) {
+    //             Some(field) => does_field_match(field , val, &cond.operator, logline),
+    //             None => Ok(false)
+    //         }
+    //     },
+    //     (Expr::Value(val), Expr::Value(Value::String(right))) => {
+    //         match find_field(&right, logline) {
+    //             Some(field) => does_field_match(field, val, &cond.operator, logline),
+    //             None => Ok(false)
+    //         }
+    //     },
+    //     (Expr::Value(Value::String(left)), Expr::List(list)) => {
+    //         match find_field(&left, logline) {
+    //             Some(_) => todo!(),
+    //             None => todo!(),
+    //         }
+
+    //         match find_field(&left, logline) {
+    //             Some(field) => {
+    //                 for expr in list {
+    //                     if check_expr(expr, logline)? {
+    //                         return Ok(true);
+    //                     }
+    //                 }
+    //                 Ok(false)
+    //             },
+    //             None => Ok(false)
+    //         }
+    //     },
+    //     _ => {
+    //         panic!("Nothing makes sense anymore {:?} logline: {:?}", cond, logline)
+    //     }
+    // }
 
 pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 	match expr {
@@ -91,6 +138,7 @@ pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 			Value::String(value) => Ok(value != ""),
 			Value::Number(value) => Ok(*value > 0),
 			Value::Date(value) => Ok(true),
+            Value::List(_) => Err("This is not javascript".to_string())
 		},
 		Expr::Empty => Ok(true),
         _ => todo!("expr {:?} not supported yet", expr),
@@ -154,18 +202,18 @@ mod tests {
     fn test_match_field() {
         let log = create_test_log_entry();
         
-        assert!(matches!(match_field("timestamp", &log), Some(FieldType::Timestamp)));
-        assert!(matches!(match_field("level", &log), Some(FieldType::Level)));
-        assert!(matches!(match_field("msg", &log), Some(FieldType::Msg)));
+        assert!(matches!(find_field("timestamp", &log), Some(FieldType::Timestamp)));
+        assert!(matches!(find_field("level", &log), Some(FieldType::Level)));
+        assert!(matches!(find_field("msg", &log), Some(FieldType::Msg)));
         
-        if let Some(FieldType::Prop(key, val)) = match_field("service", &log) {
+        if let Some(FieldType::Prop(key, val)) = find_field("service", &log) {
             assert_eq!(key, "service");
             assert_eq!(val, "auth");
         } else {
             panic!("Expected Prop field type for 'service'");
         }
         
-        assert!(match_field("nonexistent", &log).is_none());
+        assert!(find_field("nonexistent", &log).is_none());
     }
 
     #[test]
@@ -235,6 +283,21 @@ mod tests {
             right: Box::new(Expr::Value(Value::String("logout".to_string())))
         });
         assert!(!check_expr(&expr, &log).unwrap());
+
+        let expr = Expr::Condition(Condition {
+            left: Box::new(Expr::Value(Value::String("msg".to_string()))),
+            operator: Operator::NotLike,
+            right: Box::new(Expr::Value(Value::String("login".to_string())))
+        });
+        assert!(!check_expr(&expr, &log).unwrap());
+
+        let expr = Expr::Condition(Condition {
+            left: Box::new(Expr::Value(Value::String("msg".to_string()))),
+            operator: Operator::NotLike,
+            right: Box::new(Expr::Value(Value::String("logout".to_string())))
+        });
+        assert!(check_expr(&expr, &log).unwrap());
+
     }
 
     #[test]
@@ -303,5 +366,70 @@ mod tests {
         assert!(check_expr(&Expr::Value(Value::Number(1)), &log).unwrap());
         assert!(!check_expr(&Expr::Value(Value::Number(0)), &log).unwrap());
         assert!(check_expr(&Expr::Value(Value::Date(Utc::now())), &log).unwrap());
+    }
+
+
+    #[test]
+    fn test_in_eval() {
+        let logline = LogEntry {
+            timestamp: Utc::now(),
+            level: LogLevel::Info,
+            props: vec![("key".to_string(), "value".to_string())],
+            msg: "Hello, world!".to_string()
+        };
+        
+        let expr = Expr::Condition(Condition {
+            left: Box::new(Expr::Value(Value::String("level".to_string()))),
+            operator: Operator::In,
+            right: Box::new(Expr::Value(Value::List(vec![
+                Value::String("info".to_string()),
+                Value::String("debug".to_string())
+            ])))
+        });
+        assert!(check_expr(&expr, &logline).unwrap());
+
+        let expr = Expr::Condition(Condition {
+            left: Box::new(Expr::Value(Value::String("level".to_string()))),
+            operator: Operator::In,
+            right: Box::new(Expr::Value(Value::List(vec![
+                Value::String("error".to_string()),
+                Value::String("warn".to_string())
+            ])))
+        });
+        assert!(!check_expr(&expr, &logline).unwrap());
+    }
+
+    #[test]
+    fn test_exsits() {
+        let logline = LogEntry {
+            timestamp: Utc::now(),
+            level: LogLevel::Info,
+            props: vec![("key".to_string(), "value".to_string())],
+            msg: "Hello, world!".to_string()
+        };
+        let expr = Expr::Condition(Condition {
+            left: Box::new(Expr::Value(Value::String("key".to_string()))),
+            operator: Operator::Exists,
+            right: Box::new(Expr::Empty)
+        });
+        assert!(check_expr(&expr, &logline).unwrap());
+        let expr = Expr::Condition(Condition {
+            left: Box::new(Expr::Value(Value::String("nonexistent".to_string()))),
+            operator: Operator::Exists,
+            right: Box::new(Expr::Empty)
+        });
+        assert!(!check_expr(&expr, &logline).unwrap());
+        let expr = Expr::Condition(Condition {
+            left: Box::new(Expr::Value(Value::String("nonexistent".to_string()))),
+            operator: Operator::NotExists,
+            right: Box::new(Expr::Empty)
+        });
+        assert!(check_expr(&expr, &logline).unwrap());
+        let expr = Expr::Condition(Condition {
+            left: Box::new(Expr::Value(Value::String("key".to_string()))),
+            operator: Operator::NotExists,
+            right: Box::new(Expr::Empty)
+        });
+        assert!(!check_expr(&expr, &logline).unwrap());
     }
 }
