@@ -41,7 +41,7 @@ where
         Operator::GreaterThanOrEqual => left >= right,
         Operator::LessThan => left < right,
         Operator::LessThanOrEqual => left <= right,
-        Operator::Like => todo!(),
+        _ => todo!("operator {:?} not supported yet", op),
     }
 }
 
@@ -92,7 +92,8 @@ pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 			Value::Number(value) => Ok(*value > 0),
 			Value::Date(value) => Ok(true),
 		},
-		Expr::Empty => Ok(true)
+		Expr::Empty => Ok(true),
+        _ => todo!("expr {:?} not supported yet", expr),
 	}
 }
 

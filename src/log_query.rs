@@ -1,5 +1,6 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use puppylog::LogEntry;
+use serde::de::value;
 use std::str::FromStr;
 
 use crate::query_eval::check_expr;
@@ -12,6 +13,13 @@ pub enum Operator {
     LessThanOrEqual,
     Equal,
     Like,
+    NotLike,
+    In,
+    NotIn,
+    Exists,
+    NotExists,
+    Matches,
+    NotMatches
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -20,21 +28,6 @@ pub enum Value {
     String(String),
     Number(i64),
 }
-
-// impl Ord for Value {
-//     fn cmp(&self, other: &Self) -> Ordering {
-//         // You can customize the comparison logic here
-//         self.value.cmp(&other.value)
-//     }
-// }
-
-// #[derive(Debug, Clone, PartialEq)]
-// pub enum LogLevel {
-//     Info,
-//     Warning,
-//     Error,
-//     Debug,
-// }
 
 #[derive(Debug, PartialEq)]
 pub struct Condition {
@@ -49,6 +42,7 @@ pub enum Expr {
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
     Value(Value),
+    List(Vec<Expr>),
     Empty,
 }
 
@@ -93,6 +87,7 @@ enum Token {
     Field(String),
     Operator(Operator),
     Value(Value),
+    Comma
 }
 
 fn tokenize(input: &str) -> Result<Vec<Token>, String> {
@@ -134,6 +129,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                 }
                 
                 match word.as_str() {
+                    "," => tokens.push(Token::Comma),
                     "and" => tokens.push(Token::And),
                     "or" => tokens.push(Token::Or),
                     ">" => tokens.push(Token::Operator(Operator::GreaterThan)),
@@ -142,6 +138,31 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                     "<=" => tokens.push(Token::Operator(Operator::LessThanOrEqual)),
                     "=" => tokens.push(Token::Operator(Operator::Equal)),
                     "like" => tokens.push(Token::Operator(Operator::Like)),
+                    "in" => tokens.push(Token::Operator(Operator::In)),
+                    "exists" => tokens.push(Token::Operator(Operator::Exists)),
+                    "matches" => tokens.push(Token::Operator(Operator::Matches)),
+                    "not" => {
+                        let next = chars.peek();
+                        if next == Some(&' ') {
+                            chars.next();
+                            let mut next_word = String::new();
+                            while let Some(&c) = chars.peek() {
+                                if c.is_whitespace() || c == '(' || c == ')' {
+                                    break;
+                                }
+                                next_word.push(chars.next().unwrap());
+                            }
+                            match next_word.as_str() {
+                                "like" => tokens.push(Token::Operator(Operator::NotLike)),
+                                "in" => tokens.push(Token::Operator(Operator::NotIn)),
+                                "exists" => tokens.push(Token::Operator(Operator::NotExists)),
+                                "matches" => tokens.push(Token::Operator(Operator::NotMatches)),
+                                _ => return Err(format!("Unexpected token: not {}", next_word)),
+                            }
+                        } else {
+                            return Err(format!("Unexpected token: not {:?}", next));
+                        }
+                    }
                     _ => {
 						let value = if let Ok(date) = NaiveDate::parse_from_str(&word, "%d.%m.%Y") {
 							Value::Date(DateTime::<Utc>::from_naive_utc_and_offset(date.into(), Utc))
@@ -160,12 +181,24 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
 }
 
 fn parse_tokens(tokens: &[Token]) -> Result<Expr, String> {
-    fn parse_condition(tokens: &[Token], start: usize) -> Result<(Expr, usize), String> {
+    fn parse_condition(tokens: &[Token], mut start: usize) -> Result<(Expr, usize), String> {
+        if tokens.len() - start >= 2 {
+            match (&tokens[start], &tokens[start + 1]) {
+                (Token::Value(left), Token::Operator(ref op @ (Operator::Exists | Operator::NotExists))) => {
+                    return Ok((Expr::Condition(Condition {
+                        left: Box::new(Expr::Value(left.clone())),
+                        operator: op.clone(),
+                        right: Box::new(Expr::Empty),
+                    }), start + 2))
+                },
+                _ => {},
+            }
+        }
+
         if tokens.len() - start < 3 {
 			log::info!("tokens: {:?} start: {}", tokens, start);
             return Err("Condition requires 3 tokens format: FIELD OPERATOR VALUE".to_string()); 
         }
-        
         match (&tokens[start], &tokens[start + 1], &tokens[start + 2]) {
             (Token::Value(left), Token::Operator(op), Token::Value(right)) => {
                 Ok((Expr::Condition(Condition {
@@ -173,6 +206,23 @@ fn parse_tokens(tokens: &[Token]) -> Result<Expr, String> {
                     operator: op.clone(),
                     right: Box::new(Expr::Value(right.clone())),
                 }), start + 3))
+            },
+            (Token::Value(left), Token::Operator(ref op @ (Operator::In | Operator::NotIn)), Token::OpenParen) => {
+                let mut values = Vec::new();
+                while let Some(token) = tokens.get(start + 3) {
+                    match token {
+                        Token::Value(v) => values.push(Expr::Value(v.clone())),
+                        Token::Comma => {},
+                        Token::CloseParen => break,
+                        _ => return Err("Unexpected token in IN condition".to_string()),
+                    }
+                    start += 1;
+                }
+                Ok((Expr::Condition(Condition {
+                    left: Box::new(Expr::Value(left.clone())),
+                    operator: op.clone(),
+                    right: Box::new(Expr::List(values)),
+                }), start + 4))
             },
             (Token::Value(left), Token::Operator(op), Token::OpenParen) => {
                 let (expr, pos) = parse_expression(tokens, start + 3)?;
@@ -587,5 +637,107 @@ mod tests {
     fn test_invalid_operator_combination() {
         let query = r#"start >= 01.10.2024 or or end <= 12.12.2024"#;
         assert!(parse_log_query(query).is_err());
+    }
+
+    #[test]
+    fn parse_like() {
+        let query = r#"msg like "error""#;
+        let ast = parse_log_query(query).unwrap();
+        match ast.root {
+            Expr::Condition(c) => {
+                assert_eq!(c.left, Box::new(Expr::Value(Value::String("msg".to_string()))));
+                assert_eq!(c.operator, Operator::Like);
+                assert_eq!(c.right, Box::new(Expr::Value(Value::String("error".to_string()))));
+            },
+            _ => panic!("Expected Condition"),
+        }
+        let query = r#"msg not like "error""#;
+        let ast = parse_log_query(query).unwrap();
+        match ast.root {
+            Expr::Condition(c) => {
+                assert_eq!(c.left, Box::new(Expr::Value(Value::String("msg".to_string()))));
+                assert_eq!(c.operator, Operator::NotLike);
+                assert_eq!(c.right, Box::new(Expr::Value(Value::String("error".to_string()))));
+            },
+            _ => panic!("Expected Condition"),
+        }
+    }
+
+    #[test]
+    fn parse_exists() {
+        let query = r#"msg exists"#;
+        let ast = parse_log_query(query).unwrap();
+        match ast.root {
+            Expr::Condition(c) => {
+                assert_eq!(c.left, Box::new(Expr::Value(Value::String("msg".to_string()))));
+                assert_eq!(c.operator, Operator::Exists);
+                assert_eq!(c.right, Box::new(Expr::Empty));
+            },
+            _ => panic!("Expected Condition"),
+        }
+        let query = r#"msg not exists"#;
+        let ast = parse_log_query(query).unwrap();
+        match ast.root {
+            Expr::Condition(c) => {
+                assert_eq!(c.left, Box::new(Expr::Value(Value::String("msg".to_string()))));
+                assert_eq!(c.operator, Operator::NotExists);
+                assert_eq!(c.right, Box::new(Expr::Empty));
+            },
+            _ => panic!("Expected Condition"),
+        }
+    }
+
+    #[test]
+    fn parse_matches() {
+        let query = r#"deviceId matches ^device-[0-9]+$"#;
+        let ast = parse_log_query(query).unwrap();
+        match ast.root {
+            Expr::Condition(c) => {
+                assert_eq!(c.left, Box::new(Expr::Value(Value::String("deviceId".to_string()))));
+                assert_eq!(c.operator, Operator::Matches);
+                assert_eq!(c.right, Box::new(Expr::Value(Value::String("^device-[0-9]+$".to_string()))));
+            },
+            _ => panic!("Expected Condition"),
+        }
+        let query = r#"deviceId not matches ^device-[0-9]+$"#;
+        let ast = parse_log_query(query).unwrap();
+        match ast.root {
+            Expr::Condition(c) => {
+                assert_eq!(c.left, Box::new(Expr::Value(Value::String("deviceId".to_string()))));
+                assert_eq!(c.operator, Operator::NotMatches);
+                assert_eq!(c.right, Box::new(Expr::Value(Value::String("^device-[0-9]+$".to_string()))));
+            },
+            _ => panic!("Expected Condition"),
+        }
+    }
+
+    #[test]
+    fn parse_in() {
+        let query = r#"level in ("info", "error")"#;
+        let ast = parse_log_query(query).unwrap();
+        match ast.root {
+            Expr::Condition(c) => {
+                assert_eq!(c.left, Box::new(Expr::Value(Value::String("level".to_string()))));
+                assert_eq!(c.operator, Operator::In);
+                assert_eq!(c.right, Box::new(Expr::List(vec![
+                    Expr::Value(Value::String("info".to_string())),
+                    Expr::Value(Value::String("error".to_string())),
+                ])));
+            },
+            _ => panic!("Expected Condition"),
+        }
+        let query = r#"level not in ("info", "error")"#;
+        let ast = parse_log_query(query).unwrap();
+        match ast.root {
+            Expr::Condition(c) => {
+                assert_eq!(c.left, Box::new(Expr::Value(Value::String("level".to_string()))));
+                assert_eq!(c.operator, Operator::NotIn);
+                assert_eq!(c.right, Box::new(Expr::List(vec![
+                    Expr::Value(Value::String("info".to_string())),
+                    Expr::Value(Value::String("error".to_string())),
+                ])));
+            },
+            _ => panic!("Expected Condition"),
+        }
     }
 }
