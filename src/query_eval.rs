@@ -38,6 +38,7 @@ where
 {
     match op {
         Operator::Equal => left == right,
+        Operator::NotEqual => left != right,
         Operator::GreaterThan => left > right,
         Operator::GreaterThanOrEqual => left >= right,
         Operator::LessThan => left < right,
@@ -262,6 +263,20 @@ mod tests {
             left: Box::new(Expr::Value(Value::String("duration_ms".to_string()))),
             operator: Operator::Equal,
             right: Box::new(Expr::Value(Value::Number(150)))
+        });
+        assert!(check_expr(&expr, &log).unwrap());
+
+        let expr = Expr::Condition(Condition {
+            left: Box::new(Expr::Value(Value::String("service".to_string()))),
+            operator: Operator::NotEqual,
+            right: Box::new(Expr::Value(Value::String("auth".to_string())))
+        });
+        assert!(!check_expr(&expr, &log).unwrap());
+
+        let expr = Expr::Condition(Condition {
+            left: Box::new(Expr::Value(Value::String("duration_ms".to_string()))),
+            operator: Operator::NotEqual,
+            right: Box::new(Expr::Value(Value::Number(200)))
         });
         assert!(check_expr(&expr, &log).unwrap());
     }

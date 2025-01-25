@@ -12,6 +12,7 @@ pub enum Operator {
     LessThan,
     LessThanOrEqual,
     Equal,
+    NotEqual,
     Like,
     NotLike,
     In,
@@ -137,6 +138,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
                     ">=" => tokens.push(Token::Operator(Operator::GreaterThanOrEqual)),
                     "<=" => tokens.push(Token::Operator(Operator::LessThanOrEqual)),
                     "=" => tokens.push(Token::Operator(Operator::Equal)),
+                    "!=" => tokens.push(Token::Operator(Operator::NotEqual)),
                     "like" => tokens.push(Token::Operator(Operator::Like)),
                     "in" => tokens.push(Token::Operator(Operator::In)),
                     "exists" => tokens.push(Token::Operator(Operator::Exists)),
@@ -637,6 +639,30 @@ mod tests {
     fn test_invalid_operator_combination() {
         let query = r#"start >= 01.10.2024 or or end <= 12.12.2024"#;
         assert!(parse_log_query(query).is_err());
+    }
+
+    #[test]
+    fn parse_equal() {
+        let query = r#"level = "info""#;
+        let ast = parse_log_query(query).unwrap();
+        match ast.root {
+            Expr::Condition(c) => {
+                assert_eq!(c.left, Box::new(Expr::Value(Value::String("level".to_string()))));
+                assert_eq!(c.operator, Operator::Equal);
+                assert_eq!(c.right, Box::new(Expr::Value(Value::String("info".to_string()))));
+            },
+            _ => panic!("Expected Condition"),
+        }
+        let query = r#"level != "info""#;
+        let ast = parse_log_query(query).unwrap();
+        match ast.root {
+            Expr::Condition(c) => {
+                assert_eq!(c.left, Box::new(Expr::Value(Value::String("level".to_string()))));
+                assert_eq!(c.operator, Operator::NotEqual);
+                assert_eq!(c.right, Box::new(Expr::Value(Value::String("info".to_string()))));
+            },
+            _ => panic!("Expected Condition"),
+        }
     }
 
     #[test]
