@@ -62,7 +62,7 @@ export class Logtable {
                         <td style="white-space: nowrap">${formatTimestamp(r.timestamp)}</td>
                         <td style="color: ${logColors[r.level]}">${r.level}</td>
 						<td>${r.props.map((p) => p.join("=")).join(", ")}</td>
-                        <td style="word-break: break-all">${r.msg}</td>
+                        <td style="word-break: break-all"><pre>${r.msg}</pre></td>
                     </tr>
                     `
                 }
