@@ -1,5 +1,61 @@
 # puppylog
 
+## PQL - Puppy Query Language
+
+**Compare Operators**
+```
+< // Smaller than
+> // Larger tha
+= // Equal
+!= // Not equal
+>= // Larger or equal than 
+<= // Smaller or equal than
+```
+
+**Values**
+```
+<timestamp> = YYYY[-MM[-DD[THH[:mm[:ss]]]]
+<timestamp-field> = timestamp.year | timestamp.month | timestamp.day | timestamp.hour | timestamp.minute | timestamp.second
+<temporal-expression> = <timestamp-field> <compare-op> <number>
+<value> = <string> | <number> | <timestamp>
+```
+
+**Expressions**
+```
+<property> exists // Check some property exists
+<property> not exists // Check that some property does not exist
+<expression> and <expression> // Check that both expressions eval to true
+<expression> or <expression> // Check that either one of expression eval to true
+// Expression inside parethesis will be evaluated first
+(<expression> <bool-operator> <expression>) <boolean-operator> (<expression> <bool-operator> <expression>)
+<property> like "<string>" // Property value contains <string>
+<property> not like "<string>" // Property value does not contain <string>
+<property> <compare-op> <value> // Compares property value with value
+<property> <compare-op> "<string>" // Compares property value with string
+<property> in (<value1>, <value2>, ...)
+<property> not in (<value1>, <value2>, ...)
+<property> matches <regex>
+<property> not matches <regex>
+```
+
+**Type Coercion**
+
+```
+<string> -> <number> // Try top parse and fail if invalid
+<number> -> <string> // Convert to string representation
+<bool> -> <number> // true = 1 and false = 0
+<string> -> <bool> // "true" or "false" or "1" or "0"
+<bool> -> <string> // "true" or "false"
+```
+
+**Operator Precedence**
+```
+1. Parenthese ()
+2. Comparison operators
+3. AND, OR
+```
+
+
 ## Data Structures
 
 ### Logfile
