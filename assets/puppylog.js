@@ -199,7 +199,7 @@ class LogSearchOptions {
     this.input.rows = 4;
     this.input.style.width = "400px";
     this.input.onkeydown = (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && e.ctrlKey) {
         e.preventDefault();
         this.searcher.setQuery(this.input.value);
       }
