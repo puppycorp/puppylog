@@ -3,9 +3,11 @@ import { getQueryParam, removeQueryParam, setQueryParam } from "./utility";
 
 export const mainPage = () => {
 	let query = getQueryParam("query") || ""
-	let logEventSource: EventSource
+	let logEventSource: EventSource | null = null  
 	let isStreaming = getQueryParam("stream") === "true"
 	const startStream = (query: string) => {
+		if (logEventSource) logEventSource.close()
+		logEventSource = null
 		const streamQuery = new URLSearchParams()
 		if (query) streamQuery.append("query", query)
 		const streamUrl = new URL("/api/logs/stream", window.location.origin)
@@ -13,11 +15,11 @@ export const mainPage = () => {
 		logEventSource = new EventSource(streamUrl)
 		logEventSource.onmessage = (event) => {
 			const data = JSON.parse(event.data)
-			addLogEntries(data)
+			addLogEntries([data])
 		}
 		logEventSource.onerror = (event) => {
 			console.error("EventSource error", event)
-			logEventSource.close()
+			if (logEventSource) logEventSource.close()
 		}
 	}
 	const { root, addLogEntries, onError } = logsSearchPage({
@@ -35,6 +37,8 @@ export const mainPage = () => {
 		},
 		fetchMore: (args) => {
 			query = args.query
+			if (query) setQueryParam("query", query)
+			else removeQueryParam("query")
 			console.log("fetchMore", args)
 			const urlQuery = new URLSearchParams()
 			const offsetInMinutes = new Date().getTimezoneOffset();

@@ -25,89 +25,6 @@ export type SortDir = "asc" | "desc";
 const formatTimestamp = (ts: string) => {
 	const date = new Date(ts)
 	return date.toLocaleString()
-}	
-
-export class Logtable {
-	public root: HTMLElement
-    private table = document.createElement("table")
-    private header: HTMLElement
-    private body: HTMLElement
-    public sortDir: SortDir = "desc"
-    private logSearcher: LogSearcher
-	private virtual: VirtualTable
-    private errorText: HTMLElement
-
-    constructor() {
-        this.root = document.createElement('div')
-
-        this.header = document.createElement('head')
-        this.header.innerHTML = `<tr><th>Timestamp</th><th>Level</th><th>Props</th><th>Message</th></tr>`
-        this.table.appendChild(this.header)
-        this.body = document.createElement('tbody') 
-        this.table.appendChild(this.body)
-
-		this.logSearcher = new LogSearcher({
-            onNewLoglines: this.onNewLoglines.bind(this),
-            onClear: () => {},
-            onError: (err) => {
-                this.errorText.innerHTML = err
-            }
-        })
-        this.virtual = new VirtualTable({
-            rowCount: 0,
-            rowHeight: 35, 
-            drawRow: (start, end) => {
-				console.log(`draw start: ${start} end: ${end}`)
-                let body = ""
-                for (let i = start; i < end; i++) {
-                    const r = this.logSearcher.logEntries[i]
-                    body += `
-                    <tr style="height: 35px">
-                        <td style="white-space: nowrap">${formatTimestamp(r.timestamp)}</td>
-                        <td style="color: ${logColors[r.level]}">${r.level}</td>
-						<td>${r.props.map((p) => p.join("=")).join(", ")}</td>
-                        <td style="word-break: break-all"><pre>${r.msg}</pre></td>
-                    </tr>
-                    `
-                }
-                this.body.innerHTML = body
-                return this.table
-            },
-			fetchMore: this.fetchMore.bind(this)
-        })
-        const searchOptions = new LogSearchOptions({
-            searcher: this.logSearcher
-        })
-        this.root.appendChild(searchOptions.root)
-        this.errorText = document.createElement('div')
-        this.errorText.style.color = "red"
-        this.root.appendChild(this.errorText)
-        this.root.appendChild(this.virtual.root)
-
-        // this.logSearcher.search({
-        //     count: 100
-        // })
-        this.logSearcher.stream()
-
-        window.addEventListener("scroll", (e) => {
-            console.log("scroll", e)
-        })
-    }
-
-	private onNewLoglines() {
-		console.log("onNewLoglines")
-		this.virtual.setRowCount(this.logSearcher.logEntries.length)
-	}
-
-	private fetchMore() {
-		if (!this.logSearcher) return
-		console.log("fetchMore")
-		this.logSearcher.fetchMore()
-	}
-
-    public sort(dir: SortDir) {
-        this.sortDir = dir
-    }
 }
 
 export type FetchMoreArgs = {
@@ -132,6 +49,7 @@ export const logsSearchPage = (args: {
 	options.style.display = "flex"
 	const searchBar = document.createElement("textarea")
 	const tbody = document.createElement("tbody")
+	tbody.style.width = "400px"
 	const queryLogs = (query: string) => {
 		logEntries.length = 0
 		tbody.innerHTML = ""
@@ -169,6 +87,7 @@ export const logsSearchPage = (args: {
 	options.appendChild(streamButton)
 	root.appendChild(options)
 	const table = document.createElement("table")
+	table.style.width = "100%"
 	const thead = document.createElement("thead")
 	thead.style.position = "sticky"
 	thead.style.top = "100px"
@@ -183,6 +102,9 @@ export const logsSearchPage = (args: {
 	`
 	table.appendChild(thead)
 	table.appendChild(tbody)
+	const tableWrapper = document.createElement("div")
+	tableWrapper.style.overflow = "auto"
+	tableWrapper.appendChild(table)
 	root.appendChild(table)
 	// requestAnimationFrame(() => {
 	// 	queryLogs(searchBar.value)
@@ -231,8 +153,8 @@ export const logsSearchPage = (args: {
 				<tr style="height: 35px">
 					<td style="white-space: nowrap; vertical-align: top"><pre>${formatTimestamp(r.timestamp)}</pre></td>
 					<td style="color: ${logColors[r.level]}; vertical-align: top"><pre>${r.level}</pre></td>
-					<td style="vertical-align: top"><pre>${r.props.map((p) => `${p.key}=${p.value}`)}</pre></td>
-					<td style="word-break: break-all; vertical-align: top"><pre>${r.msg}</pre></td>
+					<td style="vertical-align: top"><pre>${r.props.map((p) => `${p.key}=${p.value}`).join("<br />")}</pre></td>
+					<td style="word-break: break-all; vertical-align: top">${r.msg.slice(0, 700)}${r.msg.length > 700 ? "..." : ""}</td>
 				</tr>
 				`).join("")}
 			`
