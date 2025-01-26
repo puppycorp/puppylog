@@ -1,7 +1,6 @@
 use puppylog::LogEntry;
 use tokio::sync::mpsc;
 use crate::log_query::QueryAst;
-use crate::types::LogsQuery;
 use crate::types::SubscribeReq;
 
 #[derive(Debug)]

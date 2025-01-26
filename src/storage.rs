@@ -7,7 +7,6 @@ use tokio::{fs::{read_dir, File, OpenOptions}, io::{AsyncReadExt, AsyncWriteExt}
 use crate::config::log_path;
 use crate::log_query::{Expr, Operator, QueryAst, Value};
 use crate::query_eval::check_expr;
-use crate::types::LogsQuery;
 
 pub struct Storage {
 	files: HashMap<String, File>,

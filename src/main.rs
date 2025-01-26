@@ -17,7 +17,7 @@ use simple_logger::SimpleLogger;
 use storage::{search_logs, Storage};
 use tokio::{fs, io::AsyncReadExt, sync::mpsc};
 use tower_http::{cors::{AllowMethods, Any, CorsLayer}, decompression::{DecompressionLayer, RequestDecompressionLayer}};
-use types::{Context, LogsQuery, SubscribeReq};
+use types::{Context, SubscribeReq};
 
 mod logline;
 mod cache;
@@ -78,7 +78,8 @@ async fn main() {
 		.route("/api/logs/stream", get(stream_logs)).layer(cors)
 		.route("/api/logs", post(upload_logs))
 			.layer(RequestDecompressionLayer::new().gzip(true))
-			.with_state(ctx);
+			.with_state(ctx)
+		.fallback(get(root));
 
 	// run our app with hyper, listening globally on port 3000
 	let listener = tokio::net::TcpListener::bind("0.0.0.0:3337").await.unwrap();
@@ -93,6 +94,15 @@ async fn root() -> Html<&'static str> {
 	Html(INDEX_HTML)
 }
 
+#[cfg(debug_assertions)]
+async fn js() -> String {
+	let mut file = tokio::fs::File::open("assets/puppylog.js").await.unwrap();
+	let mut contents = String::new();
+	file.read_to_string(&mut contents).await.unwrap();
+	contents
+}
+
+#[cfg(not(debug_assertions))]
 async fn js() -> &'static str {
 	JS_HTML
 }
