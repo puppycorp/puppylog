@@ -147,7 +147,6 @@ export const logsSearchPage = (args: {
 			}, 500)
 			logEntries.push(...entries)
 			logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-			console.log("logEntries", logEntries)
 			const body = `
 				${logEntries.map((r) => `
 				<tr style="height: 35px">

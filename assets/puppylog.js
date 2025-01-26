@@ -216,7 +216,6 @@ var logsSearchPage = (args) => {
       }, 500);
       logEntries.push(...entries);
       logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      console.log("logEntries", logEntries);
       const body = `
 \t\t\t\t${logEntries.map((r) => `
 \t\t\t\t<tr style="height: 35px">
@@ -278,7 +277,11 @@ var mainPage = () => {
   let query = getQueryParam("query") || "";
   let logEventSource = null;
   let isStreaming = getQueryParam("stream") === "true";
+  let lastStreamQuery = "";
   const startStream = (query2) => {
+    if (logEventSource && query2 === lastStreamQuery)
+      return;
+    lastStreamQuery = query2;
     if (logEventSource)
       logEventSource.close();
     logEventSource = null;

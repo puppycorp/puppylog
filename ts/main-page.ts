@@ -5,7 +5,10 @@ export const mainPage = () => {
 	let query = getQueryParam("query") || ""
 	let logEventSource: EventSource | null = null  
 	let isStreaming = getQueryParam("stream") === "true"
+	let lastStreamQuery = ""
 	const startStream = (query: string) => {
+		if (logEventSource && query === lastStreamQuery) return
+		lastStreamQuery = query
 		if (logEventSource) logEventSource.close()
 		logEventSource = null
 		const streamQuery = new URLSearchParams()
