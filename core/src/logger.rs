@@ -47,49 +47,13 @@ impl TLSConn {
 	}
 }
 
-struct HTTPSClient {
-	store: TLSConn,
-}
-
-impl HTTPSClient {
-	fn new(addr: Url) -> Self {
-		let store = TLSConn::new();
-		HTTPSClient {
-			store,
-		}
-	}
-}
-
-impl Write for HTTPSClient {
+impl Write for TLSConn {
 	fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-		self.store.stream().write(buf)
+		self.stream().write(buf)
 	}
 
 	fn flush(&mut self) -> std::io::Result<()> {
-		self.store.stream().flush()
-	}
-}
-
-struct HTTPClient {
-	stream: TcpStream,
-}
-
-impl HTTPClient {
-	fn new(addr: Url) -> Self {
-		let stream = TcpStream::connect(addr).unwrap();
-		HTTPClient {
-			stream,
-		}
-	}
-}
-
-impl Write for HTTPClient {
-	fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-		self.stream.write(buf)
-	}
-
-	fn flush(&mut self) -> std::io::Result<()> {
-		self.stream.flush()
+		self.stream().flush()
 	}
 }
 
@@ -196,21 +160,21 @@ mod tests {
 	}
 }
 
-fn create_stream(url: &str) -> impl Write {
-	let url = Url::parse(url).unwrap();
-	let stream = TcpStream::connect(url.host_str().unwrap()).unwrap();
-	match url.scheme() {
-		"http" => {
-			let client = HTTPClient::new(url);
-			ChunkedEncoder::new(client, url, 1024, 1024 * 1024)
-		}
-		"https" => {
-			let client = HTTPSClient::new(url);
-			ChunkedEncoder::new(client, url, 1024, 1024 * 1024)
-		}
-		_ => panic!("Invalid scheme"),
-	}
-}
+// fn create_stream(url: &str) -> impl Write {
+// 	let url = Url::parse(url).unwrap();
+// 	let stream = TcpStream::connect(url.host_str().unwrap()).unwrap();
+// 	match url.scheme() {
+// 		"http" => {
+// 			let client = HTTPClient::new(url);
+// 			ChunkedEncoder::new(client, url, 1024, 1024 * 1024)
+// 		}
+// 		"https" => {
+// 			let client = HTTPSClient::new(url);
+// 			ChunkedEncoder::new(client, url, 1024, 1024 * 1024)
+// 		}
+// 		_ => panic!("Invalid scheme"),
+// 	}
+// }
 
 struct ResourceManager {
 	builder: LoggerBuilder,
@@ -246,8 +210,7 @@ impl ResourceManager {
 				let socket = TcpStream::connect(url.host_str().unwrap()).unwrap();
 				match url.scheme() {
 					"http" => {
-						let client = HTTPClient::new(url);
-						self.client = Some(Box::new(ChunkedEncoder::new(client, self.builder.min_buffer_size, self.builder.max_buffer_size)));
+						self.client = Some(Box::new(ChunkedEncoder::new(socket, url, self.builder.min_buffer_size, self.builder.max_buffer_size)));
 					}
 					"https" => {
 						let tls = TLSConn::new(socket);
@@ -358,24 +321,24 @@ impl LoggerBuilder {
 		}
 	}
 
-	pub fn with_folder<P: AsRef<Path>>(mut self, path: P) -> Self {
+	pub fn folder<P: AsRef<Path>>(mut self, path: P) -> Self {
 		let path: &Path = path.as_ref();
 		self.log_folder = Some(path.to_path_buf());
 		self
 	}
 
-	pub fn with_server(mut self, url: &str) -> Self {
+	pub fn server(mut self, url: &str) -> Self {
 		self.log_server = Some(url.to_string());
 		self
 	}
 
-	pub fn with_level(mut self, level: Level) -> Self {
+	pub fn level(mut self, level: Level) -> Self {
 		self.level_filter = level;
 		self
 	}
 
-	pub fn stdout(mut self, value: bool) -> Self {
-		self.log_stdout = value;
+	pub fn stdout(mut self) -> Self {
+		self.log_stdout = true;
 		self
 	}
 
