@@ -201,6 +201,11 @@ var logsSearchPage = (args) => {
     threshold: 0.1
   });
   observer.observe(last);
+  const escapeHTML = (str) => {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  };
   return {
     root,
     onError(err) {
@@ -217,14 +222,16 @@ var logsSearchPage = (args) => {
       logEntries.push(...entries);
       logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
       const body = `
-\t\t\t\t${logEntries.map((r) => `
-\t\t\t\t<tr style="height: 35px">
-\t\t\t\t\t<td style="white-space: nowrap; vertical-align: top; text-align: center;">${formatTimestamp(r.timestamp)}</td>
-\t\t\t\t\t<td style="color: ${logColors[r.level]}; vertical-align: top; text-align: center;text-align: center;">${r.level}</td>
-\t\t\t\t\t<td style="vertical-align: top; text-align: center;">${r.props.map((p) => `${p.key}=${p.value}`).join("<br />")}</td>
-\t\t\t\t\t<td style="word-break: break-all; vertical-align: top">${r.msg.slice(0, 700)}${r.msg.length > 700 ? "..." : ""}</td>
-\t\t\t\t</tr>
-\t\t\t\t`).join("")}
+\t\t\t\t${logEntries.map((r) => {
+        return `
+\t\t\t\t\t\t<tr style="height: 35px">
+\t\t\t\t\t\t\t<td style="white-space: nowrap; vertical-align: top; text-align: center;">${formatTimestamp(r.timestamp)}</td>
+\t\t\t\t\t\t\t<td style="color: ${logColors[r.level]}; vertical-align: top; text-align: center;text-align: center;">${r.level}</td>
+\t\t\t\t\t\t\t<td style="vertical-align: top; text-align: left;">${r.props.map((p) => `${p.key}=${p.value}`).join("<br />")}</td>
+\t\t\t\t\t\t\t<td style="word-break: break-all; vertical-align: top">${escapeHTML(`${r.msg.slice(0, 700)}${r.msg.length > 700 ? "..." : ""}`)}</td>
+\t\t\t\t\t\t</tr>
+\t\t\t\t\t`;
+      }).join("")}
 \t\t\t`;
       tbody.innerHTML = body;
     }
