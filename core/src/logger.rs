@@ -12,7 +12,7 @@ use rustls::client::{self, ClientConnectionData};
 use rustls::{ClientConnection, RootCertStore, Stream};
 use url::Url;
 
-use crate::{LogEntry, LogLevel};
+use crate::{LogEntry, LogLevel, Prop};
 
 pub struct TLSConn {
 	conn: ClientConnection,
@@ -20,7 +20,7 @@ pub struct TLSConn {
 }
 
 impl TLSConn {
-	pub fn new(sock: TcpStream) -> Self {
+	pub fn new(sock: TcpStream, server_name: String) -> Self {
 		let root_store = RootCertStore {
 			roots: webpki_roots::TLS_SERVER_ROOTS.into(),
 		};
@@ -30,8 +30,8 @@ impl TLSConn {
 	
 		// Allow using SSLKEYLOGFILE.
 		config.key_log = Arc::new(rustls::KeyLogFile::new());
-	
-		let server_name = "www.rust-lang.org".try_into().unwrap();
+
+		let server_name = server_name.try_into().unwrap();
 		let conn = rustls::ClientConnection::new(Arc::new(config), server_name).unwrap();
 		TLSConn {
 			conn,
@@ -40,10 +40,7 @@ impl TLSConn {
 	}
 
 	fn stream(&mut self) -> Stream<'_, ClientConnection, TcpStream> {
-		Stream {
-			conn: &mut self.conn,
-			sock: &mut self.sock,
-		}
+		rustls::Stream::new(&mut self.conn, &mut self.sock)
 	}
 }
 
@@ -77,28 +74,65 @@ impl<T> ChunkedEncoder<T>
 where
     T: Write + Read, 
 {
-    pub fn new(mut stream: T, url: Url, min_buffer_size: u64, max_buffer_size: u64) -> Self {
-        let body = format!(
-            "POST {} HTTP/1.1\r\n\
-             Host: {}\r\n\
-             Content-Type: application/octet-stream\r\n\
-             Transfer-Encoding: chunked\r\n\
-             Connection: keep-alive\r\n\
-             \r\n",
-            url.path(),
-            url.host_str().unwrap()
-        );
-        stream.write_all(body.as_bytes()).unwrap();
+	pub fn new(mut stream: T, url: Url, min_buffer_size: u64, max_buffer_size: u64, authorization: Option<String>) -> Self {
+		let auth_header = match authorization {
+			Some(token) => format!("Authorization: {}\n\n", token),
+			None => String::new(),
+		};
+		let body = format!(
+			"POST {} HTTP/1.1\r\n\
+			Host: {}\r\n\
+			Content-Type: application/octet-stream\r\n\
+			Transfer-Encoding: chunked\r\n\
+			Connection: keep-alive\r\n\
+			{}",
+			url.path(),
+			url.host_str().unwrap(),
+			auth_header,
+		);
+		loop {
+			match stream.write_all(body.as_bytes()) {
+				Ok(_) => break,
+				Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+				Err(e) => panic!("Failed to write: {}", e),
+			}
+		}
+		println!("wrote request");
 
-        ChunkedEncoder {
-            stream,
-            min_buffer_size,
-            max_buffer_size,
-            last_write_at: Instant::now(),
-            buffer: Vec::with_capacity(min_buffer_size as usize),
-            total_bytes_sent: 0,
-        }
-    }
+		let mut response_buf = vec![0u8; 4096];
+		let time = Instant::now();
+		loop {
+			match stream.read(&mut response_buf) {
+				Ok(0) => {
+					panic!("Connection closed by server");
+				},
+				Ok(n) => {
+					let response = String::from_utf8_lossy(&response_buf[..n]);
+					println!("response: {}", response);
+					if response.starts_with("HTTP/1.1 200") {
+						println!("Server accepted connection");
+					} else {
+						panic!("Server error: {}", response);
+					}
+				},
+				Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+					if time.elapsed().as_millis() > 100 {
+						println!("nothing to read");
+						break;
+					}
+				},
+				Err(e) => panic!("Failed to read: {}", e),
+			}
+		}
+		ChunkedEncoder {
+				stream,
+			min_buffer_size,
+			max_buffer_size,
+			last_write_at: Instant::now(),
+			buffer: Vec::with_capacity(min_buffer_size as usize),
+			total_bytes_sent: 0,
+		}
+	}
 
     pub fn close(&mut self) -> std::io::Result<()> {
         self.flush()?;
@@ -147,29 +181,38 @@ impl<T: Write + Read> Write for ChunkedEncoder<T> {
 
         // Handle response
         let mut response_buf = vec![0u8; 4096];
-        match self.stream.read(&mut response_buf) {
-            Ok(0) => {
-                Err(io::Error::new(
-                    io::ErrorKind::ConnectionAborted,
-                    "Connection closed by server"
-                ))
-            },
-            Ok(n) => {
-                let response = String::from_utf8_lossy(&response_buf[..n]);
-                
-                // Check for HTTP error responses
-                if response.starts_with("HTTP/1.1 4") || response.starts_with("HTTP/1.1 5") {
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("Server error: {}", response)
-                    ))
-                } else {
-                    Ok(())
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(()),
-            Err(e) => Err(e)
-        }
+		let timer = Instant::now();
+		loop {
+			match self.stream.read(&mut response_buf) {
+				Ok(0) => {
+					break Err(io::Error::new(
+						io::ErrorKind::ConnectionAborted,
+						"Connection closed by server"
+					))
+				},
+				Ok(n) => {
+					let response = String::from_utf8_lossy(&response_buf[..n]);
+					println!("response: {}", response);
+					
+					// Check for HTTP error responses
+					if response.starts_with("HTTP/1.1 4") || response.starts_with("HTTP/1.1 5") {
+						return Err(io::Error::new(
+							io::ErrorKind::Other,
+							format!("Server error: {}", response)
+						))
+					} else {
+						break Ok(())
+					}
+				}
+				Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+					if timer.elapsed().as_millis() > 100 {
+						println!("nothing to read");
+						break Ok(())
+					}
+				}
+				Err(e) => break Err(e)
+			}
+		}
     }
 }
 
@@ -254,7 +297,11 @@ impl ResourceManager {
 				};
 				if should_create {
 					self.url = Some(url.clone());
-					let host = format!("{}:{}", url.host_str().unwrap(), url.port().unwrap_or(80));
+					let port = match url.port() {
+						Some(p) => p,
+						None => if url.scheme() == "https" { 443 } else { 80 },
+					};
+					let host = format!("{}:{}", url.host_str().unwrap(), port);
 					println!("connecting to {}", host);
 					let socket = TcpStream::connect(host).unwrap();
 					socket.set_nonblocking(true).unwrap();
@@ -262,11 +309,12 @@ impl ResourceManager {
 					println!("scheme: {}", url.scheme());
 					match url.scheme() {
 						"http" => {
-							self.client = Some(Box::new(ChunkedEncoder::new(socket, url, self.builder.min_buffer_size, self.builder.max_buffer_size)));
+							self.client = Some(Box::new(ChunkedEncoder::new(socket, url, self.builder.min_buffer_size, self.builder.max_buffer_size, self.builder.authorization.clone())));
 						}
 						"https" => {
-							let tls = TLSConn::new(socket);
-							self.client = Some(Box::new(ChunkedEncoder::new(tls, url, self.builder.min_buffer_size, self.builder.max_buffer_size)));
+							let mut tls = TLSConn::new(socket, url.host_str().unwrap().to_string());
+							// let stream = tls.stream();
+							self.client = Some(Box::new(ChunkedEncoder::new(tls, url, self.builder.min_buffer_size, self.builder.max_buffer_size, self.builder.authorization.clone())));
 						}
 						_ => {}
 					};
@@ -382,7 +430,12 @@ impl log::Log for PuppylogClient {
 				level,
 				timestamp: Utc::now(),
 				random: 0,
-				props: vec![],
+				props: vec![
+					Prop {
+						key: "app".to_string(),
+						value: "puppyapp".to_string()
+					}
+				],
 				msg: record.args().to_string()
 			};
 			self.send_logentry(entry);
@@ -401,6 +454,7 @@ pub struct LoggerBuilder {
 	max_buffer_size: u64,
 	log_folder: Option<PathBuf>,
 	log_server: Option<String>,
+	authorization: Option<String>,
 	log_stdout: bool,
 	level_filter: Level,
 }
@@ -415,6 +469,7 @@ impl LoggerBuilder {
 			log_folder: None,
 			log_server: None,
 			log_stdout: true,
+			authorization: None,
 			level_filter: Level::Info,
 		}
 	}
@@ -427,6 +482,11 @@ impl LoggerBuilder {
 
 	pub fn server(mut self, url: &str) -> Self {
 		self.log_server = Some(url.to_string());
+		self
+	}
+
+	pub fn authorization(mut self, token: &str) -> Self {
+		self.authorization = Some(token.to_string());
 		self
 	}
 
