@@ -73,6 +73,9 @@ impl Read for ChunckReader {
 mod tests {
     use std::io::Read;
     use bytes::Bytes;
+	use crate::{LogEntry, LogLevel};
+
+use super::*;
 
 	#[test]
 	fn parse_chucks() {
@@ -167,5 +170,52 @@ mod tests {
 		let read = reader.read(&mut buf).unwrap();
 		assert_eq!(read, 3);
 		assert_eq!(&buf, b"llo");
+	}
+
+	#[test]
+	fn parse_many_logentries() {
+		fn gen_loentries() -> Vec<LogEntry> {
+			let mut entries = Vec::new();
+			for i in 0..10 {
+				entries.push(LogEntry {
+					timestamp: chrono::Utc::now(),
+					level: LogLevel::Info,
+					props: vec![
+						("key1".to_string(), "value1".to_string()),
+						("key2".to_string(), "value2".to_string())
+					],
+					msg: format!("Hello, world! {}", i)
+				});
+			}
+			entries
+		}
+
+		let entries = gen_loentries();
+		let mut buffer = std::io::Cursor::new(vec![]);
+		for entry in &entries {
+			entry.serialize(&mut buffer).unwrap();
+		}
+		buffer.set_position(0);
+		let mut reader = super::ChunckReader::new();
+		reader.add_chunk(buffer.into_inner().into());
+		let mut i = 0;
+		loop {
+			match LogEntry::deserialize(&mut reader) {
+				Ok(entry) => {
+					reader.commit();
+					assert_eq!(entry.timestamp.timestamp_millis(), entries[i].timestamp.timestamp_millis());
+					assert_eq!(entry.level, entries[i].level);
+					assert_eq!(entry.props, entries[i].props);
+					assert_eq!(entry.msg, entries[i].msg);
+					i += 1;
+				},
+				Err(err) => {
+					reader.rollback();
+					break;
+				}
+			}
+		}
+		assert_eq!(i, 10);
+
 	}
 }

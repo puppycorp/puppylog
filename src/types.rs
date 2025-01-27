@@ -30,47 +30,6 @@ impl Context {
 	}
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct LogsQuery {
-	pub start: Option<DateTime<Utc>>,
-	pub end: Option<DateTime<Utc>>,
-	pub level: Option<LogLevel>,
-	pub count: Option<usize>,
-	pub props: Vec<(String, String)>,
-	pub search: Option<String>,
-}
-
-impl LogsQuery {
-	pub fn matches(&self, entry: &LogEntry) -> bool {
-		if let Some(start) = &self.start {
-			if entry.timestamp < *start {
-				return false;
-			}
-		}
-		if let Some(end) = &self.end {
-			if entry.timestamp > *end {
-				return false;
-			}
-		}
-		if let Some(level) = &self.level {
-			if entry.level != *level {
-				return false;
-			}
-		}
-		for (key, value) in &self.props {
-			if entry.props.iter().find(|(k, v)| k == key && v == value).is_none() {
-				return false;
-			}
-		}
-		if let Some(search) = &self.search {
-			if !entry.msg.contains(search) {
-				return false;
-			}
-		}
-		true
-	}
-}
-
 pub struct SubscribeReq {
 	pub res_tx: mpsc::Sender<LogEntry>,
 	pub query: QueryAst

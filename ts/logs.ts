@@ -1,5 +1,4 @@
-import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
-import { VirtualTable } from "./virtual-table"
+import { getQueryParam } from "./utility"
 
 export type LogLevel = "Debug" | "Info" | "Warn" | "Error"
 export const logColors = {
@@ -9,11 +8,16 @@ export const logColors = {
 	Error: "red"
 }
 
+export type Prop = {
+	key: string
+	value: string
+}
+
 export type LogEntry = {
-    timestamp: string
+	timestamp: string
 	level: LogLevel
-    props: string[][]
-    msg: string
+	props: Prop[]
+	msg: string
 }
 
 export type SortDir = "asc" | "desc";
@@ -21,266 +25,139 @@ export type SortDir = "asc" | "desc";
 const formatTimestamp = (ts: string) => {
 	const date = new Date(ts)
 	return date.toLocaleString()
-}	
-
-export class Logtable {
-	public root: HTMLElement
-    private table = document.createElement("table")
-    private header: HTMLElement
-    private body: HTMLElement
-    public sortDir: SortDir = "desc"
-    private logSearcher: LogSearcher
-	private virtual: VirtualTable
-    private errorText: HTMLElement
-
-    constructor() {
-        this.root = document.createElement('div')
-
-        this.header = document.createElement('head')
-        this.header.innerHTML = `<tr><th>Timestamp</th><th>Level</th><th>Props</th><th>Message</th></tr>`
-        this.table.appendChild(this.header)
-        this.body = document.createElement('tbody') 
-        this.table.appendChild(this.body)
-
-		this.logSearcher = new LogSearcher({
-            onNewLoglines: this.onNewLoglines.bind(this),
-            onClear: () => {},
-            onError: (err) => {
-                this.errorText.innerHTML = err
-            }
-        })
-        this.virtual = new VirtualTable({
-            rowCount: 0,
-            rowHeight: 35, 
-            drawRow: (start, end) => {
-				console.log(`draw start: ${start} end: ${end}`)
-                let body = ""
-                for (let i = start; i < end; i++) {
-                    const r = this.logSearcher.logEntries[i]
-                    body += `
-                    <tr style="height: 35px">
-                        <td style="white-space: nowrap">${formatTimestamp(r.timestamp)}</td>
-                        <td style="color: ${logColors[r.level]}">${r.level}</td>
-						<td>${r.props.map((p) => p.join("=")).join(", ")}</td>
-                        <td style="word-break: break-all">${r.msg}</td>
-                    </tr>
-                    `
-                }
-                this.body.innerHTML = body
-                return this.table
-            },
-			fetchMore: this.fetchMore.bind(this)
-        })
-        const searchOptions = new LogSearchOptions({
-            searcher: this.logSearcher
-        })
-        this.root.appendChild(searchOptions.root)
-        this.errorText = document.createElement('div')
-        this.errorText.style.color = "red"
-        this.root.appendChild(this.errorText)
-        this.root.appendChild(this.virtual.root)
-
-        // this.logSearcher.search({
-        //     count: 100
-        // })
-        this.logSearcher.stream()
-
-        window.addEventListener("scroll", (e) => {
-            console.log("scroll", e)
-        })
-    }
-
-	private onNewLoglines() {
-		console.log("onNewLoglines")
-		this.virtual.setRowCount(this.logSearcher.logEntries.length)
-	}
-
-	private fetchMore() {
-		if (!this.logSearcher) return
-		console.log("fetchMore")
-		this.logSearcher.fetchMore()
-	}
-
-    public sort(dir: SortDir) {
-        this.sortDir = dir
-    }
 }
 
-export class LogSearchOptions {
-    public root: HTMLElement
-    private input: HTMLTextAreaElement
-    private button: HTMLButtonElement
-    // private startDate: HTMLInputElement
-    // private endDate: HTMLInputElement
-    private searcher: LogSearcher
+export type FetchMoreArgs = {
+	offset: number
+	count: number
+	query: string
+}
 
-    constructor(args: {
-        searcher: LogSearcher
-    }) {
-        this.root = document.createElement('div')
-		this.root.style.display = "flex"
-		this.root.style.gap = "10px"
-        this.input = document.createElement('textarea')
-        this.input.value = getQueryParam("query") || ""
-        this.input.rows = 4
-		this.input.style.width = "400px"
-		this.input.onkeydown = (e) => {
-			if (e.key === "Enter" && !e.shiftKey) {
-				e.preventDefault()
-                this.searcher.setQuery(this.input.value)
+export const logsSearchPage = (args: {
+	isStreaming: boolean
+	fetchMore: (args: FetchMoreArgs) => void
+	toggleIsStreaming: () => boolean
+}) => {
+	const root = document.createElement("div")
+	const logEntries: LogEntry[] = []
+	const options = document.createElement("div")
+	options.style.position = "sticky"
+	options.style.top = "0"
+	options.style.gap = "10px"
+	options.style.backgroundColor = "white"
+	options.style.height = "100px"
+	options.style.display = "flex"
+	const searchBar = document.createElement("textarea")
+	const tbody = document.createElement("tbody")
+	tbody.style.width = "400px"
+	const queryLogs = (query: string) => {
+		logEntries.length = 0
+		tbody.innerHTML = ""
+		last.innerHTML = "Loading..."
+		args.fetchMore({
+			offset: 0,
+			count: 100,
+			query
+		})
+	}
+	searchBar.style.height = "100px"
+	searchBar.style.resize = "none"
+	searchBar.style.flexGrow = "1"
+	searchBar.value = getQueryParam("query") || ""
+	searchBar.onkeydown = (e) => {
+		if (e.key === "Enter" && e.ctrlKey) {
+			e.preventDefault()
+			queryLogs(searchBar.value)
+		}
+	}
+	options.appendChild(searchBar)
+	const searchButton = document.createElement("button")
+	searchButton.onclick = () => {
+		queryLogs(searchBar.value)
+	}
+	searchButton.innerHTML = "Search"
+	options.appendChild(searchButton)
+	const streamButton = document.createElement("button")
+	const streamButtonState = (state: boolean) => state ? "Stop<br />Stream" : "Start<br />Stream"
+	streamButton.innerHTML = streamButtonState(args.isStreaming)
+	streamButton.onclick = () => {
+		const isStreaming = args.toggleIsStreaming()
+		streamButton.innerHTML = streamButtonState(isStreaming)
+	}
+	options.appendChild(streamButton)
+	root.appendChild(options)
+	const table = document.createElement("table")
+	table.style.width = "100%"
+	const thead = document.createElement("thead")
+	thead.style.position = "sticky"
+	thead.style.top = "100px"
+	thead.style.backgroundColor = "white"
+	thead.innerHTML = `
+		<tr>
+			<th>Timestamp</th>
+			<th>Level</th>
+			<th>Props</th>
+			<th>Message</th>
+		</tr>
+	`
+	table.appendChild(thead)
+	table.appendChild(tbody)
+	const tableWrapper = document.createElement("div")
+	tableWrapper.style.overflow = "auto"
+	tableWrapper.appendChild(table)
+	root.appendChild(table)
+	// requestAnimationFrame(() => {
+	// 	queryLogs(searchBar.value)
+	// })
+
+	const last = document.createElement("div")
+	last.style.height = "100px"
+	last.innerHTML = "Loading..."
+	root.appendChild(last)
+	let moreRows = true
+	const observer = new IntersectionObserver(() => {
+		console.log("intersect")
+		if (!moreRows) return
+		console.log("need to fetch more")
+		moreRows = false
+		args.fetchMore({
+			offset: logEntries.length,
+			count: 100,
+			query: searchBar.value
+		})
+	}, {
+		root: null,
+		rootMargin: "0px",
+		threshold: 0.1,
+	})
+	observer.observe(last)
+
+	return {
+		root,
+		onError (err: string) {
+			last.innerHTML = err
+		},
+		addLogEntries: (entries: LogEntry[]) => {	
+			if (entries.length === 0) {
+				last.innerHTML = "No more rows"
+				return
 			}
+			setTimeout(() => {
+				moreRows = true
+			}, 500)
+			logEntries.push(...entries)
+			logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+			const body = `
+				${logEntries.map((r) => `
+				<tr style="height: 35px">
+					<td style="white-space: nowrap; vertical-align: top"><pre>${formatTimestamp(r.timestamp)}</pre></td>
+					<td style="color: ${logColors[r.level]}; vertical-align: top"><pre>${r.level}</pre></td>
+					<td style="vertical-align: top"><pre>${r.props.map((p) => `${p.key}=${p.value}`).join("<br />")}</pre></td>
+					<td style="word-break: break-all; vertical-align: top">${r.msg.slice(0, 700)}${r.msg.length > 700 ? "..." : ""}</td>
+				</tr>
+				`).join("")}
+			`
+			tbody.innerHTML = body
 		}
-				
-        this.button = document.createElement('button')
-        this.button.onclick = () => {
-            this.searcher.setQuery(this.input.value)
-        }
-        this.button.innerHTML = "Search"
-        this.root.appendChild(this.input)
-        this.root.appendChild(this.button)
-        // this.startDate = document.createElement('input')
-        // this.startDate.type = "date"
-        // this.root.appendChild(this.startDate)
-        // this.endDate = document.createElement('input')
-        // this.endDate.type = "date"
-        // this.root.appendChild(this.endDate)
-		const streamButton = document.createElement('button')
-		streamButton.innerHTML = "Stop<br />Stream"
-		streamButton.onclick = () => {
-			this.searcher.toggleIsStreaming()
-			streamButton.innerHTML = this.searcher.isStreaming ? "Stop<br />Stream" : "Start<br />Stream"
-		}
-		this.root.appendChild(streamButton)
-        this.searcher = args.searcher
-    }
-
-    public getQuery(): string {
-        return this.input.value
-    }
-}
-
-export class LogSearcher {
-    private logEventSource?: EventSource
-	private sortDir: SortDir = "desc"
-    private onClear: () => void
-    private onNewLoglines: () => void
-    private onError: (err: string) => void
-    public logEntries: LogEntry[] = []
-	public firstDate?: string
-	public lastDate?: string
-    private query: string = ""
-    private offset: number = 0
-    private count: number = 100
-    private alreadyFetched: boolean = false
-
-    public constructor(args: {
-        onClear: () => void
-        onNewLoglines: () => void
-        onError: (err: string) => void
-    }) {
-        this.onClear = args.onClear
-        this.onNewLoglines = args.onNewLoglines
-        this.onError = args.onError
-        this.query = getQueryParam("query") || ""
-    }
-
-	private buildQuery(stream?: boolean) {
-		const offsetInMinutes = new Date().getTimezoneOffset();
-        const offsetInHours = -offsetInMinutes / 60;
-		const urlQuery = new URLSearchParams()
-        urlQuery.append("timezone", offsetInHours.toString())
-        if (this.query) {
-            urlQuery.append("query", this.query)
-        }
-		if (!stream) {
-        	urlQuery.append("count", this.count.toString())
-        	urlQuery.append("offset", this.offset.toString())
-		}
-		return urlQuery
-	}
-
-
-    public stream() {
-        const url = new URL("/api/logs/stream", window.location.origin)
-		url.search = this.buildQuery(true).toString()
-        this.createEventSource(url.toString())
-    }
-
-    public setQuery(query: string) {
-        this.query = query
-        this.offset = 0
-        this.alreadyFetched = false
-		if (query) setQueryParam("query", query)
-		else removeQueryParam("query")
-        this.logEntries = []
-        this.fetchMore()
-		this.stream()
-    }
-
-	get isStreaming() {
-		return this.logEventSource != null
-	}
-
-	public toggleIsStreaming() {
-		if (this.isStreaming) {
-			this.logEventSource?.close()
-			this.logEventSource = undefined
-		} else {
-			this.stream()
-		}
-	}
-
-    public fetchMore() {
-        if (this.alreadyFetched) return
-        this.alreadyFetched = true
-        const url = new URL("/api/logs", window.location.origin)
-		url.search = this.buildQuery().toString()
-        fetch(url.toString()).then(async (res) => {
-            if (res.status === 400) {
-                const err = await res.json()
-                this.onError(err.error)
-                console.log("res", res)
-                throw new Error("Failed to fetch logs")
-            }
-            this.onError("")
-            return res.json()
-        }).then((data) => {
-            this.logEntries.push(...data)
-            this.handleSort()
-            this.onNewLoglines()
-            this.offset += this.count
-            if (data.length >= this.count) {
-                this.alreadyFetched = false
-            }
-        }).catch((err) => {
-            console.error("error", err)
-        })
-    }
-
-    private createEventSource(url: string) {
-        if (this.logEventSource) {
-            this.logEventSource.close()
-            this.onClear()
-        }
-
-        this.logEventSource = new EventSource(url)
-        this.logEventSource.onmessage = (e) => {
-            console.log("Got message", e.data)
-            this.logEntries.push(JSON.parse(e.data))
-			this.handleSort()
-			this.onNewLoglines()
-        }
-        this.logEventSource.onerror = (err) => {
-            console.error("error", err)
-            this.logEventSource?.close()
-        }
-    }
-
-	private handleSort() {
-		if (this.logEntries.length === 0) return
-		if (this.sortDir === "asc") this.logEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-		else this.logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-		this.firstDate = this.logEntries[0].timestamp
-		this.lastDate = this.logEntries[this.logEntries.length - 1].timestamp
 	}
 }
