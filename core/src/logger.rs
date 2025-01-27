@@ -136,8 +136,10 @@ impl log::Log for PuppylogClient {
 				Level::Trace => LogLevel::Debug,
 			};
 			let entry = LogEntry {
+				version: 1,
 				level,
 				timestamp: Utc::now(),
+				random: 0,
 				props: vec![],
 				msg: record.args().to_string()
 			};

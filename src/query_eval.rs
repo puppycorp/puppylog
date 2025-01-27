@@ -158,7 +158,8 @@ mod tests {
             timestamp: Utc::now(),
             level: LogLevel::Info,
             props: vec![("key".to_string(), "value".to_string())],
-            msg: "Hello, world!".to_string()
+            msg: "Hello, world!".to_string(),
+			..Default::default()
         };
 
         let expr = Expr::Condition(Condition {
@@ -175,7 +176,8 @@ mod tests {
             timestamp: Utc::now(),
             level: LogLevel::Info,
             props: vec![("key".to_string(), "value".to_string())],
-            msg: "Hello, world!".to_string()
+            msg: "Hello, world!".to_string(),
+			..Default::default()
         };
 
         let expr = Expr::Condition(Condition {
@@ -195,7 +197,8 @@ mod tests {
                 ("user_id".to_string(), "123".to_string()),
                 ("duration_ms".to_string(), "150".to_string()),
             ],
-            msg: "User login successful".to_string()
+            msg: "User login successful".to_string(),
+			..Default::default()
         }
     }
 
@@ -390,7 +393,8 @@ mod tests {
             timestamp: Utc::now(),
             level: LogLevel::Info,
             props: vec![("key".to_string(), "value".to_string())],
-            msg: "Hello, world!".to_string()
+            msg: "Hello, world!".to_string(),
+			..Default::default()
         };
         
         let expr = Expr::Condition(Condition {
@@ -420,7 +424,8 @@ mod tests {
             timestamp: Utc::now(),
             level: LogLevel::Info,
             props: vec![("key".to_string(), "value".to_string())],
-            msg: "Hello, world!".to_string()
+            msg: "Hello, world!".to_string(),
+			..Default::default()
         };
         let expr = Expr::Condition(Condition {
             left: Box::new(Expr::Value(Value::String("key".to_string()))),

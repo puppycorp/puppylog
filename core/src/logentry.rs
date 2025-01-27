@@ -108,13 +108,42 @@ impl From<&String> for LogLevel {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEntry {
+	pub version: u8,
+	pub random: u32,
 	pub timestamp: DateTime<Utc>,
 	pub level: LogLevel,
 	pub props: Vec<(String, String)>,
 	pub msg: String
 }
 
+impl Default for LogEntry {
+	fn default() -> Self {
+		LogEntry {
+			version: 0,
+			random: 0,
+			timestamp: Utc::now(),
+			level: LogLevel::Info,
+			props: vec![],
+			msg: "".to_string()
+		}
+	}
+}
+
 impl LogEntry {
+	pub fn id(&self) -> u128 {
+		let timestamp_ms = self.timestamp.timestamp_millis() as u128;
+		let timestamp_part = timestamp_ms << 32;
+		timestamp_part | (self.random as u128)
+	}
+
+	pub fn id_string(&self) -> String {
+		self.id().to_string()
+	}
+
+	pub fn id_hex(&self) -> String {
+		format!("{:032x}", self.id())
+	}
+
 	pub fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
 		writer.write_i64::<LittleEndian>(self.timestamp.timestamp_millis())?;
 		writer.write_u8((&self.level).into())?;
@@ -182,6 +211,8 @@ impl LogEntry {
 		let msg = String::from_utf8_lossy(&data[*ptr..*ptr + msg_len]).to_string();
 		*ptr += msg_len;
 		Ok(LogEntry {
+			version: 0,
+			random: 0,
 			timestamp,
 			level,
 			props,
@@ -218,6 +249,8 @@ impl LogEntry {
 		reader.read_exact(&mut msg)?;
 		let msg = String::from_utf8_lossy(&msg).to_string();
 		Ok(LogEntry {
+			version: 0,
+			random: 0,
 			timestamp,
 			level,
 			props,
@@ -273,7 +306,8 @@ mod tests {
 				("key1".to_string(), "value1".to_string()),
 				("key2".to_string(), "value2".to_string())
 			],
-			msg: "Hello, world!".to_string()
+			msg: "Hello, world!".to_string(),
+			..Default::default()
 		};
 
 		let mut buffer = Cursor::new(vec![]);
@@ -299,7 +333,8 @@ mod tests {
 						("key1".to_string(), "value1".to_string()),
 						("key2".to_string(), "value2".to_string())
 					],
-					msg: format!("Hello, world! {}", i)
+					msg: format!("Hello, world! {}", i),
+					..Default::default()
 				});
 			}
 			entries
