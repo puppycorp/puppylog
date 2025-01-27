@@ -284,9 +284,9 @@ var mainPage = () => {
   let query = getQueryParam("query") || "";
   let logEventSource = null;
   let isStreaming = getQueryParam("stream") === "true";
-  let lastStreamQuery = "";
+  let lastStreamQuery = null;
   const startStream = (query2) => {
-    if (logEventSource && query2 === lastStreamQuery)
+    if (lastStreamQuery === query2)
       return;
     lastStreamQuery = query2;
     if (logEventSource)
@@ -318,6 +318,7 @@ var mainPage = () => {
       } else {
         if (logEventSource)
           logEventSource.close();
+        lastStreamQuery = null;
         removeQueryParam("stream");
       }
       return isStreaming;
