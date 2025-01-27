@@ -106,13 +106,19 @@ impl From<&String> for LogLevel {
 // 	}
 // }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Prop {
+	pub key: String,
+	pub value: String
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEntry {
 	pub version: u8,
 	pub random: u32,
 	pub timestamp: DateTime<Utc>,
 	pub level: LogLevel,
-	pub props: Vec<(String, String)>,
+	pub props: Vec<Prop>,
 	pub msg: String
 }
 
@@ -148,11 +154,11 @@ impl LogEntry {
 		writer.write_i64::<LittleEndian>(self.timestamp.timestamp_millis())?;
 		writer.write_u8((&self.level).into())?;
 		writer.write_u8(self.props.len() as u8)?;
-		for (key, value) in &self.props {
-			writer.write_u8(key.len() as u8)?;
-			writer.write_all(key.as_bytes())?;
-			writer.write_u8(value.len() as u8)?;
-			writer.write_all(value.as_bytes())?;
+		for prop in &self.props {
+			writer.write_u8(prop.key.len() as u8)?;
+			writer.write_all(prop.key.as_bytes())?;
+			writer.write_u8(prop.value.len() as u8)?;
+			writer.write_all(prop.value.as_bytes())?;
 		}
 		writer.write_u32::<LittleEndian>(self.msg.len() as u32)?;
 		writer.write_all(self.msg.as_bytes())?;
@@ -198,7 +204,10 @@ impl LogEntry {
 			}
 			let value = String::from_utf8_lossy(&data[*ptr..*ptr + value_len]).to_string();
 			*ptr += value_len;
-			props.push((key, value));
+			props.push(Prop {
+				key,
+				value
+			});
 		}
 		if *ptr + 4 > data.len() {
 			return Err(());
@@ -241,7 +250,10 @@ impl LogEntry {
 			let mut value = vec![0; value_len as usize];
 			reader.read_exact(&mut value)?;
 			let value = String::from_utf8_lossy(&value).to_string();
-			props.push((key.to_string(), value));
+			props.push(Prop {
+				key: key.to_string(),
+				value
+			});
 		}
 
 		let msg_len = reader.read_u32::<LittleEndian>()?;
@@ -291,7 +303,7 @@ impl LogEntryChunkParser {
 
 #[cfg(test)]
 mod tests {
-    use crate::{LogEntry, LogEntryChunkParser, LogLevel};
+    use crate::{LogEntry, LogEntryChunkParser, LogLevel, Prop};
 
 	#[test]
 	fn test_serialize_and_deserialize() {
@@ -303,8 +315,8 @@ mod tests {
 			timestamp: Utc::now(),
 			level: LogLevel::Info,
 			props: vec![
-				("key1".to_string(), "value1".to_string()),
-				("key2".to_string(), "value2".to_string())
+				Prop { key: "key1".to_string(), value: "value1".to_string() },
+				Prop { key: "key2".to_string(), value: "value2".to_string() }
 			],
 			msg: "Hello, world!".to_string(),
 			..Default::default()
@@ -330,8 +342,8 @@ mod tests {
 					timestamp: chrono::Utc::now(),
 					level: LogLevel::Info,
 					props: vec![
-						("key1".to_string(), "value1".to_string()),
-						("key2".to_string(), "value2".to_string())
+						Prop { key: "key1".to_string(), value: "value1".to_string() },
+						Prop { key: "key2".to_string(), value: "value2".to_string() }
 					],
 					msg: format!("Hello, world! {}", i),
 					..Default::default()

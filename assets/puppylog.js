@@ -1,3 +1,88 @@
+// ts/pattern-matcher.ts
+function patternMatcher(handlers) {
+  const typedHandlers = handlers;
+  const routes = Object.keys(typedHandlers).sort((a, b) => {
+    if (!a.includes("*") && !a.includes(":"))
+      return -1;
+    if (!b.includes("*") && !b.includes(":"))
+      return 1;
+    if (a.includes(":") && !b.includes(":"))
+      return -1;
+    if (!a.includes(":") && b.includes(":"))
+      return 1;
+    if (a.includes("*") && !b.includes("*"))
+      return 1;
+    if (!a.includes("*") && b.includes("*"))
+      return -1;
+    return b.length - a.length;
+  });
+  return {
+    match(path) {
+      for (const route of routes) {
+        const params = matchRoute(route, path);
+        if (params !== null) {
+          const result = typedHandlers[route](params);
+          return { pattern: route, result };
+        }
+      }
+      return null;
+    }
+  };
+}
+function matchRoute(pattern, path) {
+  const patternParts = pattern.split("/");
+  const pathParts = path.split("/");
+  if (pattern === "/*")
+    return {};
+  if (patternParts.length !== pathParts.length) {
+    const lastPattern = patternParts[patternParts.length - 1];
+    if (lastPattern === "*" && pathParts.length >= patternParts.length - 1) {
+      return {};
+    }
+    return null;
+  }
+  const params = {};
+  for (let i = 0;i < patternParts.length; i++) {
+    const patternPart = patternParts[i];
+    const pathPart = pathParts[i];
+    if (patternPart === "*")
+      return params;
+    if (patternPart.startsWith(":")) {
+      const paramName = patternPart.slice(1);
+      params[paramName] = pathPart;
+      continue;
+    }
+    if (patternPart !== pathPart)
+      return null;
+  }
+  return params;
+}
+
+// ts/router.ts
+var routes = (routes2, container) => {
+  const matcher = patternMatcher(routes2);
+  const handleRoute = (path) => {
+    const result = matcher.match(path);
+    console.log("match result", result);
+    container.innerHTML = "";
+    if (!result) {
+      const notFound = document.createElement("div");
+      notFound.innerHTML = "Not found";
+      container.appendChild(notFound);
+      return notFound;
+    }
+    container.appendChild(result.result);
+  };
+  handleRoute(window.location.pathname);
+  window.addEventListener("popstate", () => {
+    handleRoute(window.location.pathname);
+  });
+  return (path) => {
+    window.history.pushState({}, "", path);
+    handleRoute(path);
+  };
+};
+
 // ts/utility.ts
 var setQueryParam = (field, value) => {
   const url = new URL(window.location.href);
@@ -14,91 +99,6 @@ var removeQueryParam = (field) => {
   window.history.pushState({}, "", url.toString());
 };
 
-// ts/virtual-table.ts
-class VirtualTable {
-  root;
-  container;
-  table;
-  rowHeight;
-  rowCount;
-  bufferSize = 10;
-  needMoreRows = false;
-  drawRow;
-  fetchMore;
-  constructor(args) {
-    this.drawRow = args.drawRow;
-    this.fetchMore = args.fetchMore;
-    this.rowHeight = args.rowHeight;
-    this.rowCount = args.rowCount;
-    this.root = document.createElement("div");
-    this.root.style.height = "800px";
-    this.root.style.width = "100%";
-    this.root.style.overflow = "auto";
-    this.container = document.createElement("div");
-    this.container.style.position = "relative";
-    this.root.appendChild(this.container);
-    this.container.style.height = `${args.rowHeight * args.rowCount}px`;
-    this.container.style.width = "100%";
-    this.container.style.marginTop = "50px";
-    this.container.style.marginBottom = "50px";
-    this.container.innerHTML = "Virtual Table";
-    this.table = document.createElement("table");
-    this.container.appendChild(this.table);
-    this.root.addEventListener("scroll", (e) => {
-      this.onScroll(e);
-    });
-    const handleObserver = (entries) => {
-      console.log("Intersection observer", entries);
-    };
-    const observer = new IntersectionObserver(handleObserver, {
-      root: this.root,
-      rootMargin: "0px",
-      threshold: 0.1
-    });
-    setTimeout(() => {
-      if (this.fetchMore)
-        this.fetchMore();
-    });
-  }
-  onScroll(e) {
-    requestAnimationFrame(() => this.updateVisibleRows());
-  }
-  updateVisibleRows() {
-    const scrollTop = this.root.scrollTop;
-    const containerHeight = this.root.clientHeight;
-    const startIndex = Math.max(0, Math.floor(scrollTop / this.rowHeight) - this.bufferSize);
-    const endIndex = Math.min(this.rowCount, Math.ceil((scrollTop + containerHeight) / this.rowHeight) + this.bufferSize);
-    const content = this.drawRow(startIndex, endIndex);
-    content.style.position = "absolute";
-    content.style.top = `${startIndex * this.rowHeight}px`;
-    this.container.innerHTML = "";
-    this.container.appendChild(content);
-    const rootRect = this.root.getBoundingClientRect();
-    const containerRect = this.container.getBoundingClientRect();
-    const rootBottom = rootRect.bottom;
-    const containerBottom = containerRect.bottom;
-    requestAnimationFrame(() => {
-      if (containerBottom < rootBottom + 3 * this.rowHeight) {
-        console.log("need more rows");
-        if (this.needMoreRows)
-          return;
-        this.needMoreRows = true;
-        if (this.fetchMore)
-          this.fetchMore();
-      }
-    });
-  }
-  setRowCount(rowCount) {
-    const scrollTop = this.root.scrollTop;
-    const oldStartIndex = Math.floor(scrollTop / this.rowHeight);
-    this.rowCount = rowCount;
-    this.container.style.height = `${this.rowHeight * rowCount + this.rowHeight * 3}px`;
-    this.root.scrollTop = oldStartIndex * this.rowHeight;
-    this.updateVisibleRows();
-    this.needMoreRows = false;
-  }
-}
-
 // ts/logs.ts
 var logColors = {
   Debug: "blue",
@@ -110,237 +110,253 @@ var formatTimestamp = (ts) => {
   const date = new Date(ts);
   return date.toLocaleString();
 };
-
-class Logtable {
-  root;
-  table = document.createElement("table");
-  header;
-  body;
-  sortDir = "desc";
-  logSearcher;
-  virtual;
-  errorText;
-  constructor() {
-    this.root = document.createElement("div");
-    this.header = document.createElement("head");
-    this.header.innerHTML = `<tr><th>Timestamp</th><th>Level</th><th>Props</th><th>Message</th></tr>`;
-    this.table.appendChild(this.header);
-    this.body = document.createElement("tbody");
-    this.table.appendChild(this.body);
-    this.logSearcher = new LogSearcher({
-      onNewLoglines: this.onNewLoglines.bind(this),
-      onClear: () => {
-      },
-      onError: (err) => {
-        this.errorText.innerHTML = err;
-      }
+var logsSearchPage = (args) => {
+  const root = document.createElement("div");
+  const logEntries = [];
+  const options = document.createElement("div");
+  options.style.position = "sticky";
+  options.style.top = "0";
+  options.style.gap = "10px";
+  options.style.backgroundColor = "white";
+  options.style.height = "100px";
+  options.style.display = "flex";
+  const searchBar = document.createElement("textarea");
+  const tbody = document.createElement("tbody");
+  tbody.style.width = "400px";
+  const queryLogs = (query) => {
+    logEntries.length = 0;
+    tbody.innerHTML = "";
+    last.innerHTML = "Loading...";
+    args.fetchMore({
+      offset: 0,
+      count: 100,
+      query
     });
-    this.virtual = new VirtualTable({
-      rowCount: 0,
-      rowHeight: 35,
-      drawRow: (start, end) => {
-        console.log(`draw start: ${start} end: ${end}`);
-        let body = "";
-        for (let i = start;i < end; i++) {
-          const r = this.logSearcher.logEntries[i];
-          body += `
-                    <tr style="height: 35px">
-                        <td style="white-space: nowrap">${formatTimestamp(r.timestamp)}</td>
-                        <td style="color: ${logColors[r.level]}">${r.level}</td>
-\t\t\t\t\t\t<td>${r.props.map((p) => p.join("=")).join(", ")}</td>
-                        <td style="word-break: break-all">${r.msg}</td>
-                    </tr>
-                    `;
+  };
+  searchBar.style.height = "100px";
+  searchBar.style.resize = "none";
+  searchBar.style.flexGrow = "1";
+  searchBar.value = getQueryParam("query") || "";
+  searchBar.onkeydown = (e) => {
+    if (e.key === "Enter" && e.ctrlKey) {
+      e.preventDefault();
+      queryLogs(searchBar.value);
+    }
+  };
+  options.appendChild(searchBar);
+  const searchButton = document.createElement("button");
+  searchButton.onclick = () => {
+    queryLogs(searchBar.value);
+  };
+  searchButton.innerHTML = "Search";
+  options.appendChild(searchButton);
+  const streamButton = document.createElement("button");
+  const streamButtonState = (state) => state ? "Stop<br />Stream" : "Start<br />Stream";
+  streamButton.innerHTML = streamButtonState(args.isStreaming);
+  streamButton.onclick = () => {
+    const isStreaming = args.toggleIsStreaming();
+    streamButton.innerHTML = streamButtonState(isStreaming);
+  };
+  options.appendChild(streamButton);
+  root.appendChild(options);
+  const table = document.createElement("table");
+  table.style.width = "100%";
+  const thead = document.createElement("thead");
+  thead.style.position = "sticky";
+  thead.style.top = "100px";
+  thead.style.backgroundColor = "white";
+  thead.innerHTML = `
+\t\t<tr>
+\t\t\t<th>Timestamp</th>
+\t\t\t<th>Level</th>
+\t\t\t<th>Props</th>
+\t\t\t<th>Message</th>
+\t\t</tr>
+\t`;
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  const tableWrapper = document.createElement("div");
+  tableWrapper.style.overflow = "auto";
+  tableWrapper.appendChild(table);
+  root.appendChild(table);
+  const last = document.createElement("div");
+  last.style.height = "100px";
+  last.innerHTML = "Loading...";
+  root.appendChild(last);
+  let moreRows = true;
+  const observer = new IntersectionObserver(() => {
+    console.log("intersect");
+    if (!moreRows)
+      return;
+    console.log("need to fetch more");
+    moreRows = false;
+    args.fetchMore({
+      offset: logEntries.length,
+      count: 100,
+      query: searchBar.value
+    });
+  }, {
+    root: null,
+    rootMargin: "0px",
+    threshold: 0.1
+  });
+  observer.observe(last);
+  return {
+    root,
+    onError(err) {
+      last.innerHTML = err;
+    },
+    addLogEntries: (entries) => {
+      if (entries.length === 0) {
+        last.innerHTML = "No more rows";
+        return;
+      }
+      setTimeout(() => {
+        moreRows = true;
+      }, 500);
+      logEntries.push(...entries);
+      logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      const body = `
+\t\t\t\t${logEntries.map((r) => `
+\t\t\t\t<tr style="height: 35px">
+\t\t\t\t\t<td style="white-space: nowrap; vertical-align: top"><pre>${formatTimestamp(r.timestamp)}</pre></td>
+\t\t\t\t\t<td style="color: ${logColors[r.level]}; vertical-align: top"><pre>${r.level}</pre></td>
+\t\t\t\t\t<td style="vertical-align: top"><pre>${r.props.map((p) => `${p.key}=${p.value}`).join("<br />")}</pre></td>
+\t\t\t\t\t<td style="word-break: break-all; vertical-align: top">${r.msg.slice(0, 700)}${r.msg.length > 700 ? "..." : ""}</td>
+\t\t\t\t</tr>
+\t\t\t\t`).join("")}
+\t\t\t`;
+      tbody.innerHTML = body;
+    }
+  };
+};
+
+// ts/logtable-test.ts
+var logline = (length, linebreaks) => {
+  let line = "";
+  for (let i = 0;i < length; i++) {
+    line += String.fromCharCode(65 + Math.floor(Math.random() * 26));
+  }
+  for (let i = 0;i < linebreaks; i++) {
+    const idx = Math.floor(Math.random() * (line.length + 1));
+    line = line.slice(0, idx) + `
+` + line.slice(idx);
+  }
+  return line;
+};
+var randomLogline = () => {
+  const length = Math.floor(Math.random() * 100);
+  const linebreaks = Math.floor(Math.random() * 10);
+  return logline(length, linebreaks);
+};
+var logtableTest = () => {
+  const { root, addLogEntries } = logsSearchPage({
+    isStreaming: false,
+    toggleIsStreaming: () => false,
+    fetchMore: (args) => {
+      const logEntries = [];
+      for (let i = args.offset;i < args.offset + args.count; i++) {
+        logEntries.push({
+          timestamp: new Date().toISOString(),
+          level: "Info",
+          props: [
+            { key: "key", value: "value" },
+            { key: "key2", value: "value2" }
+          ],
+          msg: `[${i}] ${randomLogline()}`
+        });
+      }
+      addLogEntries(logEntries);
+    }
+  });
+  return root;
+};
+
+// ts/main-page.ts
+var mainPage = () => {
+  let query = getQueryParam("query") || "";
+  let logEventSource = null;
+  let isStreaming = getQueryParam("stream") === "true";
+  let lastStreamQuery = "";
+  const startStream = (query2) => {
+    if (logEventSource && query2 === lastStreamQuery)
+      return;
+    lastStreamQuery = query2;
+    if (logEventSource)
+      logEventSource.close();
+    logEventSource = null;
+    const streamQuery = new URLSearchParams;
+    if (query2)
+      streamQuery.append("query", query2);
+    const streamUrl = new URL("/api/logs/stream", window.location.origin);
+    streamUrl.search = streamQuery.toString();
+    logEventSource = new EventSource(streamUrl);
+    logEventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      addLogEntries([data]);
+    };
+    logEventSource.onerror = (event) => {
+      console.error("EventSource error", event);
+      if (logEventSource)
+        logEventSource.close();
+    };
+  };
+  const { root, addLogEntries, onError } = logsSearchPage({
+    isStreaming,
+    toggleIsStreaming: () => {
+      isStreaming = !isStreaming;
+      if (isStreaming) {
+        startStream(query);
+        setQueryParam("stream", "true");
+      } else {
+        if (logEventSource)
+          logEventSource.close();
+        removeQueryParam("stream");
+      }
+      return isStreaming;
+    },
+    fetchMore: (args) => {
+      query = args.query;
+      if (query)
+        setQueryParam("query", query);
+      else
+        removeQueryParam("query");
+      console.log("fetchMore", args);
+      const urlQuery = new URLSearchParams;
+      const offsetInMinutes = new Date().getTimezoneOffset();
+      const offsetInHours = -offsetInMinutes / 60;
+      urlQuery.append("timezone", offsetInHours.toString());
+      if (args.query)
+        urlQuery.append("query", args.query);
+      urlQuery.append("count", args.count.toString());
+      urlQuery.append("offset", args.offset.toString());
+      const url = new URL("/api/logs", window.location.origin);
+      url.search = urlQuery.toString();
+      fetch(url.toString()).then(async (res) => {
+        if (res.status === 400) {
+          const err = await res.json();
+          console.error("res.error", err);
+          onError(err.error);
+          console.log("res", res);
+          throw new Error("Failed to fetch logs");
         }
-        this.body.innerHTML = body;
-        return this.table;
-      },
-      fetchMore: this.fetchMore.bind(this)
-    });
-    const searchOptions = new LogSearchOptions({
-      searcher: this.logSearcher
-    });
-    this.root.appendChild(searchOptions.root);
-    this.errorText = document.createElement("div");
-    this.errorText.style.color = "red";
-    this.root.appendChild(this.errorText);
-    this.root.appendChild(this.virtual.root);
-    this.logSearcher.stream();
-    window.addEventListener("scroll", (e) => {
-      console.log("scroll", e);
-    });
-  }
-  onNewLoglines() {
-    console.log("onNewLoglines");
-    this.virtual.setRowCount(this.logSearcher.logEntries.length);
-  }
-  fetchMore() {
-    if (!this.logSearcher)
-      return;
-    console.log("fetchMore");
-    this.logSearcher.fetchMore();
-  }
-  sort(dir) {
-    this.sortDir = dir;
-  }
-}
-
-class LogSearchOptions {
-  root;
-  input;
-  button;
-  searcher;
-  constructor(args) {
-    this.root = document.createElement("div");
-    this.root.style.display = "flex";
-    this.root.style.gap = "10px";
-    this.input = document.createElement("textarea");
-    this.input.value = getQueryParam("query") || "";
-    this.input.rows = 4;
-    this.input.style.width = "400px";
-    this.input.onkeydown = (e) => {
-      if (e.key === "Enter" && e.ctrlKey) {
-        e.preventDefault();
-        this.searcher.setQuery(this.input.value);
+        return res.json();
+      }).then((data) => {
+        addLogEntries(data);
+      }).catch((err) => {
+        console.error("error", err);
+      });
+      if (isStreaming)
+        startStream(query);
+      else {
+        if (logEventSource) {
+          logEventSource.close();
+        }
       }
-    };
-    this.button = document.createElement("button");
-    this.button.onclick = () => {
-      this.searcher.setQuery(this.input.value);
-    };
-    this.button.innerHTML = "Search";
-    this.root.appendChild(this.input);
-    this.root.appendChild(this.button);
-    const streamButton = document.createElement("button");
-    streamButton.innerHTML = "Stop<br />Stream";
-    streamButton.onclick = () => {
-      this.searcher.toggleIsStreaming();
-      streamButton.innerHTML = this.searcher.isStreaming ? "Stop<br />Stream" : "Start<br />Stream";
-    };
-    this.root.appendChild(streamButton);
-    this.searcher = args.searcher;
-  }
-  getQuery() {
-    return this.input.value;
-  }
-}
-
-class LogSearcher {
-  logEventSource;
-  sortDir = "desc";
-  onClear;
-  onNewLoglines;
-  onError;
-  logEntries = [];
-  firstDate;
-  lastDate;
-  query = "";
-  offset = 0;
-  count = 100;
-  alreadyFetched = false;
-  constructor(args) {
-    this.onClear = args.onClear;
-    this.onNewLoglines = args.onNewLoglines;
-    this.onError = args.onError;
-    this.query = getQueryParam("query") || "";
-  }
-  buildQuery(stream) {
-    const offsetInMinutes = new Date().getTimezoneOffset();
-    const offsetInHours = -offsetInMinutes / 60;
-    const urlQuery = new URLSearchParams;
-    urlQuery.append("timezone", offsetInHours.toString());
-    if (this.query) {
-      urlQuery.append("query", this.query);
     }
-    if (!stream) {
-      urlQuery.append("count", this.count.toString());
-      urlQuery.append("offset", this.offset.toString());
-    }
-    return urlQuery;
-  }
-  stream() {
-    const url = new URL("/api/logs/stream", window.location.origin);
-    url.search = this.buildQuery(true).toString();
-    this.createEventSource(url.toString());
-  }
-  setQuery(query) {
-    this.query = query;
-    this.offset = 0;
-    this.alreadyFetched = false;
-    if (query)
-      setQueryParam("query", query);
-    else
-      removeQueryParam("query");
-    this.logEntries = [];
-    this.fetchMore();
-    this.stream();
-  }
-  get isStreaming() {
-    return this.logEventSource != null;
-  }
-  toggleIsStreaming() {
-    if (this.isStreaming) {
-      this.logEventSource?.close();
-      this.logEventSource = undefined;
-    } else {
-      this.stream();
-    }
-  }
-  fetchMore() {
-    if (this.alreadyFetched)
-      return;
-    this.alreadyFetched = true;
-    const url = new URL("/api/logs", window.location.origin);
-    url.search = this.buildQuery().toString();
-    fetch(url.toString()).then(async (res) => {
-      if (res.status === 400) {
-        const err = await res.json();
-        this.onError(err.error);
-        console.log("res", res);
-        throw new Error("Failed to fetch logs");
-      }
-      this.onError("");
-      return res.json();
-    }).then((data) => {
-      this.logEntries.push(...data);
-      this.handleSort();
-      this.onNewLoglines();
-      this.offset += this.count;
-      if (data.length >= this.count) {
-        this.alreadyFetched = false;
-      }
-    }).catch((err) => {
-      console.error("error", err);
-    });
-  }
-  createEventSource(url) {
-    if (this.logEventSource) {
-      this.logEventSource.close();
-      this.onClear();
-    }
-    this.logEventSource = new EventSource(url);
-    this.logEventSource.onmessage = (e) => {
-      console.log("Got message", e.data);
-      this.logEntries.push(JSON.parse(e.data));
-      this.handleSort();
-      this.onNewLoglines();
-    };
-    this.logEventSource.onerror = (err) => {
-      console.error("error", err);
-      this.logEventSource?.close();
-    };
-  }
-  handleSort() {
-    if (this.logEntries.length === 0)
-      return;
-    if (this.sortDir === "asc")
-      this.logEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-    else
-      this.logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-    this.firstDate = this.logEntries[0].timestamp;
-    this.lastDate = this.logEntries[this.logEntries.length - 1].timestamp;
-  }
-}
+  });
+  return root;
+};
 
 // ts/app.ts
 window.onload = () => {
@@ -348,6 +364,13 @@ window.onload = () => {
   if (!body) {
     throw new Error("No body element found");
   }
-  const t = new Logtable;
-  body.appendChild(t.root);
+  const navigate = routes({
+    "/tests": () => {
+      const tests = document.createElement("div");
+      tests.innerHTML = "Tests";
+      return tests;
+    },
+    "/tests/logtable": () => logtableTest(),
+    "/*": () => mainPage()
+  }, body);
 };
