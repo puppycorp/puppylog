@@ -132,6 +132,12 @@ export const logsSearchPage = (args: {
 	})
 	observer.observe(last)
 
+	const escapeHTML = (str: string) => {
+		const div = document.createElement('div');
+		div.textContent = str;
+		return div.innerHTML;
+	};
+
 	return {
 		root,
 		onError (err: string) {
@@ -148,14 +154,17 @@ export const logsSearchPage = (args: {
 			logEntries.push(...entries)
 			logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
 			const body = `
-				${logEntries.map((r) => `
-				<tr style="height: 35px">
-					<td style="white-space: nowrap; vertical-align: top"><pre>${formatTimestamp(r.timestamp)}</pre></td>
-					<td style="color: ${logColors[r.level]}; vertical-align: top"><pre>${r.level}</pre></td>
-					<td style="vertical-align: top"><pre>${r.props.map((p) => `${p.key}=${p.value}`).join("<br />")}</pre></td>
-					<td style="word-break: break-all; vertical-align: top">${r.msg.slice(0, 700)}${r.msg.length > 700 ? "..." : ""}</td>
-				</tr>
-				`).join("")}
+				${logEntries.map((r) => {
+					// const textNode = document.createTextNode();
+					return`
+						<tr style="height: 35px">
+							<td style="white-space: nowrap; vertical-align: top; text-align: center;">${formatTimestamp(r.timestamp)}</td>
+							<td style="color: ${logColors[r.level]}; vertical-align: top; text-align: center;text-align: center;">${r.level}</td>
+							<td style="vertical-align: top; text-align: left;">${r.props.map((p) => `${p.key}=${p.value}`).join("<br />")}</td>
+							<td style="word-break: break-all; vertical-align: top">${escapeHTML(`${r.msg.slice(0, 700)}${r.msg.length > 700 ? "..." : ""}`)}</td>
+						</tr>
+					`	
+				}).join("")}
 			`
 			tbody.innerHTML = body
 		}

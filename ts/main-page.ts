@@ -5,9 +5,9 @@ export const mainPage = () => {
 	let query = getQueryParam("query") || ""
 	let logEventSource: EventSource | null = null  
 	let isStreaming = getQueryParam("stream") === "true"
-	let lastStreamQuery = ""
+	let lastStreamQuery: string | null = null
 	const startStream = (query: string) => {
-		if (logEventSource && query === lastStreamQuery) return
+		if (lastStreamQuery === query) return
 		lastStreamQuery = query
 		if (logEventSource) logEventSource.close()
 		logEventSource = null
@@ -34,8 +34,9 @@ export const mainPage = () => {
 				setQueryParam("stream", "true")
 			} else {
 				if (logEventSource) logEventSource.close()
+				lastStreamQuery = null
 				removeQueryParam("stream")
-			} 
+			}
 			return isStreaming
 		},
 		fetchMore: (args) => {
