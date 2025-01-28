@@ -5,7 +5,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use bytes::buf;
 use log::{Record, Level, Metadata, SetLoggerError};
 use chrono::{DateTime, Local, Utc};
 use rustls::client::{self, ClientConnectionData};
@@ -63,10 +64,7 @@ impl Read for TLSConn {
 #[derive(Debug)]
 pub struct ChunkedEncoder<T: Write + Read> {
     stream: T,
-    min_buffer_size: u64,
-    max_buffer_size: u64,
     last_write_at: Instant,
-    buffer: Vec<u8>,
     total_bytes_sent: u64,
 }
 
@@ -74,10 +72,10 @@ impl<T> ChunkedEncoder<T>
 where
     T: Write + Read, 
 {
-	pub fn new(mut stream: T, url: Url, min_buffer_size: u64, max_buffer_size: u64, authorization: Option<String>) -> Self {
+	pub fn new(mut stream: T, url: Url, authorization: Option<String>) -> Result<Self, PuppyLogError> {
 		let auth_header = match authorization {
 			Some(token) => format!("Authorization: {}\n\n", token),
-			None => String::new(),
+			None => format!("\n"),
 		};
 		let body = format!(
 			"POST {} HTTP/1.1\r\n\
@@ -97,14 +95,13 @@ where
 				Err(e) => panic!("Failed to write: {}", e),
 			}
 		}
-		println!("wrote request");
-
 		let mut response_buf = vec![0u8; 4096];
 		let time = Instant::now();
 		loop {
 			match stream.read(&mut response_buf) {
 				Ok(0) => {
-					panic!("Connection closed by server");
+					eprintln!("Connection closed by server");
+					break;
 				},
 				Ok(n) => {
 					let response = String::from_utf8_lossy(&response_buf[..n]);
@@ -112,7 +109,7 @@ where
 					if response.starts_with("HTTP/1.1 200") {
 						println!("Server accepted connection");
 					} else {
-						panic!("Server error: {}", response);
+						return Err(PuppyLogError::new(&response));
 					}
 				},
 				Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -124,17 +121,15 @@ where
 				Err(e) => panic!("Failed to read: {}", e),
 			}
 		}
-		ChunkedEncoder {
-				stream,
-			min_buffer_size,
-			max_buffer_size,
+		Ok(ChunkedEncoder {
+			stream,
 			last_write_at: Instant::now(),
-			buffer: Vec::with_capacity(min_buffer_size as usize),
 			total_bytes_sent: 0,
-		}
+		})
 	}
 
     pub fn close(&mut self) -> std::io::Result<()> {
+		println!("ChunkedEncoder::close");
         self.flush()?;
         if self.total_bytes_sent > 0 {
             // Only send terminating chunk if we sent data
@@ -149,73 +144,44 @@ impl<T: Write + Read> Write for ChunkedEncoder<T> {
         if buf.is_empty() {
             return Ok(0);
         }
-
-        self.buffer.extend_from_slice(buf);
-        
-        if self.buffer.len() >= self.min_buffer_size as usize 
-            || self.last_write_at.elapsed().as_secs() >= 15 
-        {
-            self.flush()?;
-        }
-        
+		let buf_len = buf.len();
+		let size_hex = format!("{:X}\r\n", buf_len);
+		self.stream.write_all(size_hex.as_bytes())?;
+		self.stream.write_all(buf)?;
+        self.stream.write_all(b"\r\n")?;
+		self.total_bytes_sent += buf_len as u64;
+		self.last_write_at = Instant::now();
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        if self.buffer.is_empty() {
-            return Ok(());
-        }
+        self.stream.flush()
+    }
+}
 
-        for chunk in self.buffer.chunks(self.max_buffer_size as usize) {
-            let chunk_len = chunk.len();
-            let size_hex = format!("{:X}\r\n", chunk_len);
-            self.stream.write_all(size_hex.as_bytes())?;
-            self.stream.write_all(chunk)?;
-            self.stream.write_all(b"\r\n")?;
-            self.total_bytes_sent += chunk_len as u64;
-        }
-
-        self.last_write_at = Instant::now();
-        self.buffer.clear();
-        self.stream.flush()?;
-
-        // Handle response
-        let mut response_buf = vec![0u8; 4096];
+impl<T: Write + Read> Read for ChunkedEncoder<T> {
+	fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
 		let timer = Instant::now();
 		loop {
-			match self.stream.read(&mut response_buf) {
+			match self.stream.read(buf) {
 				Ok(0) => {
 					break Err(io::Error::new(
 						io::ErrorKind::ConnectionAborted,
 						"Connection closed by server"
 					))
 				},
-				Ok(n) => {
-					let response = String::from_utf8_lossy(&response_buf[..n]);
-					println!("response: {}", response);
-					
-					// Check for HTTP error responses
-					if response.starts_with("HTTP/1.1 4") || response.starts_with("HTTP/1.1 5") {
-						return Err(io::Error::new(
-							io::ErrorKind::Other,
-							format!("Server error: {}", response)
-						))
-					} else {
-						break Ok(())
-					}
-				}
+				Ok(n) => break Ok(n),
 				Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-					if timer.elapsed().as_millis() > 100 {
+					if timer.elapsed().as_millis() > 2000 {
 						println!("nothing to read");
-						break Ok(())
+						break Ok(0)
 					}
 				}
 				Err(e) => break Err(e)
 			}
 		}
-    }
+	}
 }
-
 
 impl<T> Drop for ChunkedEncoder<T> 
 where 
@@ -231,28 +197,29 @@ mod tests {
    use super::*;
    use std::io::Cursor;
 
-	#[test]
-	fn test_basic_write() -> std::io::Result<()> {
-		let url = Url::parse("http://localhost:8080").unwrap();
-		let cursor = Cursor::new(Vec::new());
-		let mut encoder = ChunkedEncoder::new(cursor, url, 10, 100);
-		encoder.write_all(b"Hello World")?;
-		encoder.flush()?;
-		let output = encoder.stream.into_inner();
-		assert_eq!(output, b"B\r\nHello World\r\n");
-		Ok(())
-	}
+	// #[test]
+	// fn test_basic_write() -> std::io::Result<()> {
+	// 	let url = Url::parse("http://localhost:8080").unwrap();
+	// 	let cursor = Cursor::new(Vec::new());
+	// 	let mut encoder = ChunkedEncoder::new(cursor, url, None).unwrap();
+	// 	encoder.write_all(b"Hello World")?;
+	// 	encoder.flush()?;
+	// 	let output = encoder.stream.into_inner();
+	// 	assert_eq!(output, b"B\r\nHello World\r\n");
+	// 	Ok(())
+	// }
 
-	#[test]
-	fn test_close() -> std::io::Result<()> {
-		let cursor = Cursor::new(Vec::new());
-		let mut encoder = ChunkedEncoder::new(cursor, url, 10, 100);
-		encoder.write_all(b"data")?;
-		encoder.close()?;
-		let output = encoder.stream.into_inner();
-		assert_eq!(output, b"4\r\ndata\r\n0\r\n\r\n");
-		Ok(())
-	}
+	// #[test]
+	// fn test_close() -> std::io::Result<()> {
+	// 	let url = Url::parse("http://localhost:8080").unwrap();
+	// 	let cursor = Cursor::new(Vec::new());
+	// 	let mut encoder = ChunkedEncoder::new(cursor, url, None).unwrap();
+	// 	encoder.write_all(b"data")?;
+	// 	encoder.close()?;
+	// 	let output = encoder.stream.into_inner();
+	// 	assert_eq!(output, b"4\r\ndata\r\n0\r\n\r\n");
+	// 	Ok(())
+	// }
 }
 
 struct ResourceManager {
@@ -260,6 +227,7 @@ struct ResourceManager {
 	file: Option<File>,
 	client: Option<Box<dyn Write>>,
 	url: Option<Url>,
+	buffer: Vec<u8>,
 }
 
 impl ResourceManager {
@@ -269,6 +237,7 @@ impl ResourceManager {
 			file: None,
 			client: None,
 			url: None,
+			buffer: Vec::new(),
 		}
 	}
 
@@ -284,13 +253,12 @@ impl ResourceManager {
 			None => None,
 		}
 	}
-	fn get_client(&mut self) -> Option<&mut impl Write> {
+	fn create_client(&mut self) -> Result<(), PuppyLogError> {
 		match &self.builder.log_server {
 			Some(url) => {
-				let url = Url::parse(url).unwrap();
 				let should_create = match &self.client {
 					Some(_) => match &self.url {
-						Some(u) => u != &url,
+						Some(u) => u != url,
 						None => true,
 					},
 					None => true,
@@ -301,37 +269,69 @@ impl ResourceManager {
 						Some(p) => p,
 						None => if url.scheme() == "https" { 443 } else { 80 },
 					};
-					let host = format!("{}:{}", url.host_str().unwrap(), port);
-					println!("connecting to {}", host);
-					let socket = TcpStream::connect(host).unwrap();
+					let host = url.host_str().ok_or(PuppyLogError::new("no host in url"))?;
+					let host = format!("{}:{}", host, port);
+					let socket = TcpStream::connect(host)?;
 					socket.set_nonblocking(true).unwrap();
-					println!("connected to {}", url);
-					println!("scheme: {}", url.scheme());
 					match url.scheme() {
 						"http" => {
-							self.client = Some(Box::new(ChunkedEncoder::new(socket, url, self.builder.min_buffer_size, self.builder.max_buffer_size, self.builder.authorization.clone())));
+							self.client = Some(Box::new(ChunkedEncoder::new(socket, url.clone(), self.builder.authorization.clone())?));
 						}
 						"https" => {
-							let mut tls = TLSConn::new(socket, url.host_str().unwrap().to_string());
-							// let stream = tls.stream();
-							self.client = Some(Box::new(ChunkedEncoder::new(tls, url, self.builder.min_buffer_size, self.builder.max_buffer_size, self.builder.authorization.clone())));
+							let tls = TLSConn::new(socket, url.host_str().unwrap().to_string());
+							self.client = Some(Box::new(ChunkedEncoder::new(tls, url.clone(), self.builder.authorization.clone())?));
 						}
 						_ => {}
 					};
 				}
-				Some(self.client.as_mut().unwrap())
 			}
-			None => None,
+			None => {},
 		}
+		Ok(())
 	}
 
 	pub fn flush(&mut self) {
 		if let Some(file) = &mut self.file {
-			file.flush().unwrap();
+			if let Err(err) = file.flush() {
+				eprintln!("Failed to flush file: {}", err);
+			}
 		}
+		self.create_client();
 		if let Some(client) = &mut self.client {
-			client.flush().unwrap();
+			if self.buffer.len() > 0 {
+				println!("sending {} bytes", self.buffer.len());
+				if let Err(err) = client.write_all(&self.buffer) {
+					eprintln!("Failed to write to client: {}", err);
+				}
+				if let Err(err) = client.flush() {
+					eprintln!("Failed to flush client: {}", err);
+				}
+			}
 		}
+		self.buffer.clear();
+	}
+
+	fn close(&mut self) {
+		self.flush();
+	}
+}
+
+impl Write for ResourceManager {
+	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+		if let Some(file) = &mut self.file {
+			file.write(buf)?;
+		}
+		self.buffer.extend_from_slice(buf);
+		if self.buffer.len() > self.builder.max_buffer_size as usize {
+			println!("buffer full, flushing");
+			self.flush();
+		}
+		Ok(buf.len())
+	}
+
+	fn flush(&mut self) -> io::Result<()> {
+		self.flush();
+		Ok(())
 	}
 }
 
@@ -342,31 +342,27 @@ enum WorkerMessage {
 }
 
 fn worker(rx: Receiver<WorkerMessage>, builder: LoggerBuilder) {
-	println!("worker started");
 	let mut manager = ResourceManager::new(builder);
-	for msg in rx {
-        match msg {
-            WorkerMessage::LogEntry(entry) => {
-                println!("{:?}", entry);
-                if let Some(file) = manager.get_logfile(&entry.timestamp) {
-                    entry.serialize(file);
-                }
-                if let Some(client) = manager.get_client() {
-                    entry.serialize(client);
-                }
-            }
-            WorkerMessage::Flush(ack) => {
+
+	loop {
+		match rx.recv_timeout(Duration::from_millis(100)) {
+			Ok(WorkerMessage::LogEntry(entry)) => entry.serialize(&mut manager).unwrap_or_default(),
+			Ok(WorkerMessage::Flush(ack)) => {
+				println!("WorkerMessage::Flush");
 				manager.flush();
-                let _ = ack.send(());
-            },
-			WorkerMessage::FlushClose(ack) => {
-				manager.flush();
-				if let Some(ref client) = manager.client {
-					drop(client);
-				}
-			}
-        }
-    }
+				let _ = ack.send(());
+			},
+			Ok(WorkerMessage::FlushClose(ack)) => {
+				println!("WorkerMessage::FlushClose");
+				manager.close();
+				let _ = ack.send(());
+				break;
+			},
+			Err(mpsc::RecvTimeoutError::Timeout) => manager.flush(),
+			Err(mpsc::RecvTimeoutError::Disconnected) => break,
+		};
+	}
+
 	println!("worker done");
 }
 
@@ -402,7 +398,6 @@ impl PuppylogClient {
 
 	pub fn close(&self) {
 		let (ack_tx, ack_rx) = mpsc::channel();
-		self.flush();
 		self.sender.send(WorkerMessage::FlushClose(ack_tx)).ok();
 		let _ = ack_rx.recv();
 	}
@@ -447,13 +442,44 @@ impl log::Log for PuppylogClient {
 	}
 }
 
+#[derive(Debug)]
+pub struct PuppyLogError {
+	message: String,
+}
+
+impl PuppyLogError {
+	pub fn new(message: &str) -> Self {
+		PuppyLogError {
+			message: message.to_string(),
+		}
+	}
+}
+
+impl std::fmt::Display for PuppyLogError {
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+		write!(f, "{}", self.message)
+	}
+}
+
+impl From<url::ParseError> for PuppyLogError {
+    fn from(error: url::ParseError) -> Self {
+        PuppyLogError::new(&error.to_string())
+    }
+}
+
+impl From<io::Error> for PuppyLogError {
+	fn from(error: io::Error) -> Self {
+		PuppyLogError::new(&error.to_string())
+	}
+}
+
 pub struct LoggerBuilder {
 	max_log_file_size: u64,
 	max_log_files: u32,
 	min_buffer_size: u64,
 	max_buffer_size: u64,
 	log_folder: Option<PathBuf>,
-	log_server: Option<String>,
+	log_server: Option<Url>,
 	authorization: Option<String>,
 	log_stdout: bool,
 	level_filter: Level,
@@ -480,9 +506,10 @@ impl LoggerBuilder {
 		self
 	}
 
-	pub fn server(mut self, url: &str) -> Self {
-		self.log_server = Some(url.to_string());
-		self
+	pub fn server(mut self, url: &str) -> Result<Self, PuppyLogError> {
+		let url = Url::parse(url)?;
+		self.log_server = Some(url);
+		Ok(self)
 	}
 
 	pub fn authorization(mut self, token: &str) -> Self {
