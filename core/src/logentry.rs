@@ -303,7 +303,7 @@ impl LogEntryChunkParser {
 
 #[cfg(test)]
 mod tests {
-    use crate::{LogEntry, LogEntryChunkParser, LogLevel, LoggerBuilder, Prop};
+    use crate::{LogEntry, LogEntryChunkParser, LogLevel, PuppylogBuilder, Prop};
 
 	#[test]
 	fn test_serialize_and_deserialize() {
@@ -379,7 +379,7 @@ mod tests {
 
 	#[test]
 	fn parse_one_then_another() {
-		LoggerBuilder::new().stdout().build().unwrap();
+		PuppylogBuilder::new().stdout().build().unwrap();
 		let logentry = LogEntry {
 			..Default::default()
 		};

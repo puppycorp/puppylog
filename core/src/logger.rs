@@ -223,7 +223,7 @@ mod tests {
 }
 
 struct ResourceManager {
-	builder: LoggerBuilder,
+	builder: PuppylogBuilder,
 	file: Option<File>,
 	client: Option<Box<dyn Write>>,
 	url: Option<Url>,
@@ -231,7 +231,7 @@ struct ResourceManager {
 }
 
 impl ResourceManager {
-	fn new(builder: LoggerBuilder) -> Self {
+	fn new(builder: PuppylogBuilder) -> Self {
 		ResourceManager {
 			builder,
 			file: None,
@@ -341,7 +341,7 @@ enum WorkerMessage {
 	FlushClose(mpsc::Sender<()>),
 }
 
-fn worker(rx: Receiver<WorkerMessage>, builder: LoggerBuilder) {
+fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 	let mut manager = ResourceManager::new(builder);
 
 	loop {
@@ -375,7 +375,7 @@ pub struct PuppylogClient {
 }
 
 impl PuppylogClient {
-	fn new(builder: LoggerBuilder) -> Self {
+	fn new(builder: PuppylogBuilder) -> Self {
 		let props = builder.props.clone();
 		let level = builder.level_filter;
 		let stdout = builder.log_stdout;
@@ -471,7 +471,7 @@ impl From<io::Error> for PuppyLogError {
 	}
 }
 
-pub struct LoggerBuilder {
+pub struct PuppylogBuilder {
 	max_log_file_size: u64,
 	max_log_files: u32,
 	min_buffer_size: u64,
@@ -484,9 +484,9 @@ pub struct LoggerBuilder {
 	props: Vec<Prop>,
 }
 
-impl LoggerBuilder {
+impl PuppylogBuilder {
 	pub fn new() -> Self {
-		LoggerBuilder {
+		PuppylogBuilder {
 			max_log_file_size: 1024 * 1024 * 10,
 			max_log_files: 10,
 			min_buffer_size: 1024,

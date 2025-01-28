@@ -6,5 +6,5 @@ mod logentry;
 
 pub use chunk_reader::ChunkReader;
 pub use drain::{DrainParser, LogGroup, LogTemplate};
-pub use logger::LoggerBuilder;
+pub use logger::PuppylogBuilder;
 pub use logentry::*;

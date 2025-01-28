@@ -1,8 +1,8 @@
 use std::{thread::sleep, time::Duration};
-use puppylog::LoggerBuilder;
+use puppylog::PuppylogBuilder;
 
 fn main() {
-    let logger = LoggerBuilder::new()
+    let logger = PuppylogBuilder::new()
 		.stdout()
 		.server("http://localhost:3337/api/logs").unwrap()
 		.prop("app", "pupyapp")
