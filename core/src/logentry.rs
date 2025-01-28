@@ -8,7 +8,7 @@ use serde::Serialize;
 use byteorder::ReadBytesExt;
 use byteorder::WriteBytesExt;
 
-use crate::ChunckReader;
+use crate::ChunkReader;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub enum LogLevel {
@@ -272,14 +272,14 @@ impl LogEntry {
 }
 
 pub struct LogEntryChunkParser {
-    chunck_parser: ChunckReader,
+    chunck_parser: ChunkReader,
     pub log_entries: Vec<LogEntry>
 }
 
 impl LogEntryChunkParser {
     pub fn new() -> Self {
         Self {
-            chunck_parser: ChunckReader::new(),
+            chunck_parser: ChunkReader::new(),
             log_entries: vec![]
         }
     }
@@ -303,7 +303,7 @@ impl LogEntryChunkParser {
 
 #[cfg(test)]
 mod tests {
-    use crate::{LogEntry, LogEntryChunkParser, LogLevel, Prop};
+    use crate::{LogEntry, LogEntryChunkParser, LogLevel, LoggerBuilder, Prop};
 
 	#[test]
 	fn test_serialize_and_deserialize() {
@@ -375,5 +375,22 @@ mod tests {
             reader.log_entries.clear();
 		}
 		assert_eq!(i, 100);
+	}
+
+	#[test]
+	fn parse_one_then_another() {
+		LoggerBuilder::new().stdout().build().unwrap();
+		let logentry = LogEntry {
+			..Default::default()
+		};
+		let mut buffer = std::io::Cursor::new(vec![]);
+		logentry.serialize(&mut buffer).unwrap();
+		let buffer = buffer.into_inner();
+		let mut reader = LogEntryChunkParser::new();
+		reader.add_chunk(buffer.to_owned().into());
+		assert_eq!(reader.log_entries.len(), 1);
+		reader.log_entries.clear();
+		reader.add_chunk(buffer.to_owned().into());
+		assert_eq!(reader.log_entries.len(), 1);
 	}
 }

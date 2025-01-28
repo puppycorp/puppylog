@@ -10,7 +10,7 @@ use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
 use log_query::{parse_log_query, QueryAst};
-use puppylog::{ChunckReader, LogEntry, LogEntryChunkParser, LogLevel};
+use puppylog::{ChunkReader, LogEntry, LogEntryChunkParser, LogLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string, Value};
 use simple_logger::SimpleLogger;
