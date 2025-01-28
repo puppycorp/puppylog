@@ -370,11 +370,13 @@ fn worker(rx: Receiver<WorkerMessage>, builder: LoggerBuilder) {
 pub struct PuppylogClient {
 	sender: mpsc::Sender<WorkerMessage>,
 	level: Level,
-	log_stdout: bool,
+	stdout: bool,
+	props: Vec<Prop>,
 }
 
 impl PuppylogClient {
 	fn new(builder: LoggerBuilder) -> Self {
+		let props = builder.props.clone();
 		let level = builder.level_filter;
 		let stdout = builder.log_stdout;
 		let (sender, rx) = mpsc::channel();
@@ -382,7 +384,8 @@ impl PuppylogClient {
 		PuppylogClient {
 			sender,
 			level,
-			log_stdout: stdout,
+			stdout,
+			props,
 		}
 	}
 
@@ -410,7 +413,7 @@ impl log::Log for PuppylogClient {
 
 	fn log(&self, record: &Record) {
 		if self.enabled(record.metadata()) {
-			if self.log_stdout {
+			if self.stdout {
 				println!("{} [{}] {}", record.level(), record.target(), record.args());
 			}
 			let level = match record.level() {
@@ -425,12 +428,7 @@ impl log::Log for PuppylogClient {
 				level,
 				timestamp: Utc::now(),
 				random: 0,
-				props: vec![
-					Prop {
-						key: "app".to_string(),
-						value: "puppyapp".to_string()
-					}
-				],
+				props: self.props.clone(),
 				msg: record.args().to_string()
 			};
 			self.send_logentry(entry);
@@ -483,6 +481,7 @@ pub struct LoggerBuilder {
 	authorization: Option<String>,
 	log_stdout: bool,
 	level_filter: Level,
+	props: Vec<Prop>,
 }
 
 impl LoggerBuilder {
@@ -497,6 +496,7 @@ impl LoggerBuilder {
 			log_stdout: true,
 			authorization: None,
 			level_filter: Level::Info,
+			props: Vec::new()
 		}
 	}
 
@@ -524,6 +524,14 @@ impl LoggerBuilder {
 
 	pub fn stdout(mut self) -> Self {
 		self.log_stdout = true;
+		self
+	}
+
+	pub fn prop(mut self, key: &str, value: &str) -> Self {
+		self.props.push(Prop {
+			key: key.to_string(),
+			value: value.to_string(),
+		});
 		self
 	}
 
