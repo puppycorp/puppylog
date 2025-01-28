@@ -114,7 +114,6 @@ where
 				},
 				Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
 					if time.elapsed().as_millis() > 100 {
-						println!("nothing to read");
 						break;
 					}
 				},
@@ -228,6 +227,7 @@ struct ResourceManager {
 	client: Option<Box<dyn Write>>,
 	url: Option<Url>,
 	buffer: Vec<u8>,
+	last_client_create: Option<Instant>,
 }
 
 impl ResourceManager {
@@ -238,6 +238,7 @@ impl ResourceManager {
 			client: None,
 			url: None,
 			buffer: Vec::new(),
+			last_client_create: None,
 		}
 	}
 
@@ -261,9 +262,13 @@ impl ResourceManager {
 						Some(u) => u != url,
 						None => true,
 					},
-					None => true,
+					None => match &self.last_client_create {
+						Some(t) => t.elapsed().as_secs() > 1,
+						None => true,
+					},
 				};
 				if should_create {
+					self.last_client_create = Some(Instant::now());
 					self.url = Some(url.clone());
 					let port = match url.port() {
 						Some(p) => p,
@@ -293,22 +298,56 @@ impl ResourceManager {
 	pub fn flush(&mut self) {
 		if let Some(file) = &mut self.file {
 			if let Err(err) = file.flush() {
-				eprintln!("Failed to flush file: {}", err);
+				if self.builder.internal_logging {
+					eprintln!("Failed to flush file: {}", err);
+				}
 			}
 		}
-		self.create_client();
+		if let Err(err) = self.create_client() {
+			if self.builder.internal_logging {
+				eprintln!("Failed to create client: {}", err);
+			}
+		}
+		let mut client_err: Option<io::ErrorKind> = None;
 		if let Some(client) = &mut self.client {
+			fn send_data(client: &mut impl Write, data: &[u8]) -> io::Result<()> {
+				client.write_all(&data)?;
+				client.flush()?;
+				Ok(())
+			}
+
 			if self.buffer.len() > 0 {
-				println!("sending {} bytes", self.buffer.len());
-				if let Err(err) = client.write_all(&self.buffer) {
-					eprintln!("Failed to write to client: {}", err);
+				if self.builder.internal_logging {
+					println!("sending {} bytes", self.buffer.len());
 				}
-				if let Err(err) = client.flush() {
-					eprintln!("Failed to flush client: {}", err);
+				match send_data(client, &self.buffer) {
+					Ok(_) => self.buffer.clear(),
+					Err(err) => client_err = Some(err.kind()),
 				}
 			}
 		}
-		self.buffer.clear();
+		match client_err {
+			Some(kind) => match kind {
+				io::ErrorKind::WouldBlock => {
+					if self.builder.internal_logging {
+						println!("client would block, retrying");
+					}
+				},
+				io::ErrorKind::BrokenPipe => {
+					if self.builder.internal_logging {
+						println!("client broken pipe, closing");
+					}
+					self.client = None;
+				},
+				_ => {
+					if self.builder.internal_logging {
+						println!("client error, closing");
+					}
+					self.client = None;
+				},
+			},
+			None => {},
+		}
 	}
 
 	fn close(&mut self) {
@@ -323,7 +362,9 @@ impl Write for ResourceManager {
 		}
 		self.buffer.extend_from_slice(buf);
 		if self.buffer.len() > self.builder.max_buffer_size as usize {
-			println!("buffer full, flushing");
+			if self.builder.internal_logging {
+				println!("buffer full, flushing");
+			}
 			self.flush();
 		}
 		Ok(buf.len())
@@ -348,12 +389,10 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 		match rx.recv_timeout(Duration::from_millis(100)) {
 			Ok(WorkerMessage::LogEntry(entry)) => entry.serialize(&mut manager).unwrap_or_default(),
 			Ok(WorkerMessage::Flush(ack)) => {
-				println!("WorkerMessage::Flush");
 				manager.flush();
 				let _ = ack.send(());
 			},
 			Ok(WorkerMessage::FlushClose(ack)) => {
-				println!("WorkerMessage::FlushClose");
 				manager.close();
 				let _ = ack.send(());
 				break;
@@ -414,7 +453,18 @@ impl log::Log for PuppylogClient {
 	fn log(&self, record: &Record) {
 		if self.enabled(record.metadata()) {
 			if self.stdout {
-				println!("{} [{}] {}", record.level(), record.target(), record.args());
+				println!(
+					"{} [{}] {}",
+					match record.level() {
+						Level::Error => "\x1b[31mERROR\x1b[0m",
+						Level::Warn => "\x1b[33mWARN\x1b[0m",
+						Level::Info => "\x1b[32mINFO\x1b[0m",
+						Level::Debug => "\x1b[34mDEBUG\x1b[0m",
+						Level::Trace => "\x1b[37mTRACE\x1b[0m",
+					},
+					record.target(),
+					record.args()
+				);
 			}
 			let level = match record.level() {
 				Level::Error => LogLevel::Error,
@@ -482,6 +532,7 @@ pub struct PuppylogBuilder {
 	log_stdout: bool,
 	level_filter: Level,
 	props: Vec<Prop>,
+	internal_logging: bool,
 }
 
 impl PuppylogBuilder {
@@ -496,7 +547,8 @@ impl PuppylogBuilder {
 			log_stdout: true,
 			authorization: None,
 			level_filter: Level::Info,
-			props: Vec::new()
+			props: Vec::new(),
+			internal_logging: false,
 		}
 	}
 
@@ -532,6 +584,12 @@ impl PuppylogBuilder {
 			key: key.to_string(),
 			value: value.to_string(),
 		});
+		self
+	}
+
+	/// Enable internal logging for the logger itself. This is useful for debugging the logger.
+	pub fn internal_logging(mut self) -> Self {
+		self.internal_logging = true;
 		self
 	}
 
