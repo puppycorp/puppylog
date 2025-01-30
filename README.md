@@ -65,7 +65,7 @@ Logline is a binary structure which stores log information.
 | Field      | Size | Description                          |
 |------------|------|--------------------------------------|
 | Version    | 2	| Version of the logentry              |
-| Timestamp  | 8    | Timestamp of the log                 |
+| Timestamp  | 8    | Timestamp of the log in micros       |
 | Random     | 4    | Ensure uniqueness within millisecond |
 | Level      | 1    | Log level                            |
 | PropsCount | 1    | Project identifier                   |
