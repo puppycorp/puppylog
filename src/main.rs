@@ -68,6 +68,7 @@ async fn main() {
 	let app = Router::new()
 		.route("/", get(root))
 		.route("/puppylog.js", get(js))
+		.route("/favicon.ico", get(favicon))
 		.route("/api/device/{devid}/rawlogs", post(upload_raw_logs))
 			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
 			.layer(RequestDecompressionLayer::new().gzip(true))
@@ -88,6 +89,7 @@ async fn main() {
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const JS_HTML: &str = include_str!("../assets/puppylog.js");
+const FAVICON: &[u8] = include_bytes!("../assets/favicon.ico");
 
 // basic handler that responds with a static string
 async fn root() -> Html<&'static str> {
@@ -105,6 +107,14 @@ async fn js() -> String {
 #[cfg(not(debug_assertions))]
 async fn js() -> &'static str {
 	JS_HTML
+}
+
+async fn favicon() -> Result<Response, StatusCode> {
+	Ok((
+		StatusCode::OK,
+		[(axum::http::header::CONTENT_TYPE, "image/x-icon")],
+        FAVICON,
+	).into_response())
 }
 
 async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
