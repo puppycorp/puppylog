@@ -60,17 +60,19 @@ impl Into<u8> for &LogLevel {
 	}
 }
 
-impl From<u8> for LogLevel {
-	fn from(value: u8) -> Self {
+impl TryFrom<u8> for LogLevel {
+	type Error = &'static str;
+
+	fn try_from(value: u8) -> Result<Self, <LogLevel as TryFrom<u8>>::Error> {
 		match value {
-			0 => LogLevel::Uknown,
-			1 => LogLevel::Trace,
-			2 => LogLevel::Debug,
-			3 => LogLevel::Info,
-			4 => LogLevel::Warn,
-			5 => LogLevel::Error,
-			6 => LogLevel::Fatal,
-			_ => panic!("Invalid log level")
+			0 => Ok(LogLevel::Uknown),
+			1 => Ok(LogLevel::Trace),
+			2 => Ok(LogLevel::Debug),
+			3 => Ok(LogLevel::Info),
+			4 => Ok(LogLevel::Warn),
+			5 => Ok(LogLevel::Error),
+			6 => Ok(LogLevel::Fatal),
+			_ => Err("Invalid log level")
 		}
 	}
 }
@@ -183,7 +185,10 @@ impl LogEntry {
 		};
 		let random = u32::from_le_bytes(data[*ptr..(*ptr+4)].try_into().unwrap());
 		*ptr += 4;
-		let level = LogLevel::from(data[*ptr]);
+		let level = match LogLevel::try_from(data[*ptr]) {
+			Ok(level) => level,
+			Err(_) => return Err(LogentryDeserializerError::InvalidLogLevel)
+		};
 		*ptr += 1;
 		let prop_count = data[*ptr];
 		*ptr += 1;
@@ -246,7 +251,10 @@ impl LogEntry {
 		};
 		let random = reader.read_u32::<LittleEndian>()?;
 		let level = reader.read_u8()?;
-		let level = LogLevel::from(level);
+		let level = match LogLevel::try_from(level) {
+			Ok(level) => level,
+			Err(_) => return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid log level"))
+		};
 		let prop_count = reader.read_u8()?;
 		let mut props = Vec::with_capacity(prop_count as usize);
 		for _ in 0..prop_count {

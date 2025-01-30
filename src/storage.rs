@@ -2,7 +2,7 @@ use std::io::Cursor;
 use std::{collections::HashMap, time::Instant};
 use std::path::PathBuf;
 use chrono::{Datelike, Utc};
-use puppylog::LogEntry;
+use puppylog::{LogEntry, LogentryDeserializerError};
 use tokio::{fs::{read_dir, File, OpenOptions}, io::{AsyncReadExt, AsyncWriteExt}};
 use crate::config::log_path;
 use crate::log_query::{Expr, Operator, QueryAst, Value};
@@ -98,21 +98,12 @@ pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 	let mut years = get_years().await;
 	years.sort_by(|a, b| b.cmp(a));
 	'main: for year in years {
-		// if year < start.year() as u32 {
-		// 	break;
-		// }
 		let mut months = get_months(year).await;
 		months.sort_by(|a, b| b.cmp(a));
 		for month in months {
-			// if year == start.year() as u32 && month < start.month() as u32 {
-			// 	break;
-			// }
 			let mut days = get_days(year, month).await;
 			days.sort_by(|a, b| b.cmp(a));
 			for day in days {
-				// if year == start.year() as u32 && month == start.month() as u32 && day < start.day() as u32 {
-				// 	break;
-				// }
 				log::info!("Searching logs for {}/{}/{}", year, month, day);
 				let path = logspath.join(format!("{}/{}/{}/{}-{}-{}.log", year, month, day, year, month, day));
 				if path.exists() {
@@ -126,13 +117,23 @@ pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 					let mut total_loglines = 0;
 					let mut total_expr_time = 0;
 					let mut ptr = 0;
-					while let Ok(log_entry) = LogEntry::fast_deserialize(&buffer, &mut ptr) {
-						total_loglines += 1;
-						let timer = Instant::now();
-						if check_expr(&query.root, &log_entry).unwrap() {
-							logs.push(log_entry);
+					loop {
+						match LogEntry::fast_deserialize(&buffer, &mut ptr) {
+							Ok(log_entry) => {
+								total_loglines += 1;
+								let timer = Instant::now();
+								if check_expr(&query.root, &log_entry).unwrap() {
+									logs.push(log_entry);
+								}
+								total_expr_time += timer.elapsed().as_nanos();
+							},
+							Err(LogentryDeserializerError::NotEnoughData) => {
+								break;
+							},
+							Err(err) => {
+								log::error!("Error deserializing log entry: {:?}", err);
+							}
 						}
-						total_expr_time += timer.elapsed().as_nanos();
 					}
 					log::info!("Parsed {} loglines in {:?} expr time {}", total_loglines, timer.elapsed(), total_expr_time / 1000000);
 					let timer = Instant::now();
