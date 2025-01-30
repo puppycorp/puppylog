@@ -1,5 +1,4 @@
 use std::io::{self, Read, Write};
-
 use byteorder::LittleEndian;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
@@ -87,24 +86,15 @@ impl From<&String> for LogLevel {
 	}
 }
 
-
-// impl TryFrom<&String> for LogLevel {
-// 	type Error = &'static str;
-
-// 	fn try_from(value: &String) -> Result<Self, Self::Error> {
-// 		match value.as_str() {
-// 			"debug" => Ok(LogLevel::Debug),
-// 			"info" => Ok(LogLevel::Info),
-// 			"warn" => Ok(LogLevel::Warn),
-// 			"error" => Ok(LogLevel::Error),
-// 			"DEBUG" => Ok(LogLevel::Debug),
-// 			"INFO" => Ok(LogLevel::Info),
-// 			"WARN" => Ok(LogLevel::Warn),
-// 			"ERROR" => Ok(LogLevel::Error),
-// 			_ => Err("Invalid log level")
-// 		}
-// 	}
-// }
+#[derive(Debug)]
+pub enum LogentryDeserializerError {
+	InvalidTimestamp,
+	InvalidLogLevel,
+	InvalidPropKey,
+	InvalidPropValue,
+	InvalidMessage,
+	NotEnoughData
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Prop {
@@ -114,7 +104,7 @@ pub struct Prop {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEntry {
-	pub version: u8,
+	pub version: u16,
 	pub random: u32,
 	pub timestamp: DateTime<Utc>,
 	pub level: LogLevel,
@@ -125,7 +115,7 @@ pub struct LogEntry {
 impl Default for LogEntry {
 	fn default() -> Self {
 		LogEntry {
-			version: 0,
+			version: 1,
 			random: 0,
 			timestamp: Utc::now(),
 			level: LogLevel::Info,
@@ -151,7 +141,9 @@ impl LogEntry {
 	}
 
 	pub fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-		writer.write_i64::<LittleEndian>(self.timestamp.timestamp_millis())?;
+		writer.write_u16::<LittleEndian>(self.version)?;
+		writer.write_i64::<LittleEndian>(self.timestamp.timestamp_micros())?;
+		writer.write_u32::<LittleEndian>(self.random)?;
 		writer.write_u8((&self.level).into())?;
 		writer.write_u8(self.props.len() as u8)?;
 		for prop in &self.props {
@@ -165,19 +157,23 @@ impl LogEntry {
 		Ok(())
 	}
 
-	pub fn deserialize2(data: &[u8], ptr: &mut usize) -> Result<LogEntry, ()> {
-		if *ptr + 10 > data.len() {
-			return Err(());
+	pub fn fast_deserialize(data: &[u8], ptr: &mut usize) -> Result<LogEntry, LogentryDeserializerError> {
+		if *ptr + 16 > data.len() {
+			return Err(LogentryDeserializerError::NotEnoughData);
 		}
+		let version = u16::from_le_bytes(data[*ptr..(*ptr+2)].try_into().unwrap());
+		*ptr += 2;
 		let timestamp = i64::from_le_bytes(data[*ptr..(*ptr+8)].try_into().unwrap());
 		*ptr += 8;
-		let timestamp = match DateTime::from_timestamp_millis(timestamp) {
+		let timestamp = match DateTime::from_timestamp_micros(timestamp) {
 			Some(timestamp) => timestamp,
 			None => {
 				log::error!("Invalid timestamp");
-				return Err(())
+				return Err(LogentryDeserializerError::InvalidTimestamp);
 			}
 		};
+		let random = u32::from_le_bytes(data[*ptr..(*ptr+4)].try_into().unwrap());
+		*ptr += 4;
 		let level = LogLevel::from(data[*ptr]);
 		*ptr += 1;
 		let prop_count = data[*ptr];
@@ -185,22 +181,22 @@ impl LogEntry {
 		let mut props = Vec::with_capacity(prop_count as usize);
 		for _ in 0..prop_count {
 			if *ptr + 1 > data.len() {
-				return Err(());
+				return Err(LogentryDeserializerError::NotEnoughData);
 			}
 			let key_len = data[*ptr] as usize;
 			*ptr += 1;
 			if *ptr + key_len + 1 > data.len() {
-				return Err(());
+				return Err(LogentryDeserializerError::NotEnoughData);
 			}
 			let key = String::from_utf8_lossy(&data[*ptr..*ptr + key_len]).to_string();
 			*ptr += key_len;
 			if *ptr + 1 > data.len() {
-				return Err(());
+				return Err(LogentryDeserializerError::NotEnoughData);
 			}
 			let value_len = data[*ptr] as usize;
 			*ptr += 1;
 			if *ptr + value_len > data.len() {
-				return Err(());
+				return Err(LogentryDeserializerError::NotEnoughData);
 			}
 			let value = String::from_utf8_lossy(&data[*ptr..*ptr + value_len]).to_string();
 			*ptr += value_len;
@@ -210,18 +206,18 @@ impl LogEntry {
 			});
 		}
 		if *ptr + 4 > data.len() {
-			return Err(());
+			return Err(LogentryDeserializerError::NotEnoughData);
 		}
 		let msg_len = u32::from_le_bytes(data[*ptr..*ptr + 4].try_into().unwrap()) as usize;
 		*ptr += 4;
 		if *ptr + msg_len > data.len() {
-			return Err(());
+			return Err(LogentryDeserializerError::NotEnoughData);
 		}
 		let msg = String::from_utf8_lossy(&data[*ptr..*ptr + msg_len]).to_string();
 		*ptr += msg_len;
 		Ok(LogEntry {
-			version: 0,
-			random: 0,
+			version,
+			random,
 			timestamp,
 			level,
 			props,
@@ -230,39 +226,41 @@ impl LogEntry {
 	}
 
 	pub fn deserialize<R: Read>(reader: &mut R) -> io::Result<LogEntry> {
+		let version = reader.read_u16::<LittleEndian>()?;
 		let timestamp = reader.read_i64::<LittleEndian>()?;
-		let secs = timestamp / 1000;
-		let nanos = ((timestamp % 1000) * 1_000_000) as u32;
-		let timestamp = match DateTime::from_timestamp(secs, nanos) {
-			Some(dt) => dt,
-			None => return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid timestamp"))
+		let timestamp = match DateTime::from_timestamp_micros(timestamp) {
+			Some(timestamp) => timestamp,
+			None => {
+				log::error!("Invalid timestamp");
+				return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid timestamp"));
+			}
 		};
+		let random = reader.read_u32::<LittleEndian>()?;
 		let level = reader.read_u8()?;
 		let level = LogLevel::from(level);
 		let prop_count = reader.read_u8()?;
-		let mut props = vec![];
+		let mut props = Vec::with_capacity(prop_count as usize);
 		for _ in 0..prop_count {
 			let key_len = reader.read_u8()?;
 			let mut key = vec![0; key_len as usize];
 			reader.read_exact(&mut key)?;
-			let key = String::from_utf8_lossy(&key);
+			let key = String::from_utf8_lossy(&key).to_string();
 			let value_len = reader.read_u8()?;
 			let mut value = vec![0; value_len as usize];
 			reader.read_exact(&mut value)?;
 			let value = String::from_utf8_lossy(&value).to_string();
 			props.push(Prop {
-				key: key.to_string(),
+				key,
 				value
 			});
 		}
-
 		let msg_len = reader.read_u32::<LittleEndian>()?;
 		let mut msg = vec![0; msg_len as usize];
 		reader.read_exact(&mut msg)?;
 		let msg = String::from_utf8_lossy(&msg).to_string();
 		Ok(LogEntry {
-			version: 0,
-			random: 0,
+			version,
+			random,
 			timestamp,
 			level,
 			props,
@@ -303,6 +301,8 @@ impl LogEntryChunkParser {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+
     use crate::{LogEntry, LogEntryChunkParser, LogLevel, PuppylogBuilder, Prop};
 
 	#[test]
@@ -327,7 +327,30 @@ mod tests {
 		buffer.set_position(0);
 		let deserialized = LogEntry::deserialize(&mut buffer).unwrap();
 
-		assert_eq!(entry.timestamp.timestamp_millis(), deserialized.timestamp.timestamp_millis());
+		assert_eq!(entry.timestamp, deserialized.timestamp);
+		assert_eq!(entry.level, deserialized.level);
+		assert_eq!(entry.props, deserialized.props);
+		assert_eq!(entry.msg, deserialized.msg);
+	}
+
+	#[test]
+	fn parse_from_slice_directly() {
+		let entry = LogEntry {
+			timestamp: Utc::now(),
+			level: LogLevel::Info,
+			props: vec![
+				Prop { key: "key1".to_string(), value: "value1".to_string() },
+				Prop { key: "key2".to_string(), value: "value2".to_string() }
+			],
+			msg: "Hello, world!".to_string(),
+			..Default::default()
+		};
+
+		let mut buffer = vec![];
+		entry.serialize(&mut buffer).unwrap();
+		let deserialized = LogEntry::fast_deserialize(&buffer, &mut 0).unwrap();
+
+		assert_eq!(entry.timestamp, deserialized.timestamp);
 		assert_eq!(entry.level, deserialized.level);
 		assert_eq!(entry.props, deserialized.props);
 		assert_eq!(entry.msg, deserialized.msg);

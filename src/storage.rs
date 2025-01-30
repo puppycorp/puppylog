@@ -126,7 +126,7 @@ pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 					let mut total_loglines = 0;
 					let mut total_expr_time = 0;
 					let mut ptr = 0;
-					while let Ok(log_entry) = LogEntry::deserialize2(&buffer, &mut ptr) {
+					while let Ok(log_entry) = LogEntry::fast_deserialize(&buffer, &mut ptr) {
 						total_loglines += 1;
 						let timer = Instant::now();
 						if check_expr(&query.root, &log_entry).unwrap() {
