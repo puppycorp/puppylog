@@ -13,3 +13,4 @@ serde = { version = "1", features = ["derive"] }
 flate2 = "1"
 lazy_static = "1"
 puppylog = { path = "../core" }
+log = "0.4"

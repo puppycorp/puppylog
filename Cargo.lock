@@ -1376,6 +1376,7 @@ dependencies = [
  "clap",
  "flate2",
  "lazy_static",
+ "log",
  "puppylog",
  "rand",
  "reqwest",

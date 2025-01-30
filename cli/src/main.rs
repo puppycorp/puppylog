@@ -1,10 +1,13 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
-use puppylog::{DrainParser, LogEntry, LogLevel};
+use log::Level;
+use puppylog::{DrainParser, LogEntry, LogLevel, PuppylogBuilder};
 use rand::{distributions::Alphanumeric, prelude::*};
 use reqwest;
 use std::collections::HashMap;
 use std::error::Error;
+use std::thread::sleep;
+use std::time::Duration;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::io::Write;
@@ -70,21 +73,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Upload raw log data
-    Rawupload {
-        /// Server address
-        address: String,
-    },
-    /// Stream raw log data
-    Rawstream {
-        /// Server address
-        address: String,
-    },
     /// Upload log data
     Upload {
         /// Server address
         address: String,
     },
+	StreamLogs {
+		#[arg(short, long)]
+		address: String,
+		#[arg(short, long)]
+		interval: u64,
+		#[arg(short, long)]
+		count: Option<u64>,
+	},
     Tokenize {
         #[command(subcommand)]
         subcommand: TokenizeSubcommands,
@@ -129,104 +130,104 @@ fn random_email() -> String {
     format!("{}@{}", username.to_lowercase(), domain)
 }
 
-fn random_timestamp(base_time: DateTime<Utc>) -> DateTime<Utc> {
-    let offset = Duration::seconds(thread_rng().gen_range(0..100000));
-    base_time + offset
-}
+// fn random_timestamp(base_time: DateTime<Utc>) -> DateTime<Utc> {
+//     let offset = Duration::seconds(thread_rng().gen_range(0..100000));
+//     base_time + offset
+// }
 
-fn generate_log_line(order: u32, base_time: DateTime<Utc>) -> LogEntry {
-    let mut rng = thread_rng();
+// fn generate_log_line(order: u32, base_time: DateTime<Utc>) -> LogEntry {
+//     let mut rng = thread_rng();
     
-    // Select log level using weights
-    let level = LOG_LEVELS.choose_weighted(&mut rng, |&item| {
-        LOG_LEVEL_WEIGHTS[LOG_LEVELS.iter().position(|&x| x == item).unwrap()]
-    }).unwrap().clone();
+//     // Select log level using weights
+//     let level = LOG_LEVELS.choose_weighted(&mut rng, |&item| {
+//         LOG_LEVEL_WEIGHTS[LOG_LEVELS.iter().position(|&x| x == item).unwrap()]
+//     }).unwrap().clone();
     
-    let entity = *ENTITY_TYPES.choose(&mut rng).unwrap();
-    let actions = ACTIONS.get(entity).unwrap();
-    let action = *actions.choose(&mut rng).unwrap();
+//     let entity = *ENTITY_TYPES.choose(&mut rng).unwrap();
+//     let actions = ACTIONS.get(entity).unwrap();
+//     let action = *actions.choose(&mut rng).unwrap();
     
-    let timestamp = random_timestamp(base_time);
-	println!("timestamp: {:?}", timestamp);
+//     let timestamp = random_timestamp(base_time);
+// 	println!("timestamp: {:?}", timestamp);
     
-    // Generate the log line based on entity type
-    let log_line = match entity {
-        "user" => {
-            let username = random_string_name();
-            // format!("{} {} {} {} {}", 
-            //        timestamp.to_rfc3339(),
-            //        log_level,
-            //        entity,
-            //        username,
-            //        action);
-			LogEntry {
-				timestamp,
-				level,
-				msg: format!("{} {} {}", entity, username, action),
-				props: vec![("username".to_string(), username)]
-			}
-        },
-        "api request" => {
-            let api_name = API_NAMES.choose(&mut rng).unwrap();
-            if action == "returned status" {
-                let status = STATUS_CODES.choose(&mut rng).unwrap();
-                // format!("{} {} {} {} returned status {}", 
-                //        timestamp.to_rfc3339(),
-                //        log_level,
-                //        entity,
-                //        api_name,
-                //        status)
-				LogEntry {
-					timestamp,
-					level,
-					msg: format!("{} {} returned status {}", entity, api_name, status),
-					props: vec![("api_name".to_string(), api_name.to_string()), ("status".to_string(), status.to_string())]
-				}
-			} else {
-                // format!("{} {} {} {} {}", 
-                //        timestamp.to_rfc3339(),
-                //        log_level,
-                //        entity,
-                //        api_name,
-                //        action)
-				LogEntry {
-					timestamp,
-					level,
-					msg: format!("{} {} {}", entity, api_name, action),
-					props: vec![("api_name".to_string(), api_name.to_string())]
-				}
-            }
-        },
-        // Add similar matches for other entity types...
-        _ => {
-            let generic_id = generate_random_id("id", 8);
-            // format!("{} {} {} {} {}", 
-            //        timestamp.to_rfc3339(),
-            //        log_level,
-            //        entity,
-            //        generic_id,
-            //        action)
-			LogEntry {
-				timestamp,
-				level,
-				msg: format!("{} {} {}", entity, generic_id, action),
-				props: vec![("id".to_string(), generic_id)]
-			}
-        }
-    };
+//     // Generate the log line based on entity type
+//     let log_line = match entity {
+//         "user" => {
+//             let username = random_string_name();
+//             // format!("{} {} {} {} {}", 
+//             //        timestamp.to_rfc3339(),
+//             //        log_level,
+//             //        entity,
+//             //        username,
+//             //        action);
+// 			LogEntry {
+// 				timestamp,
+// 				level,
+// 				msg: format!("{} {} {}", entity, username, action),
+// 				props: vec![("username".to_string(), username)]
+// 			}
+//         },
+//         "api request" => {
+//             let api_name = API_NAMES.choose(&mut rng).unwrap();
+//             if action == "returned status" {
+//                 let status = STATUS_CODES.choose(&mut rng).unwrap();
+//                 // format!("{} {} {} {} returned status {}", 
+//                 //        timestamp.to_rfc3339(),
+//                 //        log_level,
+//                 //        entity,
+//                 //        api_name,
+//                 //        status)
+// 				LogEntry {
+// 					timestamp,
+// 					level,
+// 					msg: format!("{} {} returned status {}", entity, api_name, status),
+// 					props: vec![("api_name".to_string(), api_name.to_string()), ("status".to_string(), status.to_string())]
+// 				}
+// 			} else {
+//                 // format!("{} {} {} {} {}", 
+//                 //        timestamp.to_rfc3339(),
+//                 //        log_level,
+//                 //        entity,
+//                 //        api_name,
+//                 //        action)
+// 				LogEntry {
+// 					timestamp,
+// 					level,
+// 					msg: format!("{} {} {}", entity, api_name, action),
+// 					props: vec![("api_name".to_string(), api_name.to_string())]
+// 				}
+//             }
+//         },
+//         // Add similar matches for other entity types...
+//         _ => {
+//             let generic_id = generate_random_id("id", 8);
+//             // format!("{} {} {} {} {}", 
+//             //        timestamp.to_rfc3339(),
+//             //        log_level,
+//             //        entity,
+//             //        generic_id,
+//             //        action)
+// 			LogEntry {
+// 				timestamp,
+// 				level,
+// 				msg: format!("{} {} {}", entity, generic_id, action),
+// 				props: vec![("id".to_string(), generic_id)]
+// 			}
+//         }
+//     };
     
-    log_line
-}
+//     log_line
+// }
 
-fn generate_logs(count: usize) -> Vec<LogEntry> {
-    let base_time = Utc::now();
-    (0..count)
-        .map(|i| {
-            let order = (i % 3 + 1) as u32;
-            generate_log_line(order, base_time)
-        })
-        .collect()
-}
+// fn generate_logs(count: usize) -> Vec<LogEntry> {
+//     let base_time = Utc::now();
+//     (0..count)
+//         .map(|i| {
+//             let order = (i % 3 + 1) as u32;
+//             generate_log_line(order, base_time)
+//         })
+//         .collect()
+// }
 
 async fn upload_logs(address: &str, logs: &[String], compress: bool) -> Result<(), Box<dyn Error>> {
     let client = reqwest::Client::new();
@@ -293,8 +294,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // println!("Upload status: {}", response.status());
 
     match args.subcommand {
-        Commands::Rawupload { address } => todo!(),
-        Commands::Rawstream { address } => todo!(),
+		Commands::StreamLogs { address, interval, count } => {
+			PuppylogBuilder::new()
+				.server(&address).unwrap()
+				.level(Level::Info)
+				.stdout()
+				.prop("app", "puppylogcli")
+				.build()
+				.unwrap();
+
+			let mut i = 0;
+			loop {
+				log::info!("Hello, world! {}", i);
+				i += 1;
+				if let Some(count) = count {
+					if i >= count {
+						break;
+					}
+				}
+				sleep(Duration::from_millis(interval));
+			}
+		},
         Commands::Upload { address } => todo!(),
         Commands::Tokenize { subcommand } => {
             match subcommand {
