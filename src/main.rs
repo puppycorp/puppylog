@@ -69,6 +69,9 @@ async fn main() {
 		.route("/", get(root))
 		.route("/puppylog.js", get(js))
 		.route("/favicon.ico", get(favicon))
+		.route("/favicon-192x192.png", get(favicon_192x192))
+		.route("/favicon-512x512.png", get(favicon_512x512))
+		.route("/manifest.json", get(manifest))
 		.route("/api/device/{devid}/rawlogs", post(upload_raw_logs))
 			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
 			.layer(RequestDecompressionLayer::new().gzip(true))
@@ -90,6 +93,8 @@ async fn main() {
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const JS_HTML: &str = include_str!("../assets/puppylog.js");
 const FAVICON: &[u8] = include_bytes!("../assets/favicon.ico");
+const FAVICON_192x192: &[u8] = include_bytes!("../assets/favicon-192x192.png");
+const FAVICON_512x512: &[u8] = include_bytes!("../assets/favicon-512x512.png");
 
 // basic handler that responds with a static string
 async fn root() -> Html<&'static str> {
@@ -114,6 +119,30 @@ async fn favicon() -> Result<Response, StatusCode> {
 		StatusCode::OK,
 		[(axum::http::header::CONTENT_TYPE, "image/x-icon")],
         FAVICON,
+	).into_response())
+}
+
+async fn favicon_192x192() -> Result<Response, StatusCode> {
+	Ok((
+		StatusCode::OK,
+		[(axum::http::header::CONTENT_TYPE, "image/png")],
+		FAVICON_192x192,
+	).into_response())
+}
+
+async fn favicon_512x512() -> Result<Response, StatusCode> {
+	Ok((
+		StatusCode::OK,
+		[(axum::http::header::CONTENT_TYPE, "image/png")],
+		FAVICON_512x512,
+	).into_response())
+}
+
+async fn manifest() -> Result<Response, StatusCode> {
+	Ok((
+		StatusCode::OK,
+		[(axum::http::header::CONTENT_TYPE, "application/json")],
+		include_bytes!("../assets/manifest.json"),
 	).into_response())
 }
 
