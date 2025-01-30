@@ -58,30 +58,20 @@
 
 ## Data Structures
 
-### Logfile
-
-Logfile stores logs in binary structure format. It starts with header followed by loglines. Logfiles are stored in tar.gz format and in folder `{LOGPATH}/year/month/day/yyyy-mm-dd.tar.gz` in the server.
-
-**Header**
-| Field         | Size | Description                    |
-|---------------|------|--------------------------------|
-| Magic         | 7    | PUPYLOG                        |
-| Version       | 1    | Version of the log file format |
-| Logline count | 4    | Number of loglines in the file |
-| LogEntries 	| x    | Loglines                       |
-
 ### Logentry
 
 Logline is a binary structure which stores log information.
 
-| Field      | Size | Description                  |
-|------------|------|------------------------------|
-| Timestamp  | 8    | Timestamp of the log         |
-| Level      | 1    | Log level                    |
-| PropsCount | 1    | Project identifier           |
-| Props      | x    | Properties of the logentry   |
-| MsgLen     | 4    | Length of the message        |
-| Message    | x    | Log message payload          |
+| Field      | Size | Description                          |
+|------------|------|--------------------------------------|
+| Version    | 2	| Version of the logentry              |
+| Timestamp  | 8    | Timestamp of the log                 |
+| Random     | 4    | Ensure uniqueness within millisecond |
+| Level      | 1    | Log level                            |
+| PropsCount | 1    | Project identifier                   |
+| Props      | x    | Properties of the logentry           |
+| MsgLen     | 4    | Length of the message                |
+| Message    | x    | Log message payload                  |
 
 **Loglevel**
 
