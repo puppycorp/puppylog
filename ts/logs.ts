@@ -33,6 +33,8 @@ export type FetchMoreArgs = {
 	query: string
 }
 
+const MAX_LOG_ENTRIES = 10_000
+
 export const logsSearchPage = (args: {
 	isStreaming: boolean
 	fetchMore: (args: FetchMoreArgs) => void
@@ -152,6 +154,12 @@ export const logsSearchPage = (args: {
 			}, 500)
 			logEntries.push(...entries)
 			logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+			if (logEntries.length > MAX_LOG_ENTRIES) {
+				if (tableWrapper.scrollTop === 0) {
+					logEntries.splice(0, MAX_LOG_ENTRIES)
+				}
+			}
+
 			const body = `
 				${logEntries.map((r) => {
 					// const textNode = document.createTextNode();

@@ -110,6 +110,7 @@ var formatTimestamp = (ts) => {
   const date = new Date(ts);
   return date.toLocaleString();
 };
+var MAX_LOG_ENTRIES = 1e4;
 var logsSearchPage = (args) => {
   const root = document.createElement("div");
   const logEntries = [];
@@ -224,6 +225,11 @@ var logsSearchPage = (args) => {
       }, 500);
       logEntries.push(...entries);
       logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      if (logEntries.length > MAX_LOG_ENTRIES) {
+        if (tableWrapper.scrollTop === 0) {
+          logEntries.splice(0, MAX_LOG_ENTRIES);
+        }
+      }
       const body = `
 \t\t\t\t${logEntries.map((r) => {
         return `
