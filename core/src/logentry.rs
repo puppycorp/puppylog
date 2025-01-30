@@ -16,22 +16,19 @@ pub enum LogLevel {
 	Info,
 	Warn,
 	Error,
+	Fatal,
 	Uknown
 }
 
 impl LogLevel {
 	pub fn from_string(value: &str) -> Self {
 		match value {
-			"trace" => LogLevel::Trace,
-			"TRACE" => LogLevel::Trace,
-			"debug" => LogLevel::Debug,
-			"info" => LogLevel::Info,
-			"warn" => LogLevel::Warn,
-			"error" => LogLevel::Error,
-			"INFO" => LogLevel::Info,
-			"DEBUG" => LogLevel::Debug,
-			"WARN" => LogLevel::Warn,
-			"ERROR" => LogLevel::Error,
+			"trace" | "TRACE" => LogLevel::Trace,
+			"debug" | "DEBUG" => LogLevel::Debug,
+			"info" | "INFO" => LogLevel::Info,
+			"warn" | "WARN" => LogLevel::Warn,
+			"error" | "ERROR" => LogLevel::Error,
+			"fatal" | "FATAL" => LogLevel::Fatal,
 			_ => LogLevel::Uknown
 		}
 	}
@@ -43,6 +40,7 @@ impl LogLevel {
 			3 => LogLevel::Info,
 			4 => LogLevel::Warn,
 			5 => LogLevel::Error,
+			6 => LogLevel::Fatal,
 			_ => LogLevel::Uknown
 		}
 	}
@@ -56,6 +54,7 @@ impl Into<u8> for &LogLevel {
 			LogLevel::Info => 3,
 			LogLevel::Warn => 4,
 			LogLevel::Error => 5,
+			LogLevel::Fatal => 6,
 			LogLevel::Uknown => 0
 		}
 	}
@@ -70,6 +69,7 @@ impl From<u8> for LogLevel {
 			3 => LogLevel::Info,
 			4 => LogLevel::Warn,
 			5 => LogLevel::Error,
+			6 => LogLevel::Fatal,
 			_ => panic!("Invalid log level")
 		}
 	}
@@ -83,6 +83,7 @@ impl ToString for LogLevel {
 			LogLevel::Info => "info".to_string(),
 			LogLevel::Warn => "warn".to_string(),
 			LogLevel::Error => "error".to_string(),
+			LogLevel::Fatal => "fatal".to_string(),
 			LogLevel::Uknown => "unknown".to_string()
 		}
 	}

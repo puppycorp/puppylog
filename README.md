@@ -82,6 +82,7 @@ Logline is a binary structure which stores log information.
 | 3     | Info        |
 | 4     | Warning     |
 | 5     | Error       |
+| 6     | Fatal       |
 
 **Property**
 
