@@ -16,6 +16,7 @@ export const mainPage = () => {
 		const streamUrl = new URL("/api/logs/stream", window.location.origin)
 		streamUrl.search = streamQuery.toString()
 		logEventSource = new EventSource(streamUrl)
+		logEventSource.onopen = () => setIsStreaming(true)
 		logEventSource.onmessage = (event) => {
 			const data = JSON.parse(event.data)
 			addLogEntries([data])
@@ -23,9 +24,10 @@ export const mainPage = () => {
 		logEventSource.onerror = (event) => {
 			console.error("EventSource error", event)
 			if (logEventSource) logEventSource.close()
+			setIsStreaming(false)
 		}
 	}
-	const { root, addLogEntries, onError } = logsSearchPage({
+	const { root, addLogEntries, onError, setIsStreaming } = logsSearchPage({
 		isStreaming,
 		toggleIsStreaming: () => {
 			isStreaming = !isStreaming

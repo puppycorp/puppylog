@@ -106,10 +106,6 @@ export const logsSearchPage = (args: {
 	tableWrapper.style.overflow = "auto"
 	tableWrapper.appendChild(table)
 	root.appendChild(table)
-	// requestAnimationFrame(() => {
-	// 	queryLogs(searchBar.value)
-	// })
-
 	const last = document.createElement("div")
 	last.style.height = "100px"
 	last.innerHTML = "Loading..."
@@ -140,6 +136,9 @@ export const logsSearchPage = (args: {
 
 	return {
 		root,
+		setIsStreaming: (isStreaming: boolean) => {
+			streamButton.innerHTML = streamButtonState(isStreaming)
+		},
 		onError (err: string) {
 			last.innerHTML = err
 		},
