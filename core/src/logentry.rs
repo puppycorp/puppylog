@@ -11,6 +11,7 @@ use crate::ChunkReader;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Deserialize, Serialize)]
 pub enum LogLevel {
+	Trace,
 	Debug,
 	Info,
 	Warn,
@@ -21,6 +22,8 @@ pub enum LogLevel {
 impl LogLevel {
 	pub fn from_string(value: &str) -> Self {
 		match value {
+			"trace" => LogLevel::Trace,
+			"TRACE" => LogLevel::Trace,
 			"debug" => LogLevel::Debug,
 			"info" => LogLevel::Info,
 			"warn" => LogLevel::Warn,
@@ -35,10 +38,11 @@ impl LogLevel {
 
 	pub fn from_i64(value: i64) -> Self {
 		match value {
-			0 => LogLevel::Debug,
-			1 => LogLevel::Info,
-			2 => LogLevel::Warn,
-			3 => LogLevel::Error,
+			1 => LogLevel::Trace,
+			2 => LogLevel::Debug,
+			3 => LogLevel::Info,
+			4 => LogLevel::Warn,
+			5 => LogLevel::Error,
 			_ => LogLevel::Uknown
 		}
 	}
@@ -47,11 +51,12 @@ impl LogLevel {
 impl Into<u8> for &LogLevel {
 	fn into(self) -> u8 {
 		match self {
-			LogLevel::Debug => 0,
-			LogLevel::Info => 1,
-			LogLevel::Warn => 2,
-			LogLevel::Error => 3,
-			LogLevel::Uknown => 4
+			LogLevel::Trace => 1,
+			LogLevel::Debug => 2,
+			LogLevel::Info => 3,
+			LogLevel::Warn => 4,
+			LogLevel::Error => 5,
+			LogLevel::Uknown => 0
 		}
 	}
 }
@@ -59,10 +64,12 @@ impl Into<u8> for &LogLevel {
 impl From<u8> for LogLevel {
 	fn from(value: u8) -> Self {
 		match value {
-			0 => LogLevel::Debug,
-			1 => LogLevel::Info,
-			2 => LogLevel::Warn,
-			3 => LogLevel::Error,
+			0 => LogLevel::Uknown,
+			1 => LogLevel::Trace,
+			2 => LogLevel::Debug,
+			3 => LogLevel::Info,
+			4 => LogLevel::Warn,
+			5 => LogLevel::Error,
 			_ => panic!("Invalid log level")
 		}
 	}
@@ -71,6 +78,7 @@ impl From<u8> for LogLevel {
 impl ToString for LogLevel {
 	fn to_string(&self) -> String {
 		match self {
+			LogLevel::Trace => "trace".to_string(),
 			LogLevel::Debug => "debug".to_string(),
 			LogLevel::Info => "info".to_string(),
 			LogLevel::Warn => "warn".to_string(),
