@@ -38,15 +38,9 @@ enum SortDir {
 
 #[derive(Deserialize, Debug)]
 struct GetLogsQuery {
-	pub start: Option<DateTime<Utc>>,
-	pub end: Option<DateTime<Utc>>,
-	pub level: Option<LogLevel>,
 	pub offset: Option<usize>,
 	pub count: Option<usize>,
-	pub props: Option<Vec<(String, String)>>,
-	pub search: Option<String>,
 	pub query: Option<String>,
-	pub timezone: Option<i32>,
 }
 
 
