@@ -205,7 +205,16 @@ async fn get_logs(
 	query.limit = params.count;
 
 	let log_entries = search_logs(query).await.unwrap();
-	// log::info!("log_entries: {:?}", log_entries);
+	let log_entries = log_entries.into_iter().map(|entry| {
+		json!({
+			"id": entry.id_string(),
+			"version": entry.version,
+			"timestamp": entry.timestamp,
+			"level": entry.level.to_string(),
+			"msg": entry.msg,
+			"props": entry.props,
+		})
+	}).collect::<Vec<_>>();
 	Ok(Json(serde_json::to_value(&log_entries).unwrap()))
 }
 

@@ -14,6 +14,7 @@ export type Prop = {
 }
 
 export type LogEntry = {
+	id: string
 	timestamp: string
 	level: LogLevel
 	props: Prop[]
@@ -41,6 +42,7 @@ export const logsSearchPage = (args: {
 	toggleIsStreaming: () => boolean
 }) => {
 	const root = document.createElement("div")
+	const logids = new Set<string>()
 	const logEntries: LogEntry[] = []
 	const options = document.createElement("div")
 	options.style.position = "sticky"
@@ -152,14 +154,22 @@ export const logsSearchPage = (args: {
 			setTimeout(() => {
 				moreRows = true
 			}, 500)
-			logEntries.push(...entries)
+			for (const entry of entries) {
+				if (logids.has(entry.id)) {
+					continue
+				}
+				logids.add(entry.id)
+				logEntries.push(entry)
+			}
 			logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
 			if (logEntries.length > MAX_LOG_ENTRIES) {
 				if (tableWrapper.scrollTop === 0) {
-					logEntries.splice(0, MAX_LOG_ENTRIES)
+					const removed = logEntries.splice(0, MAX_LOG_ENTRIES)
+					for (const r of removed) {
+						logids.delete(r.id)
+					}
 				}
 			}
-
 			const body = `
 				${logEntries.map((r) => {
 					// const textNode = document.createTextNode();
