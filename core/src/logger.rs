@@ -18,13 +18,15 @@ mod tls_impl {
     use std::io::{Read, Write};
     use std::net::TcpStream;
 
+    use super::PuppyLogError;
+
     pub struct TLSConn {
         conn: ClientConnection,
         sock: TcpStream,
     }
 
     impl TLSConn {
-        pub fn new(sock: TcpStream, server_name: String) -> Self {
+        pub fn new(sock: TcpStream, server_name: String) -> Result<Self, PuppyLogError> {
             let root_store = RootCertStore {
                 roots: webpki_roots::TLS_SERVER_ROOTS.into(),
             };
@@ -34,9 +36,15 @@ mod tls_impl {
         
             config.key_log = Arc::new(rustls::KeyLogFile::new());
 
-            let server_name = server_name.try_into().unwrap();
-            let conn = ClientConnection::new(Arc::new(config), server_name).unwrap();
-            TLSConn { conn, sock }
+            let server_name = match server_name.try_into() {
+				Ok(name) => name,
+				Err(_) => return Err(PuppyLogError::new("Invalid server name")),
+			};
+            let conn = match ClientConnection::new(Arc::new(config), server_name) {
+				Ok(conn) => conn,
+				Err(e) => return Err(PuppyLogError::new(&e.to_string())),
+			};
+            Ok(TLSConn { conn, sock })
         }
 
         fn stream(&mut self) -> Stream<'_, ClientConnection, TcpStream> {
@@ -61,23 +69,25 @@ mod tls_impl {
     }
 }
 
-#[cfg(feature = "nativetls")]
+#[cfg(all(feature = "nativetls", not(feature = "rusttls")))]
 mod tls_impl {
     use native_tls::TlsConnector;
     use std::io::{Read, Write};
     use std::net::TcpStream;
+
+    use super::PuppyLogError;
 
     pub struct TLSConn {
         stream: native_tls::TlsStream<TcpStream>,
     }
 
     impl TLSConn {
-        pub fn new(sock: TcpStream, server_name: String) -> Self {
+        pub fn new(sock: TcpStream, server_name: String) -> Result<Self, PuppyLogError> {
             let connector = TlsConnector::builder()
                 .build()
                 .unwrap();
             let stream = connector.connect(&server_name, sock).unwrap();
-            TLSConn { stream }
+            Ok(TLSConn { stream })
         }
     }
 
@@ -135,29 +145,23 @@ where
 			}
 		}
 		let mut response_buf = vec![0u8; 4096];
-		let time = Instant::now();
-		loop {
-			match stream.read(&mut response_buf) {
-				Ok(0) => {
-					eprintln!("Connection closed by server");
-					break;
-				},
-				Ok(n) => {
-					let response = String::from_utf8_lossy(&response_buf[..n]);
-					println!("response: {}", response);
-					if response.starts_with("HTTP/1.1 200") {
-						println!("Server accepted connection");
-					} else {
-						return Err(PuppyLogError::new(&response));
-					}
-				},
-				Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-					if time.elapsed().as_millis() > 100 {
-						break;
-					}
-				},
-				Err(e) => panic!("Failed to read: {}", e),
-			}
+		match stream.read(&mut response_buf) {
+			Ok(0) => {
+				eprintln!("Connection closed by server");
+			},
+			Ok(n) => {
+				let response = String::from_utf8_lossy(&response_buf[..n]);
+				println!("response: {}", response);
+				if response.starts_with("HTTP/1.1 200") {
+					println!("Server accepted connection");
+				} else {
+					return Err(PuppyLogError::new(&response));
+				}
+			},
+			Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+				eprintln!("would block");
+			},
+			Err(e) => return Err(PuppyLogError::new(&e.to_string())),
 		}
 		Ok(ChunkedEncoder {
 			stream,
@@ -316,14 +320,16 @@ impl ResourceManager {
 					let host = url.host_str().ok_or(PuppyLogError::new("no host in url"))?;
 					let host = format!("{}:{}", host, port);
 					let socket = TcpStream::connect(host)?;
-					socket.set_nonblocking(true).unwrap();
+					socket.set_read_timeout(Some(Duration::from_millis(5000)))?;
 					match url.scheme() {
 						"http" => {
-							self.client = Some(Box::new(ChunkedEncoder::new(socket, url.clone(), self.builder.authorization.clone())?));
+							let chunked_encoder = ChunkedEncoder::new(socket, url.clone(), self.builder.authorization.clone())?;
+							self.client = Some(Box::new(chunked_encoder));
 						}
 						"https" => {
-							let tls = TLSConn::new(socket, url.host_str().unwrap().to_string());
-							self.client = Some(Box::new(ChunkedEncoder::new(tls, url.clone(), self.builder.authorization.clone())?));
+							let tls = TLSConn::new(socket, url.host_str().unwrap().to_string())?;
+							let chunked_encoder = ChunkedEncoder::new(tls, url.clone(), self.builder.authorization.clone())?;
+							self.client = Some(Box::new(chunked_encoder));
 						}
 						_ => {}
 					};

@@ -1,23 +1,38 @@
-use std::{collections::{HashMap, VecDeque}, fs::read_dir, io::{Read, Write}, process::Child, sync::Arc};
-
-use axum::{
-	body::{Body, BodyDataStream}, extract::{DefaultBodyLimit, Path, Query, State}, http::StatusCode, response::{sse::{Event, KeepAlive}, Html, IntoResponse, Response, Sse}, routing::{get, post}, Json, Router
-};
-use bytes::Bytes;
-use chrono::{DateTime, Datelike, Utc};
-use config::log_path;
+use std::sync::Arc;
+use axum::body::Body;
+use axum::body::BodyDataStream;
+use axum::extract::DefaultBodyLimit;
+use axum::extract::Query;
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::sse::Event;
+use axum::response::Html;
+use axum::response::IntoResponse;
+use axum::response::Response;
+use axum::response::Sse;
+use axum::routing::get;
+use axum::routing::post;
+use axum::Json;
+use axum::Router;
 use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
-use log_query::{parse_log_query, QueryAst};
-use puppylog::{ChunkReader, LogEntry, LogEntryChunkParser, LogLevel};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, to_string, Value};
+use log_query::parse_log_query;
+use log_query::QueryAst;
+use puppylog::LogEntryChunkParser;
+use serde::Deserialize;
+use serde_json::json;
+use serde_json::to_string;
+use serde_json::Value;
 use simple_logger::SimpleLogger;
-use storage::{search_logs, Storage};
-use tokio::{fs, io::AsyncReadExt, sync::mpsc};
-use tower_http::{cors::{AllowMethods, Any, CorsLayer}, decompression::{DecompressionLayer, RequestDecompressionLayer}};
-use types::{Context, SubscribeReq};
+use storage::search_logs;
+use storage::Storage;
+use tokio::io::AsyncReadExt;
+use tower_http::cors::AllowMethods;
+use tower_http::cors::Any;
+use tower_http::cors::CorsLayer;
+use tower_http::decompression::RequestDecompressionLayer;
+use types::Context;
 
 mod logline;
 mod cache;
@@ -139,7 +154,6 @@ async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
 	let mut stream: BodyDataStream = body.into_data_stream();
 	let mut storage = Storage::new();
 	let mut i = 0;
-	//let mut buffer = CircularBuffer::new(30000);
 	let mut chunk_reader = LogEntryChunkParser::new();
 	
 	while let Some(chunk_result) = stream.next().await {
