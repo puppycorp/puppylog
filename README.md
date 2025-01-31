@@ -1,4 +1,6 @@
-# puppylog
+# PuppyLog - Make Logging Great Again
+
+PuppyLog is log collection server where clients can submit logs and the send queries to get logs. Log queries are send in Puppy Query Language (PQL) format. Server supports streaming logs and querying logs. Protocol is designed to be efficient and easy to implement in different environments like server, desktop, mobile and IOT devices.
 
 ## PQL - Puppy Query Language
 
@@ -60,13 +62,13 @@
 
 ### Logentry
 
-Logline is a binary structure which stores log information.
+Logline is a binary structure which stores log information. Each LogEntry uniqueness is ensured by timestamp and random field so it is very unlikely to have same logentry id twice. Users could also use their custom random field could include something like device id for per device uniqueness.
 
 | Field      | Size | Description                          |
 |------------|------|--------------------------------------|
-| Version    | 2	| Version of the logentry              |
+| Version    | 2	| Version of the logentry (current 1)  |
 | Timestamp  | 8    | Timestamp of the log in micros       |
-| Random     | 4    | Ensure uniqueness within millisecond |
+| Random     | 4    | Ensure uniqueness within microsecond |
 | Level      | 1    | Log level                            |
 | PropsCount | 1    | Project identifier                   |
 | Props      | x    | Properties of the logentry           |
@@ -102,24 +104,24 @@ Get logs
 
 | Field     | DataType | Description                           |
 | --------- | -------- | --------------------------------------|
-| start     | DateTime | Start time for logs                   |
-| end       | DateTime | End time for logs                     |
-| order     | int      | Order of the logs                     |
-| count     | int      | Number of logs to return (default 50) |
-| loglevel  | enum[]   | Debug, Info, Warning, Error           |
-| props	 	| string[] | Properties of the logentry            |
-| search    | string[] | Message payload of the logmessage     |
+| offset	| int      | Offset of the logs                    |
+| count     | int      | Number of logs to return (default 200)|
+| query     | string   | Query string in PQL format            |
 
 #### Response
 
 ```json
 [
     {
-        "timestamp": "",
-        "loglevel": 2,
-        "project": 5,
-        "env": 1,
-        "device": 1234,
+		"id": "123456789",
+        "timestamp": "2025-01-01T12:00:00",
+        "level": "trace" | "debug" | "info" | "warning" | "error" | "fatal",
+		"props": [
+			{
+				"key": "key",
+				"value": "value"
+			}
+		],
         "message": "Log message"
     }
 ]
@@ -141,12 +143,16 @@ Returns eventstream of json objects like this.
 data:
 ```json
 {
-    "timestamp": "",
-    "loglevel": 2,
-    "project": 5,
-    "env": 1,
-    "device": 1234,
-    "message": "Log message"
+	"id": "123456789",
+	"timestamp": "2025-01-01T12:00:00",
+	"level": "trace" | "debug" | "info" | "warning" | "error" | "fatal",
+	"props": [
+		{
+			"key": "key",
+			"value": "value"
+		}
+	],
+	"message": "Log message"
 }
 ```
 
@@ -171,56 +177,15 @@ Event stream which receives commands from server. This can be used to control th
 | Start date  | 8    | Earliest logline to send |
 | End date    | 8    | Lastest logline to send  |
 
-### POST /api/logs/{group}
+### POST /api/logs
 
-Device can send batch of loglines to server in compressed format like tar.gz. Payload will have one or more loglines in specified format.
+Device can send batch of loglines to server in compressed format like tar.gz. Payload will have one or more loglines in specified format. Supports gzip and zstd compression. Also supports streaming logs with chunked transfer encoding.
 
-Content-Encoding: gzip or none
+Transfer-Encoding: chunked // If streaming logs
+Content-Encoding: gzip, zstd, none
 
-**Logline**
+Back to back list of loglines in binary format.
 
-|Field      |Size|Description             |
-|-----------|----|------------------------|
-| timestamp | 8  | Timestamp of the log   |
-| loglevel  | 1  | Log level              |
-| project   | 4  | Project identifier     |
-| env       | 4  | Environment identifier |
-| device    | 4  | Device identifier      |
-| msglen    | 4  | Length of the message  |
-| message   | x  | Log message            |
+### POST /api/ping
 
-### POST /api/logs/stream
-
-Stream logs to server. Because this method has higher bandwidth usage it is recommended to use it only when needed. For example when debugging some issue.
-
-Transfer-Encoding: chunked
-
-```
-size of logline\r\n
-Logline(same format as normal post) \r\n
-... more loglines
-0\r\n
-\r\n
-```
-
-
-### POST /api/device/{devid}/rawlogs
-
-Post raw logs as they are stored in device. However this might require user to insert some processing rules if the log schema is not automatically detectable. There could be some basic asumptions like timestamp is in certain format or it is the first column.
-
-Content-Type: text/plain
-Content-Encoding: gzip or none
-
-Logs in plain text format...
-
-### POST /api/device/{devid}/rawlogs/stream
-
-Stream raw logs to server. This is useful when logs are generated in real time and they are not stored in the device. This can be used to stream logs from the device to the server.
-
-Transfer-Encoding: chunked
-
-```
-size of logline\r\n
-Logline\r\n
-... more loglines
-0\r\n
+Ping endpoint to check if server is ready to receive logs. Returns 200 OK if server is ready to receive logs. Client can use this to keep TLS connection alive or makes sure not to waste bandwidth sending logs to server which is not ready to receive logs. In some environments like IOT devices it's important to save battery and bandwidth.
