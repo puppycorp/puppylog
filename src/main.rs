@@ -75,7 +75,8 @@ async fn main() {
 		.route("/api/logs", get(get_logs)).layer(cors.clone())
 		.route("/api/logs/stream", get(stream_logs)).layer(cors)
 		.route("/api/logs", post(upload_logs))
-			.layer(RequestDecompressionLayer::new().gzip(true))
+			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
+			.layer(RequestDecompressionLayer::new().gzip(true).zstd(true))
 			.with_state(ctx)
 		.fallback(get(root));
 

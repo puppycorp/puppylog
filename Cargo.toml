@@ -9,7 +9,7 @@ edition = "2021"
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["macros"] }
 serde = { version = "1", features = ["derive"] }
-tower-http = { version = "0.6", features = ["decompression-gzip", "cors"] }
+tower-http = { version = "0.6", features = ["decompression-gzip", "decompression-zstd", "cors"] }
 futures-util = "0.3"
 serde_json = "1"
 futures = "0.3"
