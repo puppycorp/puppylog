@@ -3,63 +3,102 @@ use std::io::{self, Cursor, Read, Write};
 use std::net::TcpStream;
 use std::sync::mpsc::{self, Receiver};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use bytes::buf;
 use log::{Record, Level, Metadata, SetLoggerError};
 use chrono::{DateTime, Local, Utc};
-use rustls::client::{self, ClientConnectionData};
-use rustls::{ClientConnection, RootCertStore, Stream};
 use url::Url;
 
 use crate::{LogEntry, LogLevel, Prop};
 
-pub struct TLSConn {
-	conn: ClientConnection,
-	sock: TcpStream,
+#[cfg(feature = "rusttls")]
+mod tls_impl {
+    use rustls::{RootCertStore, ClientConfig, ClientConnection, Stream};
+    use std::sync::Arc;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    pub struct TLSConn {
+        conn: ClientConnection,
+        sock: TcpStream,
+    }
+
+    impl TLSConn {
+        pub fn new(sock: TcpStream, server_name: String) -> Self {
+            let root_store = RootCertStore {
+                roots: webpki_roots::TLS_SERVER_ROOTS.into(),
+            };
+            let mut config = ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+        
+            config.key_log = Arc::new(rustls::KeyLogFile::new());
+
+            let server_name = server_name.try_into().unwrap();
+            let conn = ClientConnection::new(Arc::new(config), server_name).unwrap();
+            TLSConn { conn, sock }
+        }
+
+        fn stream(&mut self) -> Stream<'_, ClientConnection, TcpStream> {
+            Stream::new(&mut self.conn, &mut self.sock)
+        }
+    }
+
+    impl Write for TLSConn {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.stream().write(buf)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.stream().flush()
+        }
+    }
+
+    impl Read for TLSConn {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.stream().read(buf)
+        }
+    }
 }
 
-impl TLSConn {
-	pub fn new(sock: TcpStream, server_name: String) -> Self {
-		let root_store = RootCertStore {
-			roots: webpki_roots::TLS_SERVER_ROOTS.into(),
-		};
-		let mut config = rustls::ClientConfig::builder()
-			.with_root_certificates(root_store)
-			.with_no_client_auth();
-	
-		// Allow using SSLKEYLOGFILE.
-		config.key_log = Arc::new(rustls::KeyLogFile::new());
+#[cfg(feature = "nativetls")]
+mod tls_impl {
+    use native_tls::TlsConnector;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
 
-		let server_name = server_name.try_into().unwrap();
-		let conn = rustls::ClientConnection::new(Arc::new(config), server_name).unwrap();
-		TLSConn {
-			conn,
-			sock,
-		}
-	}
+    pub struct TLSConn {
+        stream: native_tls::TlsStream<TcpStream>,
+    }
 
-	fn stream(&mut self) -> Stream<'_, ClientConnection, TcpStream> {
-		rustls::Stream::new(&mut self.conn, &mut self.sock)
-	}
+    impl TLSConn {
+        pub fn new(sock: TcpStream, server_name: String) -> Self {
+            let connector = TlsConnector::builder()
+                .build()
+                .unwrap();
+            let stream = connector.connect(&server_name, sock).unwrap();
+            TLSConn { stream }
+        }
+    }
+
+    impl Write for TLSConn {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.stream.write(buf)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.stream.flush()
+        }
+    }
+
+    impl Read for TLSConn {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.stream.read(buf)
+        }
+    }
 }
 
-impl Write for TLSConn {
-	fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-		self.stream().write(buf)
-	}
-
-	fn flush(&mut self) -> std::io::Result<()> {
-		self.stream().flush()
-	}
-}
-
-impl Read for TLSConn {
-	fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-		self.stream().read(buf)
-	}
-}
+pub use tls_impl::TLSConn;
 
 #[derive(Debug)]
 pub struct ChunkedEncoder<T: Write + Read> {
