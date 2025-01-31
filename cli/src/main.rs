@@ -79,12 +79,14 @@ enum Commands {
         address: String,
     },
 	StreamLogs {
-		#[arg(short, long)]
+		#[arg(long)]
 		address: String,
-		#[arg(short, long)]
+		#[arg(long)]
 		interval: u64,
-		#[arg(short, long)]
+		#[arg(long)]
 		count: Option<u64>,
+		#[arg(long)]
+		auth: Option<String>,
 	},
     Tokenize {
         #[command(subcommand)]
@@ -294,11 +296,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // println!("Upload status: {}", response.status());
 
     match args.subcommand {
-		Commands::StreamLogs { address, interval, count } => {
+		Commands::StreamLogs { address, interval, count, auth } => {
 			PuppylogBuilder::new()
 				.server(&address).unwrap()
 				.level(Level::Info)
 				.stdout()
+				.authorization(&auth.unwrap_or_default())
 				.prop("app", "puppylogcli")
 				.build()
 				.unwrap();
