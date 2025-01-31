@@ -19,6 +19,7 @@ use futures_util::StreamExt;
 use log::LevelFilter;
 use log_query::parse_log_query;
 use log_query::QueryAst;
+use puppylog::LogEntry;
 use puppylog::LogEntryChunkParser;
 use serde::Deserialize;
 use serde_json::json;
@@ -196,6 +197,17 @@ impl IntoResponse for BadRequestError {
 	}
 }
 
+fn logentry_to_json(entry: &LogEntry) -> Value {
+	json!({
+		"id": entry.id_string(),
+		"version": entry.version,
+		"timestamp": entry.timestamp,
+		"level": entry.level.to_string(),
+		"msg": entry.msg,
+		"props": entry.props,
+	})
+}
+
 async fn get_logs(
 	State(ctx): State<Arc<Context>>, 
 	Query(params): Query<GetLogsQuery>
@@ -214,16 +226,7 @@ async fn get_logs(
 	query.limit = params.count;
 
 	let log_entries = search_logs(query).await.unwrap();
-	let log_entries = log_entries.into_iter().map(|entry| {
-		json!({
-			"id": entry.id_string(),
-			"version": entry.version,
-			"timestamp": entry.timestamp,
-			"level": entry.level.to_string(),
-			"msg": entry.msg,
-			"props": entry.props,
-		})
-	}).collect::<Vec<_>>();
+	let log_entries = log_entries.into_iter().map(|entry| logentry_to_json(&entry)).collect::<Vec<_>>();
 	Ok(Json(serde_json::to_value(&log_entries).unwrap()))
 }
 
@@ -242,7 +245,7 @@ async fn stream_logs(
 	let rx = ctx.subscriber.subscribe(query).await;
 	let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
 		.map(|p| {
-			let data = to_string(&p).unwrap();
+			let data = to_string(&logentry_to_json(&p)).unwrap();
 			Ok(Event::default().data(data))
 		});
 
