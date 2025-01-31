@@ -66,12 +66,6 @@ async fn main() {
 		.route("/favicon-192x192.png", get(favicon_192x192))
 		.route("/favicon-512x512.png", get(favicon_512x512))
 		.route("/manifest.json", get(manifest))
-		.route("/api/device/{devid}/rawlogs", post(upload_raw_logs))
-			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
-			.layer(RequestDecompressionLayer::new().gzip(true))
-		.route("/api/device/{devid}/rawlogs/stream", post(stream_raw_logs))
-			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
-			.layer(RequestDecompressionLayer::new().gzip(true))
 		.route("/api/logs", get(get_logs)).layer(cors.clone())
 		.route("/api/logs/stream", get(stream_logs)).layer(cors)
 		.route("/api/logs", post(upload_logs))
@@ -239,64 +233,4 @@ async fn stream_logs(
 		});
 
 	Ok(Sse::new(stream))
-}
-
-async fn upload_raw_logs(
-	Path(devid): Path<String>,
-	body: String,
-) {
-	//println!("{}", body);
-
-	let now = Utc::now();
-
-	println!("logpath: {}", log_path().display());
-
-	let path = log_path().join(format!("{}/{}/{}", now.year(), now.month(), now.day()));
-
-	println!("{}", path.display());
-
-	if !path.exists() {
-		std::fs::create_dir_all(&path).unwrap();
-	}
-
-	let file = path.join(format!("{}.log", devid));
-
-	let mut file = std::fs::OpenOptions::new()
-		.create(true)
-		.append(true)
-		.open(file)
-		.unwrap();
-
-	file.write_all(body.as_bytes()).unwrap();
-
-	println!("writing done");
-}
-
-async fn stream_raw_logs(Path(devid): Path<String>, body: Body)  {
-	println!("stream_raw_logs");
-	let now = Utc::now();
-
-	println!("logpath: {}", log_path().display());
-
-	let path = log_path().join(format!("{}/{}/{}", now.year(), now.month(), now.day()));
-
-	println!("{}", path.display());
-
-	if !path.exists() {
-		std::fs::create_dir_all(&path).unwrap();
-	}
-
-	let file = path.join(format!("{}.log", devid));
-
-	let mut file = std::fs::OpenOptions::new()
-		.create(true)
-		.append(true)
-		.open(file)
-		.unwrap();
-
-	let mut stream: BodyDataStream = body.into_data_stream();
-	while let Some(chunk) = stream.next().await {
-		let chunk = chunk.unwrap();
-		file.write(&chunk).unwrap();
-	}
 }
