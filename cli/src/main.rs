@@ -1,3 +1,4 @@
+use chrono::{NaiveDate, TimeZone};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use log::Level;
@@ -71,6 +72,22 @@ struct Cli {
     subcommand: Commands,
 }
 
+#[derive(Parser)]
+struct StreamLogsArgs {
+	#[arg(long)]
+	address: String,
+	#[arg(long)]
+	interval: u64,
+	#[arg(long)]
+	count: Option<u64>,
+	#[arg(long)]
+	auth: Option<String>,
+	#[arg(long, default_value = "1000")]
+	increment: u32,
+	#[arg(long)]
+	start: Option<String>,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Upload log data
@@ -78,16 +95,7 @@ enum Commands {
         /// Server address
         address: String,
     },
-	StreamLogs {
-		#[arg(long)]
-		address: String,
-		#[arg(long)]
-		interval: u64,
-		#[arg(long)]
-		count: Option<u64>,
-		#[arg(long)]
-		auth: Option<String>,
-	},
+	StreamLogs(StreamLogsArgs),
     Tokenize {
         #[command(subcommand)]
         subcommand: TokenizeSubcommands,
@@ -296,26 +304,45 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // println!("Upload status: {}", response.status());
 
     match args.subcommand {
-		Commands::StreamLogs { address, interval, count, auth } => {
-			PuppylogBuilder::new()
-				.server(&address).unwrap()
+		Commands::StreamLogs(args) => {
+			let logger = PuppylogBuilder::new()
+				.server(&args.address).unwrap()
 				.level(Level::Info)
 				.stdout()
-				.authorization(&auth.unwrap_or_default())
+				.authorization(&args.auth.unwrap_or_default())
 				.prop("app", "puppylogcli")
 				.build()
 				.unwrap();
 
+			fn parse_date_to_utc(date_str: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+				let naive_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")?;
+				let naive_datetime = naive_date.and_hms_opt(0, 0, 0).unwrap();
+				Ok(DateTime::<Utc>::from_naive_utc_and_offset(naive_datetime, Utc))
+			}
+
+			// Start in format YYYY-MM-DD
+			let mut now = match args.start {
+                Some(start) => parse_date_to_utc(&start).unwrap(),
+				None => Utc::now()
+			};
+
 			let mut i = 0;
 			loop {
-				log::info!("Hello, world! {}", i);
+				logger.send_logentry(LogEntry {
+					timestamp: now,
+					level: LogLevel::Info,
+					msg: format!("Hello, world! {}", i),
+					props: Vec::new(),
+					..Default::default()
+				});
+				now += Duration::from_millis(args.increment as u64);
 				i += 1;
-				if let Some(count) = count {
+				if let Some(count) = args.count {
 					if i >= count {
 						break;
 					}
 				}
-				sleep(Duration::from_millis(interval));
+				sleep(Duration::from_millis(args.interval));
 			}
 		},
         Commands::Upload { address } => todo!(),

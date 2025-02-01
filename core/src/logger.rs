@@ -473,7 +473,7 @@ impl PuppylogClient {
 		}
 	}
 
-	fn send_logentry(&self, entry: LogEntry) {
+	pub fn send_logentry(&self, entry: LogEntry) {
 		self.sender.send(WorkerMessage::LogEntry(entry)).unwrap();
 	}
 
