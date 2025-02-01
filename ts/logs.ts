@@ -1,11 +1,13 @@
 import { getQueryParam } from "./utility"
 
-export type LogLevel = "Debug" | "Info" | "Warn" | "Error"
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal"
 export const logColors = {
-	Debug: "blue",
-	Info: "green",
-	Warn: "orange",
-	Error: "red"
+	trace: "gray",
+	debug: "blue",
+	info: "green",
+	warn: "orange",
+	error: "red",
+	fatal: "purple"
 }
 
 export type Prop = {

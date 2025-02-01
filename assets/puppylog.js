@@ -101,10 +101,12 @@ var removeQueryParam = (field) => {
 
 // ts/logs.ts
 var logColors = {
-  Debug: "blue",
-  Info: "green",
-  Warn: "orange",
-  Error: "red"
+  trace: "gray",
+  debug: "blue",
+  info: "green",
+  warn: "orange",
+  error: "red",
+  fatal: "purple"
 };
 var formatTimestamp = (ts) => {
   const date = new Date(ts);
