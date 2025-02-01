@@ -127,6 +127,7 @@ var logsSearchPage = (args) => {
   tbody.style.width = "400px";
   const queryLogs = (query) => {
     logEntries.length = 0;
+    logids.clear();
     tbody.innerHTML = "";
     last.innerHTML = "Loading...";
     args.fetchMore({
