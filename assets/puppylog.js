@@ -307,6 +307,8 @@ var mainPage = () => {
   let logEventSource = null;
   let isStreaming = getQueryParam("stream") === "true";
   let lastStreamQuery = null;
+  let logEntriesBuffer = [];
+  let timeout = null;
   const startStream = (query2) => {
     if (lastStreamQuery === query2)
       return;
@@ -323,7 +325,14 @@ var mainPage = () => {
     logEventSource.onopen = () => setIsStreaming(true);
     logEventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      addLogEntries([data]);
+      logEntriesBuffer.push(data);
+      if (timeout)
+        return;
+      timeout = setTimeout(() => {
+        addLogEntries(logEntriesBuffer);
+        logEntriesBuffer = [];
+        timeout = null;
+      }, 30);
     };
     logEventSource.onerror = (event) => {
       console.error("EventSource error", event);
