@@ -56,6 +56,7 @@ export const logsSearchPage = (args: {
 	tbody.style.width = "400px"
 	const queryLogs = (query: string) => {
 		logEntries.length = 0
+		logids.clear()
 		tbody.innerHTML = ""
 		last.innerHTML = "Loading..."
 		args.fetchMore({
