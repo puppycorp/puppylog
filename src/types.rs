@@ -1,7 +1,11 @@
 use puppylog::LogEntry;
+use puppylog::PuppylogEvent;
+use puppylog::QueryAst;
+use serde::Serialize;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
-use crate::log_query::QueryAst;
+use crate::settings::Settings;
 use crate::storage::LogEntrySaver;
 use crate::subscriber::Subscriber;
 use crate::worker::Worker;
@@ -14,7 +18,9 @@ pub struct Logfile {
 pub struct Context {
 	pub subscriber: Subscriber,
 	pub publisher: Sender<LogEntry>,
-	pub logentry_saver: LogEntrySaver
+	pub logentry_saver: LogEntrySaver,
+	pub settings: Settings,
+	pub event_tx: broadcast::Sender<PuppylogEvent>
 }
 
 impl Context {
@@ -24,11 +30,14 @@ impl Context {
 		tokio::spawn(async move {
 			Worker::new(subrx, pubrx).run().await;
 		});
+		let (event_tx, _) = broadcast::channel(100);
 
 		Context {
 			subscriber: Subscriber::new(subtx),
 			publisher: pubtx,
-			logentry_saver: LogEntrySaver::new()
+			logentry_saver: LogEntrySaver::new(),
+			settings: Settings::load().unwrap(),
+			event_tx
 		}
 	}
 }

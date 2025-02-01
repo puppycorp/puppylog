@@ -1,5 +1,5 @@
 use chrono::{DateTime, NaiveDate, Utc};
-use puppylog::LogEntry;
+use crate::LogEntry;
 use serde::de::value;
 use std::str::FromStr;
 
@@ -31,14 +31,14 @@ pub enum Value {
     List(Vec<Value>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Condition {
     pub left: Box<Expr>,
     pub operator: Operator,
     pub right: Box<Expr>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Condition(Condition),
     And(Box<Expr>, Box<Expr>),
@@ -53,19 +53,19 @@ impl Default for Expr {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OrderDir {
     Asc,
     Desc,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OrderBy {
     fields: Vec<String>,
     direction: OrderDir,
 }
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct QueryAst {
     pub root: Expr,
     pub order_by: Option<OrderBy>,

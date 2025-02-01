@@ -1,6 +1,6 @@
 use puppylog::LogEntry;
+use puppylog::QueryAst;
 use tokio::sync::mpsc;
-use crate::log_query::QueryAst;
 use crate::types::SubscribeReq;
 
 struct Subscriber {

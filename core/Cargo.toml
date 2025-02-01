@@ -11,11 +11,14 @@ log = "0.4"
 bytes = "1"
 regex = "1"
 url = "2"
+serde_json = "1"
 webpki-roots = { version = "0.26", optional = true }
 rustls = { version = "0.23", optional = true }
 native-tls = { version = "0.2", optional = true }
+tungstenite = { version = "0.26", features = ["native-tls"]}
 
 [features]
 default = ["nativetls"]
+# ws = ["tungstenite"]
 rusttls = ["rustls", "webpki-roots"]
 nativetls = ["native-tls"]

@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::time::Instant;
 use std::path::PathBuf;
 use chrono::Datelike;
+use puppylog::check_expr;
 use puppylog::LogEntry;
 use puppylog::LogentryDeserializerError;
+use puppylog::QueryAst;
 use tokio::fs::read_dir;
 use tokio::fs::File;
 use tokio::fs::OpenOptions;
@@ -11,8 +13,6 @@ use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use crate::config::log_path;
-use crate::log_query::QueryAst;
-use crate::query_eval::check_expr;
 
 struct Storage {
 	files: HashMap<String, File>,

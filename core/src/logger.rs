@@ -5,421 +5,435 @@ use std::sync::mpsc::{self, Receiver};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
+use bytes::Bytes;
 use log::{Record, Level, Metadata, SetLoggerError};
 use chrono::{DateTime, Local, Utc};
+use native_tls::TlsConnector;
+use tungstenite::client::client_with_config;
+use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{connect, ClientRequestBuilder, Message, WebSocket};
 use url::Url;
+use tungstenite::client::IntoClientRequest;
 
-use crate::{LogEntry, LogLevel, Prop};
+use crate::{check_expr, parse_log_query, query_eval, LogEntry, LogLevel, Prop, PuppylogEvent, QueryAst};
 
-#[cfg(feature = "rusttls")]
-mod tls_impl {
-    use rustls::{RootCertStore, ClientConfig, ClientConnection, Stream};
-    use std::sync::Arc;
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
+// #[cfg(feature = "rusttls")]
+// mod tls_impl {
+//     use rustls::{RootCertStore, ClientConfig, ClientConnection, Stream};
+//     use std::sync::Arc;
+//     use std::io::{Read, Write};
+//     use std::net::TcpStream;
 
-    use super::PuppyLogError;
+//     use super::PuppyLogError;
 
-    pub struct TLSConn {
-        conn: ClientConnection,
-        sock: TcpStream,
-    }
+//     pub struct TLSConn {
+//         conn: ClientConnection,
+//         sock: TcpStream,
+//     }
 
-    impl TLSConn {
-        pub fn new(sock: TcpStream, server_name: String) -> Result<Self, PuppyLogError> {
-            let root_store = RootCertStore {
-                roots: webpki_roots::TLS_SERVER_ROOTS.into(),
-            };
-            let mut config = ClientConfig::builder()
-                .with_root_certificates(root_store)
-                .with_no_client_auth();
+//     impl TLSConn {
+//         pub fn new(sock: TcpStream, server_name: String) -> Result<Self, PuppyLogError> {
+//             let root_store = RootCertStore {
+//                 roots: webpki_roots::TLS_SERVER_ROOTS.into(),
+//             };
+//             let mut config = ClientConfig::builder()
+//                 .with_root_certificates(root_store)
+//                 .with_no_client_auth();
         
-            config.key_log = Arc::new(rustls::KeyLogFile::new());
+//             config.key_log = Arc::new(rustls::KeyLogFile::new());
 
-            let server_name = match server_name.try_into() {
-				Ok(name) => name,
-				Err(_) => return Err(PuppyLogError::new("Invalid server name")),
-			};
-            let conn = match ClientConnection::new(Arc::new(config), server_name) {
-				Ok(conn) => conn,
-				Err(e) => return Err(PuppyLogError::new(&e.to_string())),
-			};
-            Ok(TLSConn { conn, sock })
-        }
+//             let server_name = match server_name.try_into() {
+// 				Ok(name) => name,
+// 				Err(_) => return Err(PuppyLogError::new("Invalid server name")),
+// 			};
+//             let conn = match ClientConnection::new(Arc::new(config), server_name) {
+// 				Ok(conn) => conn,
+// 				Err(e) => return Err(PuppyLogError::new(&e.to_string())),
+// 			};
+//             Ok(TLSConn { conn, sock })
+//         }
 
-        fn stream(&mut self) -> Stream<'_, ClientConnection, TcpStream> {
-            Stream::new(&mut self.conn, &mut self.sock)
-        }
-    }
+//         fn stream(&mut self) -> Stream<'_, ClientConnection, TcpStream> {
+//             Stream::new(&mut self.conn, &mut self.sock)
+//         }
+//     }
 
-    impl Write for TLSConn {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.stream().write(buf)
-        }
+//     impl Write for TLSConn {
+//         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+//             self.stream().write(buf)
+//         }
 
-        fn flush(&mut self) -> std::io::Result<()> {
-            self.stream().flush()
-        }
-    }
+//         fn flush(&mut self) -> std::io::Result<()> {
+//             self.stream().flush()
+//         }
+//     }
 
-    impl Read for TLSConn {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.stream().read(buf)
-        }
-    }
-}
+//     impl Read for TLSConn {
+//         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+//             self.stream().read(buf)
+//         }
+//     }
+// }
 
-#[cfg(all(feature = "nativetls", not(feature = "rusttls")))]
-mod tls_impl {
-    use native_tls::TlsConnector;
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
+// #[cfg(all(feature = "nativetls", not(feature = "rusttls")))]
+// mod tls_impl {
+//     use native_tls::TlsConnector;
+//     use std::io::{Read, Write};
+//     use std::net::TcpStream;
 
-    use super::PuppyLogError;
+//     use super::PuppyLogError;
 
-    pub struct TLSConn {
-        stream: native_tls::TlsStream<TcpStream>,
-    }
+//     pub struct TLSConn {
+//         stream: native_tls::TlsStream<TcpStream>,
+//     }
 
-    impl TLSConn {
-        pub fn new(sock: TcpStream, server_name: String) -> Result<Self, PuppyLogError> {
-            let connector = TlsConnector::builder()
-                .build()
-                .unwrap();
-            let stream = connector.connect(&server_name, sock).unwrap();
-            Ok(TLSConn { stream })
-        }
-    }
+//     impl TLSConn {
+//         pub fn new(sock: TcpStream, server_name: String) -> Result<Self, PuppyLogError> {
+//             let connector = TlsConnector::builder()
+//                 .build()
+//                 .unwrap();
+//             let stream = connector.connect(&server_name, sock).unwrap();
+//             Ok(TLSConn { stream })
+//         }
+//     }
 
-    impl Write for TLSConn {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.stream.write(buf)
-        }
+//     impl Write for TLSConn {
+//         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+//             self.stream.write(buf)
+//         }
 
-        fn flush(&mut self) -> std::io::Result<()> {
-            self.stream.flush()
-        }
-    }
+//         fn flush(&mut self) -> std::io::Result<()> {
+//             self.stream.flush()
+//         }
+//     }
 
-    impl Read for TLSConn {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.stream.read(buf)
-        }
-    }
-}
+//     impl Read for TLSConn {
+//         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+//             self.stream.read(buf)
+//         }
+//     }
+// }
 
-pub use tls_impl::TLSConn;
+// pub use tls_impl::TLSConn;
 
-#[derive(Debug)]
-pub struct ChunkedEncoder<T: Write + Read> {
-    stream: T,
-    last_write_at: Instant,
-    total_bytes_sent: u64,
-}
+// #[derive(Debug)]
+// pub struct ChunkedEncoder<T: Write + Read> {
+//     stream: T,
+//     last_write_at: Instant,
+//     total_bytes_sent: u64,
+// }
 
-impl<T> ChunkedEncoder<T>
-where
-    T: Write + Read, 
-{
-	pub fn new(mut stream: T, url: Url, authorization: Option<String>) -> Result<Self, PuppyLogError> {
-		let auth_header = match authorization {
-			Some(token) => format!("Authorization: {}\n\n", token),
-			None => format!("\n"),
-		};
-		let body = format!(
-			"POST {} HTTP/1.1\r\n\
-			Host: {}\r\n\
-			Content-Type: application/octet-stream\r\n\
-			Transfer-Encoding: chunked\r\n\
-			Connection: keep-alive\r\n\
-			{}",
-			url.path(),
-			url.host_str().unwrap(),
-			auth_header,
-		);
-		loop {
-			match stream.write_all(body.as_bytes()) {
-				Ok(_) => break,
-				Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-				Err(e) => panic!("Failed to write: {}", e),
-			}
-		}
-		let mut response_buf = vec![0u8; 4096];
-		match stream.read(&mut response_buf) {
-			Ok(0) => {
-				eprintln!("Connection closed by server");
-			},
-			Ok(n) => {
-				let response = String::from_utf8_lossy(&response_buf[..n]);
-				println!("response: {}", response);
-				if response.starts_with("HTTP/1.1 200") {
-					println!("Server accepted connection");
-				} else {
-					return Err(PuppyLogError::new(&response));
-				}
-			},
-			Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-				eprintln!("would block");
-			},
-			Err(e) => return Err(PuppyLogError::new(&e.to_string())),
-		}
-		Ok(ChunkedEncoder {
-			stream,
-			last_write_at: Instant::now(),
-			total_bytes_sent: 0,
-		})
-	}
+// impl<T> ChunkedEncoder<T>
+// where
+//     T: Write + Read, 
+// {
+// 	pub fn new(mut stream: T, url: Url, authorization: Option<String>) -> Result<Self, PuppyLogError> {
+// 		let auth_header = match authorization {
+// 			Some(token) => format!("Authorization: {}\n\n", token),
+// 			None => format!("\n"),
+// 		};
+// 		let body = format!(
+// 			"POST {} HTTP/1.1\r\n\
+// 			Host: {}\r\n\
+// 			Content-Type: application/octet-stream\r\n\
+// 			Transfer-Encoding: chunked\r\n\
+// 			Connection: keep-alive\r\n\
+// 			{}",
+// 			url.path(),
+// 			url.host_str().unwrap(),
+// 			auth_header,
+// 		);
+// 		loop {
+// 			match stream.write_all(body.as_bytes()) {
+// 				Ok(_) => break,
+// 				Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+// 				Err(e) => panic!("Failed to write: {}", e),
+// 			}
+// 		}
+// 		let mut response_buf = vec![0u8; 4096];
+// 		match stream.read(&mut response_buf) {
+// 			Ok(0) => {
+// 				eprintln!("Connection closed by server");
+// 			},
+// 			Ok(n) => {
+// 				let response = String::from_utf8_lossy(&response_buf[..n]);
+// 				println!("response: {}", response);
+// 				if response.starts_with("HTTP/1.1 200") {
+// 					println!("Server accepted connection");
+// 				} else {
+// 					return Err(PuppyLogError::new(&response));
+// 				}
+// 			},
+// 			Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+// 				eprintln!("would block");
+// 			},
+// 			Err(e) => return Err(PuppyLogError::new(&e.to_string())),
+// 		}
+// 		Ok(ChunkedEncoder {
+// 			stream,
+// 			last_write_at: Instant::now(),
+// 			total_bytes_sent: 0,
+// 		})
+// 	}
 
-    pub fn close(&mut self) -> std::io::Result<()> {
-		println!("ChunkedEncoder::close");
-        self.flush()?;
-        if self.total_bytes_sent > 0 {
-            // Only send terminating chunk if we sent data
-            self.stream.write_all(b"0\r\n\r\n")?;
-        }
-        self.stream.flush()
-    }
-}
+//     pub fn close(&mut self) -> std::io::Result<()> {
+// 		println!("ChunkedEncoder::close");
+//         self.flush()?;
+//         if self.total_bytes_sent > 0 {
+//             // Only send terminating chunk if we sent data
+//             self.stream.write_all(b"0\r\n\r\n")?;
+//         }
+//         self.stream.flush()
+//     }
+// }
 
-impl<T: Write + Read> Write for ChunkedEncoder<T> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-		let buf_len = buf.len();
-		let size_hex = format!("{:X}\r\n", buf_len);
-		self.stream.write_all(size_hex.as_bytes())?;
-		self.stream.write_all(buf)?;
-        self.stream.write_all(b"\r\n")?;
-		self.total_bytes_sent += buf_len as u64;
-		self.last_write_at = Instant::now();
-        Ok(buf.len())
-    }
+// impl<T: Write + Read> Write for ChunkedEncoder<T> {
+//     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+//         if buf.is_empty() {
+//             return Ok(0);
+//         }
+// 		let buf_len = buf.len();
+// 		let size_hex = format!("{:X}\r\n", buf_len);
+// 		self.stream.write_all(size_hex.as_bytes())?;
+// 		self.stream.write_all(buf)?;
+//         self.stream.write_all(b"\r\n")?;
+// 		self.total_bytes_sent += buf_len as u64;
+// 		self.last_write_at = Instant::now();
+//         Ok(buf.len())
+//     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.stream.flush()
-    }
-}
+//     fn flush(&mut self) -> std::io::Result<()> {
+//         self.stream.flush()
+//     }
+// }
 
-impl<T: Write + Read> Read for ChunkedEncoder<T> {
-	fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-		let timer = Instant::now();
-		loop {
-			match self.stream.read(buf) {
-				Ok(0) => {
-					break Err(io::Error::new(
-						io::ErrorKind::ConnectionAborted,
-						"Connection closed by server"
-					))
-				},
-				Ok(n) => break Ok(n),
-				Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-					if timer.elapsed().as_millis() > 2000 {
-						println!("nothing to read");
-						break Ok(0)
-					}
-				}
-				Err(e) => break Err(e)
-			}
-		}
-	}
-}
+// impl<T: Write + Read> Read for ChunkedEncoder<T> {
+// 	fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+// 		let timer = Instant::now();
+// 		loop {
+// 			match self.stream.read(buf) {
+// 				Ok(0) => {
+// 					break Err(io::Error::new(
+// 						io::ErrorKind::ConnectionAborted,
+// 						"Connection closed by server"
+// 					))
+// 				},
+// 				Ok(n) => break Ok(n),
+// 				Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+// 					if timer.elapsed().as_millis() > 2000 {
+// 						println!("nothing to read");
+// 						break Ok(0)
+// 					}
+// 				}
+// 				Err(e) => break Err(e)
+// 			}
+// 		}
+// 	}
+// }
 
-impl<T> Drop for ChunkedEncoder<T> 
-where 
-    T: Write + Read
-{
-    fn drop(&mut self) {
-        let _ = self.close();
-    }
-}
+// impl<T> Drop for ChunkedEncoder<T> 
+// where 
+//     T: Write + Read
+// {
+//     fn drop(&mut self) {
+//         let _ = self.close();
+//     }
+// }
 
-#[cfg(test)]
-mod tests {
-   use super::*;
-   use std::io::Cursor;
+// #[cfg(test)]
+// mod tests {
+//    use super::*;
+//    use std::io::Cursor;
 
-	// #[test]
-	// fn test_basic_write() -> std::io::Result<()> {
-	// 	let url = Url::parse("http://localhost:8080").unwrap();
-	// 	let cursor = Cursor::new(Vec::new());
-	// 	let mut encoder = ChunkedEncoder::new(cursor, url, None).unwrap();
-	// 	encoder.write_all(b"Hello World")?;
-	// 	encoder.flush()?;
-	// 	let output = encoder.stream.into_inner();
-	// 	assert_eq!(output, b"B\r\nHello World\r\n");
-	// 	Ok(())
-	// }
+// 	// #[test]
+// 	// fn test_basic_write() -> std::io::Result<()> {
+// 	// 	let url = Url::parse("http://localhost:8080").unwrap();
+// 	// 	let cursor = Cursor::new(Vec::new());
+// 	// 	let mut encoder = ChunkedEncoder::new(cursor, url, None).unwrap();
+// 	// 	encoder.write_all(b"Hello World")?;
+// 	// 	encoder.flush()?;
+// 	// 	let output = encoder.stream.into_inner();
+// 	// 	assert_eq!(output, b"B\r\nHello World\r\n");
+// 	// 	Ok(())
+// 	// }
 
-	// #[test]
-	// fn test_close() -> std::io::Result<()> {
-	// 	let url = Url::parse("http://localhost:8080").unwrap();
-	// 	let cursor = Cursor::new(Vec::new());
-	// 	let mut encoder = ChunkedEncoder::new(cursor, url, None).unwrap();
-	// 	encoder.write_all(b"data")?;
-	// 	encoder.close()?;
-	// 	let output = encoder.stream.into_inner();
-	// 	assert_eq!(output, b"4\r\ndata\r\n0\r\n\r\n");
-	// 	Ok(())
-	// }
-}
+// 	// #[test]
+// 	// fn test_close() -> std::io::Result<()> {
+// 	// 	let url = Url::parse("http://localhost:8080").unwrap();
+// 	// 	let cursor = Cursor::new(Vec::new());
+// 	// 	let mut encoder = ChunkedEncoder::new(cursor, url, None).unwrap();
+// 	// 	encoder.write_all(b"data")?;
+// 	// 	encoder.close()?;
+// 	// 	let output = encoder.stream.into_inner();
+// 	// 	assert_eq!(output, b"4\r\ndata\r\n0\r\n\r\n");
+// 	// 	Ok(())
+// 	// }
+// }
 
-struct ResourceManager {
-	builder: PuppylogBuilder,
-	file: Option<File>,
-	client: Option<Box<dyn Write>>,
-	url: Option<Url>,
-	buffer: Vec<u8>,
-	last_client_create: Option<Instant>,
-}
+// struct ResourceManager {
+// 	builder: PuppylogBuilder,
+// 	file: Option<File>,
+// 	client: Option<Box<dyn Write>>,
+// 	url: Option<Url>,
+// 	buffer: Vec<u8>,
+// 	last_client_create: Option<Instant>,
+// }
 
-impl ResourceManager {
-	fn new(builder: PuppylogBuilder) -> Self {
-		ResourceManager {
-			builder,
-			file: None,
-			client: None,
-			url: None,
-			buffer: Vec::new(),
-			last_client_create: None,
-		}
-	}
+// impl ResourceManager {
+// 	fn new(builder: PuppylogBuilder) -> Self {
+// 		ResourceManager {
+// 			builder,
+// 			file: None,
+// 			client: None,
+// 			url: None,
+// 			buffer: Vec::new(),
+// 			last_client_create: None,
+// 		}
+// 	}
 
-	fn get_logfile(&mut self, timestamp: &DateTime<Utc>) -> Option<&mut File> {
-		match &self.builder.log_folder {
-			Some(d) => {
-				let path = d.join(format!("{}.log", timestamp.format("%Y-%m-%d")));
-				if self.file.is_none() {
-					self.file = Some(OpenOptions::new().create(true).append(true).open(&path).unwrap());
-				}
-				Some(self.file.as_mut().unwrap())
-			},
-			None => None,
-		}
-	}
-	fn create_client(&mut self) -> Result<(), PuppyLogError> {
-		match &self.builder.log_server {
-			Some(url) => {
-				let should_create = match &self.client {
-					Some(_) => match &self.url {
-						Some(u) => u != url,
-						None => true,
-					},
-					None => match &self.last_client_create {
-						Some(t) => t.elapsed().as_secs() > 1,
-						None => true,
-					},
-				};
-				if should_create {
-					self.last_client_create = Some(Instant::now());
-					self.url = Some(url.clone());
-					let port = match url.port() {
-						Some(p) => p,
-						None => if url.scheme() == "https" { 443 } else { 80 },
-					};
-					let host = url.host_str().ok_or(PuppyLogError::new("no host in url"))?;
-					let host = format!("{}:{}", host, port);
-					let socket = TcpStream::connect(host)?;
-					socket.set_read_timeout(Some(Duration::from_millis(5000)))?;
-					match url.scheme() {
-						"http" => {
-							let chunked_encoder = ChunkedEncoder::new(socket, url.clone(), self.builder.authorization.clone())?;
-							self.client = Some(Box::new(chunked_encoder));
-						}
-						"https" => {
-							let tls = TLSConn::new(socket, url.host_str().unwrap().to_string())?;
-							let chunked_encoder = ChunkedEncoder::new(tls, url.clone(), self.builder.authorization.clone())?;
-							self.client = Some(Box::new(chunked_encoder));
-						}
-						_ => {}
-					};
-				}
-			}
-			None => {},
-		}
-		Ok(())
-	}
+// 	fn get_logfile(&mut self, timestamp: &DateTime<Utc>) -> Option<&mut File> {
+// 		match &self.builder.log_folder {
+// 			Some(d) => {
+// 				let path = d.join(format!("{}.log", timestamp.format("%Y-%m-%d")));
+// 				if self.file.is_none() {
+// 					self.file = Some(OpenOptions::new().create(true).append(true).open(&path).unwrap());
+// 				}
+// 				Some(self.file.as_mut().unwrap())
+// 			},
+// 			None => None,
+// 		}
+// 	}
+// 	fn create_client(&mut self) -> Result<(), PuppyLogError> {
+// 		match &self.builder.log_server {
+// 			Some(url) => {
+// 				let should_create = match &self.client {
+// 					Some(_) => match &self.url {
+// 						Some(u) => u != url,
+// 						None => true,
+// 					},
+// 					None => match &self.last_client_create {
+// 						Some(t) => t.elapsed().as_secs() > 1,
+// 						None => true,
+// 					},
+// 				};
+// 				if should_create {
+// 					self.last_client_create = Some(Instant::now());
+// 					self.url = Some(url.clone());
+// 					let port = match url.port() {
+// 						Some(p) => p,
+// 						None => if url.scheme() == "https" { 443 } else { 80 },
+// 					};
+// 					let host = url.host_str().ok_or(PuppyLogError::new("no host in url"))?;
+// 					let host = format!("{}:{}", host, port);
+// 					let socket = TcpStream::connect(host)?;
+// 					socket.set_read_timeout(Some(Duration::from_millis(5000)))?;
+// 					match url.scheme() {
+// 						"http" => {
+// 							let chunked_encoder = ChunkedEncoder::new(socket, url.clone(), self.builder.authorization.clone())?;
+// 							self.client = Some(Box::new(chunked_encoder));
+// 						}
+// 						"https" => {
+// 							let tls = TLSConn::new(socket, url.host_str().unwrap().to_string())?;
+// 							let chunked_encoder = ChunkedEncoder::new(tls, url.clone(), self.builder.authorization.clone())?;
+// 							self.client = Some(Box::new(chunked_encoder));
+// 						}
+// 						"ws" | "wss" => {
+// 							let ws: tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>> = match connect(url.into()) {
+// 								Ok((ws, _)) => ws,
+// 								Err(e) => return Err(PuppyLogError::new(&e.to_string())),
+// 							};
 
-	pub fn flush(&mut self) {
-		if let Some(file) = &mut self.file {
-			if let Err(err) = file.flush() {
-				if self.builder.internal_logging {
-					eprintln!("Failed to flush file: {}", err);
-				}
-			}
-		}
-		if let Err(err) = self.create_client() {
-			if self.builder.internal_logging {
-				eprintln!("Failed to create client: {}", err);
-			}
-		}
-		let mut client_err: Option<io::ErrorKind> = None;
-		if let Some(client) = &mut self.client {
-			fn send_data(client: &mut impl Write, data: &[u8]) -> io::Result<()> {
-				client.write_all(&data)?;
-				client.flush()?;
-				Ok(())
-			}
+// 							ws.read()
+// 						}
+// 						_ => {}
+// 					};
+// 				}
+// 			}
+// 			None => {},
+// 		}
+// 		Ok(())
+// 	}
 
-			if self.buffer.len() > 0 {
-				if self.builder.internal_logging {
-					println!("sending {} bytes", self.buffer.len());
-				}
-				match send_data(client, &self.buffer) {
-					Ok(_) => self.buffer.clear(),
-					Err(err) => client_err = Some(err.kind()),
-				}
-			}
-		}
-		match client_err {
-			Some(kind) => match kind {
-				io::ErrorKind::WouldBlock => {
-					if self.builder.internal_logging {
-						println!("client would block, retrying");
-					}
-				},
-				io::ErrorKind::BrokenPipe => {
-					if self.builder.internal_logging {
-						println!("client broken pipe, closing");
-					}
-					self.client = None;
-				},
-				_ => {
-					if self.builder.internal_logging {
-						println!("client error, closing");
-					}
-					self.client = None;
-				},
-			},
-			None => {},
-		}
-	}
+// 	pub fn flush(&mut self) {
+// 		if let Some(file) = &mut self.file {
+// 			if let Err(err) = file.flush() {
+// 				if self.builder.internal_logging {
+// 					eprintln!("Failed to flush file: {}", err);
+// 				}
+// 			}
+// 		}
+// 		if let Err(err) = self.create_client() {
+// 			if self.builder.internal_logging {
+// 				eprintln!("Failed to create client: {}", err);
+// 			}
+// 		}
+// 		let mut client_err: Option<io::ErrorKind> = None;
+// 		if let Some(client) = &mut self.client {
+// 			fn send_data(client: &mut impl Write, data: &[u8]) -> io::Result<()> {
+// 				client.write_all(&data)?;
+// 				client.flush()?;
+// 				Ok(())
+// 			}
 
-	fn close(&mut self) {
-		self.flush();
-	}
-}
+// 			if self.buffer.len() > 0 {
+// 				if self.builder.internal_logging {
+// 					println!("sending {} bytes", self.buffer.len());
+// 				}
+// 				match send_data(client, &self.buffer) {
+// 					Ok(_) => self.buffer.clear(),
+// 					Err(err) => client_err = Some(err.kind()),
+// 				}
+// 			}
+// 		}
+// 		match client_err {
+// 			Some(kind) => match kind {
+// 				io::ErrorKind::WouldBlock => {
+// 					if self.builder.internal_logging {
+// 						println!("client would block, retrying");
+// 					}
+// 				},
+// 				io::ErrorKind::BrokenPipe => {
+// 					if self.builder.internal_logging {
+// 						println!("client broken pipe, closing");
+// 					}
+// 					self.client = None;
+// 				},
+// 				_ => {
+// 					if self.builder.internal_logging {
+// 						println!("client error, closing");
+// 					}
+// 					self.client = None;
+// 				},
+// 			},
+// 			None => {},
+// 		}
+// 	}
 
-impl Write for ResourceManager {
-	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-		if let Some(file) = &mut self.file {
-			file.write(buf)?;
-		}
-		self.buffer.extend_from_slice(buf);
-		if self.buffer.len() > self.builder.max_buffer_size as usize {
-			if self.builder.internal_logging {
-				println!("buffer full, flushing");
-			}
-			self.flush();
-		}
-		Ok(buf.len())
-	}
+// 	fn close(&mut self) {
+// 		self.flush();
+// 	}
+// }
 
-	fn flush(&mut self) -> io::Result<()> {
-		self.flush();
-		Ok(())
-	}
-}
+// impl Write for ResourceManager {
+// 	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+// 		if let Some(file) = &mut self.file {
+// 			file.write(buf)?;
+// 		}
+// 		self.buffer.extend_from_slice(buf);
+// 		if self.buffer.len() > self.builder.max_buffer_size as usize {
+// 			if self.builder.internal_logging {
+// 				println!("buffer full, flushing");
+// 			}
+// 			self.flush();
+// 		}
+// 		Ok(buf.len())
+// 	}
+
+// 	fn flush(&mut self) -> io::Result<()> {
+// 		self.flush();
+// 		Ok(())
+// 	}
+// }
 
 enum WorkerMessage {
     LogEntry(LogEntry),
@@ -428,22 +442,114 @@ enum WorkerMessage {
 }
 
 fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
-	let mut manager = ResourceManager::new(builder);
+	let url = match &builder.log_server {
+		Some(url) => url.clone(),
+		None => return,
+	};
+	let mut client: Option<WebSocket<MaybeTlsStream<TcpStream>>> = None;
+	let mut buffer = Cursor::new(Vec::new());
+	let mut logquery: Option<QueryAst> = None;
+	'main: loop {
+		loop {
+			println!("trying to receive channel message");
+			match rx.recv_timeout(Duration::from_millis(100)) {
+				Ok(WorkerMessage::LogEntry(entry)) => {
+					if let Some(q) = &logquery {
+						if let Ok(true) = check_expr(&q.root, &entry) {
+							entry.serialize(&mut buffer).unwrap_or_default();
+						}
+					}
+					if buffer.position() > builder.max_buffer_size {
+						break;
+					}
+				},
+				Ok(WorkerMessage::Flush(ack)) => {
+					let _ = ack.send(());
+				},
+				Ok(WorkerMessage::FlushClose(ack)) => {
+					let _ = ack.send(());
+					break;
+				},
+				Err(mpsc::RecvTimeoutError::Timeout) => break,
+				Err(mpsc::RecvTimeoutError::Disconnected) => break 'main,
+			};
+		}
 
-	loop {
-		match rx.recv_timeout(Duration::from_millis(100)) {
-			Ok(WorkerMessage::LogEntry(entry)) => entry.serialize(&mut manager).unwrap_or_default(),
-			Ok(WorkerMessage::Flush(ack)) => {
-				manager.flush();
-				let _ = ack.send(());
+		match &mut client {
+			Some(client) => {
+				while let Ok(msg) = client.read() {
+					match msg {
+						Message::Text(utf8_bytes) => {
+							println!("received text: {}", utf8_bytes);
+							match serde_json::from_str::<PuppylogEvent>(&utf8_bytes) {
+								Ok(event) => {
+									match event {
+										PuppylogEvent::QueryChanged { query } => {
+											if let Ok(q) = parse_log_query(&query) {
+												logquery = Some(q);
+											}
+										}
+									}
+								},
+								Err(e) => {
+									eprintln!("Failed to parse log entry: {}", e);
+									continue;
+								}
+							}
+						},
+						Message::Binary(bytes) => {},
+						Message::Ping(bytes) => {},
+						Message::Pong(bytes) => {},
+						Message::Close(close_frame) => {},
+						Message::Frame(frame) => {},
+					}
+				}
+
+				if buffer.position() > 0 {
+					println!("sending {} bytes", buffer.position());
+					client.send(Message::Binary(Bytes::from(buffer.get_ref().to_vec()))).unwrap();
+					buffer.get_mut().clear();
+					buffer.set_position(0);
+				}
 			},
-			Ok(WorkerMessage::FlushClose(ack)) => {
-				manager.close();
-				let _ = ack.send(());
-				break;
+			None => {
+				let port = match url.port() {
+					Some(p) => p,
+					None => if url.scheme() == "https" { 443 } else { 80 },
+				};
+				let host = url.host_str().ok_or(PuppyLogError::new("no host in url")).unwrap();
+				let host = format!("{}:{}", host, port);
+				let socket = match TcpStream::connect(host) {
+					Ok(socket) => socket,
+					Err(e) => {
+						eprintln!("Failed to connect: {}", e);
+						continue;
+					}
+				};
+				socket.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+				println!("tcp socket connected");
+				let stream = if url.scheme() == "https" {
+					let connector = TlsConnector::builder()
+						.build()
+						.unwrap();
+					let stream = match connector.connect(&url.host_str().unwrap(), socket) {
+						Ok(s) => s,
+						Err(_) => {
+							eprintln!("Failed to connect");
+							continue;
+						},
+					};
+					MaybeTlsStream::NativeTls(stream)
+				} else {
+					MaybeTlsStream::Plain(socket)
+				};
+				let req = ClientRequestBuilder::new(url.to_string().parse().unwrap())
+					.with_header("Authorization", builder.authorization.clone().unwrap_or_default());
+				let (c, _) = client_with_config(req, stream, None).unwrap();
+				//let (c, _) = connect(req).unwrap();
+				println!("connected");
+				client = Some(c);
 			},
-			Err(mpsc::RecvTimeoutError::Timeout) => manager.flush(),
-			Err(mpsc::RecvTimeoutError::Disconnected) => break,
 		};
 	}
 
@@ -474,7 +580,9 @@ impl PuppylogClient {
 	}
 
 	pub fn send_logentry(&self, entry: LogEntry) {
-		self.sender.send(WorkerMessage::LogEntry(entry)).unwrap();
+		if let Err(err) = self.sender.send(WorkerMessage::LogEntry(entry)) {
+			eprintln!("Failed to send log entry: {}", err);
+		}
 	}
 
     fn flush(&self) {
@@ -604,8 +712,7 @@ impl PuppylogBuilder {
 	}
 
 	pub fn server(mut self, url: &str) -> Result<Self, PuppyLogError> {
-		let url = Url::parse(url)?;
-		self.log_server = Some(url);
+		self.log_server = Some(Url::parse(url)?);
 		Ok(self)
 	}
 

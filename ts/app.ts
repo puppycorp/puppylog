@@ -1,6 +1,7 @@
 import { routes } from "./router";
 import { logtableTest } from "./logtable-test";
 import { mainPage } from "./main-page";
+import { settingsPage } from "./settings";
 
 window.onload = () => {
 	const body = document.querySelector("body");
@@ -16,6 +17,7 @@ window.onload = () => {
 			return tests
 		},
 		"/tests/logtable": () => logtableTest(),
+		"/settings": () => settingsPage(),
 		"/*": () => mainPage()
 	}, body)
 }

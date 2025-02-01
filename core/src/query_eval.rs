@@ -1,5 +1,9 @@
-use puppylog::{LogEntry, LogLevel};
-use crate::log_query::{Condition, Expr, Operator, Value};
+use crate::LogEntry;
+use crate::LogLevel;
+use crate::query_parsing::Condition;
+use crate::query_parsing::Expr;
+use crate::query_parsing::Operator;
+use crate::query_parsing::Value;
 
 #[derive(Debug)]
 enum FieldType {
@@ -95,43 +99,6 @@ fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String>
     }
 }
 
-
-    // match (cond.left.as_ref(), cond.right.as_ref()) {
-    //     (Expr::Value(Value::String(left)), Expr::Value(val)) => {
-    //         match find_field(&left, logline) {
-    //             Some(field) => does_field_match(field , val, &cond.operator, logline),
-    //             None => Ok(false)
-    //         }
-    //     },
-    //     (Expr::Value(val), Expr::Value(Value::String(right))) => {
-    //         match find_field(&right, logline) {
-    //             Some(field) => does_field_match(field, val, &cond.operator, logline),
-    //             None => Ok(false)
-    //         }
-    //     },
-    //     (Expr::Value(Value::String(left)), Expr::List(list)) => {
-    //         match find_field(&left, logline) {
-    //             Some(_) => todo!(),
-    //             None => todo!(),
-    //         }
-
-    //         match find_field(&left, logline) {
-    //             Some(field) => {
-    //                 for expr in list {
-    //                     if check_expr(expr, logline)? {
-    //                         return Ok(true);
-    //                     }
-    //                 }
-    //                 Ok(false)
-    //             },
-    //             None => Ok(false)
-    //         }
-    //     },
-    //     _ => {
-    //         panic!("Nothing makes sense anymore {:?} logline: {:?}", cond, logline)
-    //     }
-    // }
-
 pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 	match expr {
 		Expr::Condition(cond) => check_condition(&cond, logline),
@@ -151,8 +118,7 @@ pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
 	use chrono::Utc;
-	use puppylog::Prop;
-
+	use crate::Prop;
 	use super::*;
 
 	#[test]

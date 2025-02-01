@@ -1,15 +1,18 @@
 use std::sync::Arc;
 use axum::body::Body;
 use axum::body::BodyDataStream;
+use axum::extract::ws::WebSocket;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::Query;
 use axum::extract::State;
+use axum::extract::WebSocketUpgrade;
 use axum::http::StatusCode;
 use axum::response::sse::Event;
 use axum::response::Html;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::response::Sse;
+use axum::routing::any;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Json;
@@ -17,10 +20,11 @@ use axum::Router;
 use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
-use log_query::parse_log_query;
-use log_query::QueryAst;
+use puppylog::parse_log_query;
 use puppylog::LogEntry;
 use puppylog::LogEntryChunkParser;
+use puppylog::PuppylogEvent;
+use puppylog::QueryAst;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::to_string;
@@ -41,8 +45,7 @@ mod types;
 mod worker;
 mod subscriber;
 mod config;
-mod log_query;
-mod query_eval;
+mod settings;
 
 #[derive(Deserialize, Debug)]
 enum SortDir {
@@ -85,12 +88,79 @@ async fn main() {
 		.route("/api/logs", post(upload_logs))
 			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
 			.layer(RequestDecompressionLayer::new().gzip(true).zstd(true))
-			.with_state(ctx)
+			.with_state(ctx.clone())
+		.route("/api/settings/query", post(post_settings_query)).with_state(ctx.clone())
+		.route("/api/settings/query", get(get_settings_query)).with_state(ctx.clone())
+		.route("/api/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
 		.fallback(get(root));
 
 	// run our app with hyper, listening globally on port 3000
 	let listener = tokio::net::TcpListener::bind("0.0.0.0:3337").await.unwrap();
-	axum::serve(listener, app).await.unwrap();
+	axum::serve(
+		listener,
+		app,
+	).await.unwrap();
+}
+
+async fn device_ws_handler(
+	ws: WebSocketUpgrade,
+	State(ctx): State<Arc<Context>>
+) -> impl IntoResponse {
+    ws.on_upgrade(|socket| handle_socket(socket, ctx))
+}
+
+async fn handle_socket(mut socket: WebSocket, ctx: Arc<Context>) {
+	log::info!("new websocket connected");
+	let mut rx = ctx.event_tx.subscribe();
+	let mut chunk_reader = LogEntryChunkParser::new();
+	loop {
+		tokio::select! {
+			e = rx.recv() => {
+				match e {
+					Ok(e) => {
+						let txt = to_string(&e).unwrap();
+						log::info!("Sending event to client {:?}", txt);
+						socket.send(axum::extract::ws::Message::Text(txt.into())).await.unwrap();
+					},
+					Err(err) => {},
+				}
+			}
+			msg = socket.recv() => {
+				match msg {
+					Some(Ok(msg)) => {
+						// log::info!("Received message: {:?}", msg);
+						match msg {
+							axum::extract::ws::Message::Text(utf8_bytes) => {},
+							axum::extract::ws::Message::Binary(bytes) => {
+								chunk_reader.add_chunk(bytes);
+								for entry in &chunk_reader.log_entries {
+									log::info!("Received log entry: {:?}", entry);
+									if let Err(err) = ctx.logentry_saver.save(entry.clone()).await {
+										log::error!("Failed to save log entry: {}", err);
+										return;
+									}
+									if let Err(e) = ctx.publisher.send(entry.clone()).await {
+										log::error!("Failed to publish log entry: {}", e);
+									}
+								}
+								chunk_reader.log_entries.clear();
+							},
+							axum::extract::ws::Message::Ping(bytes) => {},
+							axum::extract::ws::Message::Pong(bytes) => {},
+							axum::extract::ws::Message::Close(close_frame) => {},
+						}
+					}
+					Some(Err(err)) => {
+						log::error!("Error receiving message: {}", err);
+					}
+					None => {
+						log::error!("Connection closed");
+						return;
+					}
+				}
+			}
+		}
+	}
 }
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
@@ -115,6 +185,25 @@ async fn js() -> String {
 #[cfg(not(debug_assertions))]
 async fn js() -> &'static str {
 	JS_HTML
+}
+
+#[derive(Deserialize, Debug)]
+struct UpdateQuery {
+	pub query: String,
+}
+
+async fn post_settings_query(State(ctx): State<Arc<Context>>, body: String) -> &'static str {
+	log::info!("post_settings_query: {:?}", body);
+	let mut settings = ctx.settings.inner().await;
+	settings.collection_query = body.clone();
+	settings.save().unwrap();
+	ctx.event_tx.send(PuppylogEvent::QueryChanged { query: body }).unwrap();
+	"ok"
+}
+
+async fn get_settings_query(State(ctx): State<Arc<Context>>) -> String {
+	let settings = ctx.settings.inner().await;
+	settings.collection_query.clone()
 }
 
 async fn favicon() -> Result<Response, StatusCode> {
