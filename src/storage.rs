@@ -1,14 +1,20 @@
-use std::io::Cursor;
-use std::{collections::HashMap, time::Instant};
+use std::collections::HashMap;
+use std::time::Instant;
 use std::path::PathBuf;
-use chrono::{Datelike, Utc};
-use puppylog::{LogEntry, LogentryDeserializerError};
-use tokio::{fs::{read_dir, File, OpenOptions}, io::{AsyncReadExt, AsyncWriteExt}};
+use chrono::Datelike;
+use puppylog::LogEntry;
+use puppylog::LogentryDeserializerError;
+use tokio::fs::read_dir;
+use tokio::fs::File;
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc;
 use crate::config::log_path;
-use crate::log_query::{Expr, Operator, QueryAst, Value};
+use crate::log_query::QueryAst;
 use crate::query_eval::check_expr;
 
-pub struct Storage {
+struct Storage {
 	files: HashMap<String, File>,
 	logspath: PathBuf,
 	buff: Vec<u8>
@@ -23,7 +29,7 @@ impl Storage {
 		}
 	}
 
-	pub async fn save_log_entry(&mut self, log_entry: &LogEntry) -> anyhow::Result<()> {
+	pub async fn save_log_entry(&mut self, log_entry: LogEntry) -> anyhow::Result<()> {
 		let folder = self.logspath.join(format!("{}/{}/{}", log_entry.timestamp.year(), log_entry.timestamp.month(), log_entry.timestamp.day()));
 		if !folder.exists() {
 			tokio::fs::create_dir_all(&folder).await?;
@@ -43,6 +49,37 @@ impl Storage {
 		log_entry.serialize(&mut self.buff)?;
 		file.write_all(&self.buff).await?;
 		self.buff.clear();
+		Ok(())
+	}
+}
+
+async fn worker(mut rx: mpsc::Receiver<LogEntry>) {
+	let mut storage = Storage::new();
+	while let Some(log_entry) = rx.recv().await {
+		if let Err(err) = storage.save_log_entry(log_entry).await {
+			log::error!("Failed to save log entry: {}", err);
+		}
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct LogEntrySaver {
+	tx: mpsc::Sender<LogEntry>
+}
+
+impl LogEntrySaver {
+	pub fn new() -> Self {
+		let (tx, rx) = mpsc::channel(100);
+		tokio::spawn(async move {
+			worker(rx).await;
+		});
+		LogEntrySaver {
+			tx
+		}
+	}
+
+	pub async fn save(&self, log_entry: LogEntry) -> anyhow::Result<()> {
+		self.tx.send(log_entry).await?;
 		Ok(())
 	}
 }
@@ -90,8 +127,6 @@ pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 	if !logspath.exists() {
 		tokio::fs::create_dir_all(&logspath).await?;
 	}
-	// let start = query.start.unwrap_or(Utc::now());
-	// let count = query.count.unwrap_or(50);
 	let offset = query.offset.unwrap_or(0);
 	let count = query.limit.unwrap_or(200);
 	let mut logs: Vec<LogEntry> = Vec::new();

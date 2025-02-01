@@ -1,9 +1,10 @@
-use chrono::{DateTime, Utc};
-use puppylog::{LogEntry, LogLevel};
-use serde::Deserialize;
-use tokio::sync::mpsc::{self, Sender};
-
-use crate::{log_query::QueryAst, subscriber::Subscriber, worker::Worker};
+use puppylog::LogEntry;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
+use crate::log_query::QueryAst;
+use crate::storage::LogEntrySaver;
+use crate::subscriber::Subscriber;
+use crate::worker::Worker;
 
 pub struct Logfile {
 	pub log_entries: Vec<LogEntry>,
@@ -13,6 +14,7 @@ pub struct Logfile {
 pub struct Context {
 	pub subscriber: Subscriber,
 	pub publisher: Sender<LogEntry>,
+	pub logentry_saver: LogEntrySaver
 }
 
 impl Context {
@@ -26,6 +28,7 @@ impl Context {
 		Context {
 			subscriber: Subscriber::new(subtx),
 			publisher: pubtx,
+			logentry_saver: LogEntrySaver::new()
 		}
 	}
 }

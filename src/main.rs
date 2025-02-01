@@ -27,7 +27,6 @@ use serde_json::to_string;
 use serde_json::Value;
 use simple_logger::SimpleLogger;
 use storage::search_logs;
-use storage::Storage;
 use tokio::io::AsyncReadExt;
 use tower_http::cors::AllowMethods;
 use tower_http::cors::Any;
@@ -38,7 +37,6 @@ use types::Context;
 mod logline;
 mod cache;
 mod storage;
-mod picker;
 mod types;
 mod worker;
 mod subscriber;
@@ -153,7 +151,6 @@ async fn manifest() -> Result<Response, StatusCode> {
 
 async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
 	let mut stream: BodyDataStream = body.into_data_stream();
-	let mut storage = Storage::new();
 	let mut i = 0;
 	let mut chunk_reader = LogEntryChunkParser::new();
 	
@@ -165,7 +162,7 @@ async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
 				for entry in &chunk_reader.log_entries {
 					log::info!("[{}] parsed", i);
 					i += 1;
-					if let Err(err) = storage.save_log_entry(&entry).await {
+					if let Err(err) = ctx.logentry_saver.save(entry.clone()).await {
 						log::error!("Failed to save log entry: {}", err);
 						return;
 					}
