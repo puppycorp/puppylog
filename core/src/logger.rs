@@ -240,12 +240,17 @@ impl log::Log for PuppylogClient {
 				Level::Debug => LogLevel::Debug,
 				Level::Trace => LogLevel::Debug,
 			};
+			let mut props = self.props.clone();
+			props.push(Prop {
+				key: "module".to_string(),
+				value: record.target().to_string(),
+			});
 			let entry = LogEntry {
 				version: 1,
 				level,
 				timestamp: Utc::now(),
 				random: 0,
-				props: self.props.clone(),
+				props,
 				msg: record.args().to_string()
 			};
 			self.send_logentry(entry);
