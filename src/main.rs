@@ -113,6 +113,15 @@ async fn handle_socket(mut socket: WebSocket, ctx: Arc<Context>) {
 	log::info!("new websocket connected");
 	let mut rx = ctx.event_tx.subscribe();
 	let mut chunk_reader = LogEntryChunkParser::new();
+
+	{
+		let settings = ctx.settings.inner().await;
+		let query = settings.collection_query.clone();
+		let event = PuppylogEvent::QueryChanged { query };
+		let txt = to_string(&event).unwrap();
+		log::info!("Sending event to client {:?}", txt);
+		socket.send(axum::extract::ws::Message::Text(txt.into())).await.unwrap();
+	}
 	loop {
 		tokio::select! {
 			e = rx.recv() => {
