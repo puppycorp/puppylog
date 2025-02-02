@@ -145,7 +145,7 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 							axum::extract::ws::Message::Binary(bytes) => {
 								chunk_reader.add_chunk(bytes);
 								for entry in &chunk_reader.log_entries {
-									log::info!("Received log entry: {:?}", entry);
+									//log::info!("Received log entry: {:?}", entry);
 									if let Err(err) = ctx.logentry_saver.save(entry.clone()).await {
 										log::error!("Failed to save log entry: {}", err);
 										return;
