@@ -103,8 +103,15 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 				}
 				connect_timer = Instant::now();
 
-				let https = match url.scheme() {
-					Some(scheme) => scheme.as_str() == "https",
+				let https = match &url.scheme() {
+					Some(scheme) => match scheme.as_str() {
+						"ws" => false,
+						"wss" => true,
+						_ => {
+							eprintln!("unsupported scheme: {}", scheme);
+							continue;
+						}
+					}
 					None => {
 						eprintln!("No scheme in url");
 						continue;
@@ -141,10 +148,12 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 							continue;
 						},
 					};
+					println!("tls connected");
 					MaybeTlsStream::NativeTls(stream)
 				}
 				else { MaybeTlsStream::Plain(socket) };
-				let req = ClientRequestBuilder::new(url.to_string().parse().unwrap())
+				println!("creating ws client addr: {}", url);
+				let req = ClientRequestBuilder::new(url.clone())
 					.with_header("Authorization", builder.authorization.clone().unwrap_or_default());
 				let c = match client_with_config(req, stream, None) {
 					Ok((c, _)) => c,
