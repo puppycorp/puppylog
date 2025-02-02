@@ -7,15 +7,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 use bytes::Bytes;
 use log::{Record, Level, Metadata, SetLoggerError};
-use chrono::{DateTime, Local, Utc};
+use chrono::Utc;
 use native_tls::TlsConnector;
 use tungstenite::client::client_with_config;
-use tungstenite::http::uri::{Port, Scheme};
 use tungstenite::http::Uri;
 use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{connect, ClientRequestBuilder, Message, WebSocket};
+use tungstenite::{ClientRequestBuilder, Message, WebSocket};
 
-use crate::{check_expr, parse_log_query, query_eval, LogEntry, LogLevel, Prop, PuppylogEvent, QueryAst};
+use crate::{check_expr, parse_log_query, LogEntry, LogLevel, Prop, PuppylogEvent, QueryAst};
 
 enum WorkerMessage {
     LogEntry(LogEntry),
