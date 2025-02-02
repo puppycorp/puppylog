@@ -1,5 +1,6 @@
 use std::io::{self, Cursor, Read, Write};
 use std::net::TcpStream;
+use std::str::FromStr;
 use std::sync::mpsc::{self, Receiver};
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -9,9 +10,10 @@ use log::{Record, Level, Metadata, SetLoggerError};
 use chrono::{DateTime, Local, Utc};
 use native_tls::TlsConnector;
 use tungstenite::client::client_with_config;
+use tungstenite::http::uri::{Port, Scheme};
+use tungstenite::http::Uri;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{connect, ClientRequestBuilder, Message, WebSocket};
-use url::Url;
 
 use crate::{check_expr, parse_log_query, query_eval, LogEntry, LogLevel, Prop, PuppylogEvent, QueryAst};
 
@@ -101,11 +103,19 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 				}
 				connect_timer = Instant::now();
 
-				let port = match url.port() {
-					Some(p) => p,
-					None => if url.scheme() == "https" { 443 } else { 80 },
+				let https = match url.scheme() {
+					Some(scheme) => scheme.as_str() == "https",
+					None => {
+						eprintln!("No scheme in url");
+						continue;
+					}
 				};
-				let host = url.host_str().ok_or(PuppyLogError::new("no host in url")).unwrap();
+
+				let port = match url.port() {
+					Some(p) => p.as_u16(),
+					None => if https { 443 } else { 80 }
+				};
+				let host = url.host().ok_or(PuppyLogError::new("no host in url")).unwrap();
 				let host = format!("{}:{}", host, port);
 				let socket = match TcpStream::connect(host) {
 					Ok(socket) => socket,
@@ -116,7 +126,7 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 				};
 				socket.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
 				println!("tcp socket connected");
-				let stream = if url.scheme() == "https" {
+				let stream = if https {
 					let connector = match  TlsConnector::builder().build() {
 						Ok(c) => c,
 						Err(_) => {
@@ -124,7 +134,7 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 							continue;
 						}
 					};
-					let stream = match connector.connect(&url.host_str().unwrap(), socket) {
+					let stream = match connector.connect(&url.host().unwrap(), socket) {
 						Ok(s) => s,
 						Err(_) => {
 							eprintln!("Failed to connect");
@@ -132,9 +142,8 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 						},
 					};
 					MaybeTlsStream::NativeTls(stream)
-				} else {
-					MaybeTlsStream::Plain(socket)
-				};
+				}
+				else { MaybeTlsStream::Plain(socket) };
 				let req = ClientRequestBuilder::new(url.to_string().parse().unwrap())
 					.with_header("Authorization", builder.authorization.clone().unwrap_or_default());
 				let c = match client_with_config(req, stream, None) {
@@ -259,12 +268,6 @@ impl std::fmt::Display for PuppyLogError {
 	}
 }
 
-impl From<url::ParseError> for PuppyLogError {
-    fn from(error: url::ParseError) -> Self {
-        PuppyLogError::new(&error.to_string())
-    }
-}
-
 impl From<io::Error> for PuppyLogError {
 	fn from(error: io::Error) -> Self {
 		PuppyLogError::new(&error.to_string())
@@ -277,7 +280,7 @@ pub struct PuppylogBuilder {
 	min_buffer_size: u64,
 	max_buffer_size: u64,
 	log_folder: Option<PathBuf>,
-	log_server: Option<Url>,
+	log_server: Option<Uri>,
 	authorization: Option<String>,
 	log_stdout: bool,
 	level_filter: Level,
@@ -309,7 +312,7 @@ impl PuppylogBuilder {
 	}
 
 	pub fn server(mut self, url: &str) -> Result<Self, PuppyLogError> {
-		self.log_server = Some(Url::parse(url)?);
+		self.log_server = Some(Uri::from_str(url).map_err(|e| PuppyLogError::new(&e.to_string()))?);
 		Ok(self)
 	}
 
