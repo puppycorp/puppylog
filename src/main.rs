@@ -3,6 +3,7 @@ use axum::body::Body;
 use axum::body::BodyDataStream;
 use axum::extract::ws::WebSocket;
 use axum::extract::DefaultBodyLimit;
+use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::WebSocketUpgrade;
@@ -104,13 +105,14 @@ async fn main() {
 
 async fn device_ws_handler(
 	ws: WebSocketUpgrade,
-	State(ctx): State<Arc<Context>>
+	State(ctx): State<Arc<Context>>,
+	Path(device_id): Path<String>
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, ctx))
+    ws.on_upgrade(|socket| handle_socket(socket, device_id, ctx))
 }
 
-async fn handle_socket(mut socket: WebSocket, ctx: Arc<Context>) {
-	log::info!("new websocket connected");
+async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Context>) {
+	log::info!("device connected: {:?}", device_id);
 	let mut rx = ctx.event_tx.subscribe();
 	let mut chunk_reader = LogEntryChunkParser::new();
 
