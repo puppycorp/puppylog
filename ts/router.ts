@@ -1,27 +1,22 @@
 import { patternMatcher } from "./pattern-matcher"
 
-export const routes = (routes: any, container: HTMLElement) => {
-	const matcher = patternMatcher(routes)
+let matcher: any
+const handleRoute = (path: string) => {
+	if (!matcher) return
+	const m = matcher.match(path)
+	if (!m) console.error("No route found for", path)
+	console.log("match result", m)
+}
+window.addEventListener('popstate', () => {
+	handleRoute(window.location.pathname);
+})
 
-	const handleRoute = (path: string) => {
-		const result = matcher.match(path)
-		console.log("match result", result)
-		container.innerHTML = ""
-		if (!result) {
-			const notFound = document.createElement("div")
-			notFound.innerHTML = "Not found"
-			container.appendChild(notFound)
-			return notFound
-		}
-		container.appendChild(result.result)
-	}
-
+export const routes = (routes: any) => {
+	matcher = patternMatcher(routes)
 	handleRoute(window.location.pathname)
-	window.addEventListener('popstate', () => {
-		handleRoute(window.location.pathname);
-	})
-	return (path: string) => {
-		window.history.pushState({}, '', path)
-		handleRoute(path)
-	}
+}
+
+export const navigate = (path: string) => {
+	window.history.pushState({}, '', path)
+	handleRoute(path)
 }

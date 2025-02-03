@@ -1,7 +1,8 @@
 import { LogEntry, logsSearchPage } from "./logs"
+import { Router } from "./router";
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility";
 
-export const mainPage = () => {
+export const mainPage = (root: HTMLElement) => {
 	let query = getQueryParam("query") || ""
 	let logEventSource: EventSource | null = null  
 	let isStreaming = getQueryParam("stream") === "true"
@@ -35,7 +36,8 @@ export const mainPage = () => {
 			setIsStreaming(false)
 		}
 	}
-	const { root, addLogEntries, onError, setIsStreaming } = logsSearchPage({
+	const { addLogEntries, onError, setIsStreaming } = logsSearchPage({
+		root,
 		isStreaming,
 		toggleIsStreaming: () => {
 			isStreaming = !isStreaming

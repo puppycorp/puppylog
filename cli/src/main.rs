@@ -328,6 +328,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 			let mut i = 0;
 			loop {
+				println!("timestamp: {:?}", now);
 				logger.send_logentry(LogEntry {
 					timestamp: now,
 					level: LogLevel::Info,

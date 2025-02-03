@@ -18,16 +18,18 @@ const randomLogline = () => {
 	return logline(length, linebreaks)
 }
 
-export const logtableTest = () => {
-	const { root, addLogEntries } = logsSearchPage({
+export const logtableTest = (root: HTMLElement) => {
+	const { addLogEntries } = logsSearchPage({
+		root,
 		isStreaming: false,
 		toggleIsStreaming: () => false,
 		fetchMore: (args) => {
 			const logEntries: LogEntry[] = []
 			for (let i = args.offset; i < args.offset + args.count; i++) {
 				logEntries.push({
+					id: i.toString(),
 					timestamp: new Date().toISOString(),
-					level: "Info",
+					level: "info",
 					props: [
 						{ key: "key", value: "value" },
 						{ key: "key2", value: "value2" }

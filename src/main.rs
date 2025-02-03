@@ -80,6 +80,7 @@ async fn main() {
 	let app = Router::new()
 		.route("/", get(root))
 		.route("/puppylog.js", get(js))
+		.route("/puppylog.css", get(css))
 		.route("/favicon.ico", get(favicon))
 		.route("/favicon-192x192.png", get(favicon_192x192))
 		.route("/favicon-512x512.png", get(favicon_512x512))
@@ -179,6 +180,20 @@ const JS_HTML: &str = include_str!("../assets/puppylog.js");
 const FAVICON: &[u8] = include_bytes!("../assets/favicon.ico");
 const FAVICON_192x192: &[u8] = include_bytes!("../assets/favicon-192x192.png");
 const FAVICON_512x512: &[u8] = include_bytes!("../assets/favicon-512x512.png");
+const CSS: &str = include_str!("../assets/puppylog.css");
+
+#[cfg(debug_assertions)]
+async fn css() -> String {
+	let mut file = tokio::fs::File::open("assets/puppylog.css").await.unwrap();
+	let mut contents = String::new();
+	file.read_to_string(&mut contents).await.unwrap();
+	contents
+}
+
+#[cfg(not(debug_assertions))]
+async fn css() -> &'static str {
+	CSS
+}
 
 // basic handler that responds with a static string
 async fn root() -> Html<&'static str> {
@@ -311,9 +326,19 @@ async fn get_logs(
 ) -> Result<Json<Value>, BadRequestError> {
 	log::info!("get_logs {:?}", params);
 	let mut query = match params.query {
-		Some(ref query) => match parse_log_query(query) {
-			Ok(query) => query,
-			Err(err) => return Err(BadRequestError(err.to_string()))
+		Some(ref query) => {
+			let query = query.replace("\n", "");
+			let query = query.trim();
+			if query.is_empty() {
+				log::info!("query is empty");
+				QueryAst::default()
+			} else {
+				log::info!("query: {:?}", query.as_bytes());
+				match parse_log_query(&query) {
+					Ok(query) => query,
+					Err(err) => return Err(BadRequestError(err.to_string()))
+				}
+			}
 		}
 		None => QueryAst::default()
 	};

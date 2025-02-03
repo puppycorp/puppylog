@@ -1,5 +1,5 @@
 
-export const settingsPage = () => {
+export const settingsPage = (root: HTMLElement) => {
 	const infoText = document.createElement("div")
 	infoText.style.color = "red"
 
@@ -20,7 +20,7 @@ export const settingsPage = () => {
 		})
 	}
 
-	const root = document.createElement("div")
+	root.innerHTML = ""
 	const header = document.createElement("h1")
 	header.innerHTML = "Settings"
 	root.appendChild(header)

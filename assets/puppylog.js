@@ -59,203 +59,148 @@ function matchRoute(pattern, path) {
 }
 
 // ts/router.ts
-var routes = (routes2, container) => {
-  const matcher = patternMatcher(routes2);
-  const handleRoute = (path) => {
-    const result = matcher.match(path);
-    console.log("match result", result);
-    container.innerHTML = "";
-    if (!result) {
-      const notFound = document.createElement("div");
-      notFound.innerHTML = "Not found";
-      container.appendChild(notFound);
-      return notFound;
-    }
-    container.appendChild(result.result);
-  };
+var matcher;
+var handleRoute = (path) => {
+  if (!matcher)
+    return;
+  const m = matcher.match(path);
+  if (!m)
+    console.error("No route found for", path);
+  console.log("match result", m);
+};
+window.addEventListener("popstate", () => {
   handleRoute(window.location.pathname);
-  window.addEventListener("popstate", () => {
-    handleRoute(window.location.pathname);
-  });
-  return (path) => {
-    window.history.pushState({}, "", path);
-    handleRoute(path);
-  };
+});
+var routes = (routes2) => {
+  matcher = patternMatcher(routes2);
+  handleRoute(window.location.pathname);
 };
-
-// ts/utility.ts
-var setQueryParam = (field, value) => {
-  const url = new URL(window.location.href);
-  url.searchParams.set(field, value);
-  window.history.pushState({}, "", url.toString());
-};
-var getQueryParam = (field) => {
-  const url = new URL(window.location.href);
-  return url.searchParams.get(field);
-};
-var removeQueryParam = (field) => {
-  const url = new URL(window.location.href);
-  url.searchParams.delete(field);
-  window.history.pushState({}, "", url.toString());
+var navigate = (path) => {
+  window.history.pushState({}, "", path);
+  handleRoute(path);
 };
 
 // ts/logs.ts
-var logColors = {
-  trace: "gray",
-  debug: "blue",
-  info: "green",
-  warn: "orange",
-  error: "red",
-  fatal: "purple"
+var MAX_LOG_ENTRIES = 1e4;
+var MESSAGE_TRUNCATE_LENGTH = 700;
+var FETCH_DEBOUNCE_MS = 500;
+var OBSERVER_THRESHOLD = 0.1;
+var LOG_COLORS = {
+  trace: "#6B7280",
+  debug: "#3B82F6",
+  info: "#10B981",
+  warn: "#F59E0B",
+  error: "#EF4444",
+  fatal: "#8B5CF6"
 };
+var settingsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings w-5 h-5"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+var searchSvg = `<svg xmlns="http://www.w3.org/2000/svg"  viewBox="0 0 50 50" width="20px" height="20px"><path d="M 21 3 C 11.601563 3 4 10.601563 4 20 C 4 29.398438 11.601563 37 21 37 C 24.355469 37 27.460938 36.015625 30.09375 34.34375 L 42.375 46.625 L 46.625 42.375 L 34.5 30.28125 C 36.679688 27.421875 38 23.878906 38 20 C 38 10.601563 30.398438 3 21 3 Z M 21 7 C 28.199219 7 34 12.800781 34 20 C 34 27.199219 28.199219 33 21 33 C 13.800781 33 8 27.199219 8 20 C 8 12.800781 13.800781 7 21 7 Z"/></svg>`;
 var formatTimestamp = (ts) => {
   const date = new Date(ts);
   return date.toLocaleString();
 };
-var MAX_LOG_ENTRIES = 1e4;
+var escapeHTML = (str) => {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+};
+var truncateMessage = (msg) => msg.length > MESSAGE_TRUNCATE_LENGTH ? `${msg.slice(0, MESSAGE_TRUNCATE_LENGTH)}...` : msg;
 var logsSearchPage = (args) => {
-  const root = document.createElement("div");
-  const logids = new Set;
+  const logIds = new Set;
   const logEntries = [];
-  const options = document.createElement("div");
-  options.style.position = "sticky";
-  options.style.top = "0";
-  options.style.gap = "10px";
-  options.style.backgroundColor = "white";
-  options.style.height = "100px";
-  options.style.display = "flex";
-  const searchBar = document.createElement("textarea");
-  const tbody = document.createElement("tbody");
-  tbody.style.width = "400px";
+  let moreRows = true;
+  args.root.innerHTML = ``;
+  const logsOptions = document.createElement("div");
+  logsOptions.className = "logs-options";
+  args.root.appendChild(logsOptions);
+  const searchTextarea = document.createElement("textarea");
+  searchTextarea.className = "logs-search-bar";
+  logsOptions.appendChild(searchTextarea);
+  const optionsRightPanel = document.createElement("div");
+  optionsRightPanel.className = "logs-options-right-panel";
+  logsOptions.appendChild(optionsRightPanel);
+  const settingsButton = document.createElement("button");
+  settingsButton.innerHTML = settingsSvg;
+  settingsButton.onclick = () => navigate("/settings");
+  const searchButton = document.createElement("button");
+  searchButton.innerHTML = searchSvg;
+  const streamButton = document.createElement("button");
+  streamButton.innerHTML = "stream";
+  optionsRightPanel.append(settingsButton, searchButton, streamButton);
+  const logsList = document.createElement("div");
+  logsList.className = "logs-list";
+  args.root.appendChild(logsList);
+  const loadingIndicator = document.createElement("div");
+  args.root.appendChild(loadingIndicator);
   const queryLogs = (query) => {
     logEntries.length = 0;
-    logids.clear();
-    tbody.innerHTML = "";
-    last.innerHTML = "Loading...";
-    args.fetchMore({
-      offset: 0,
-      count: 100,
-      query
-    });
+    logIds.clear();
+    logsList.innerHTML = "";
+    loadingIndicator.textContent = "Loading...";
+    args.fetchMore({ offset: 0, count: 100, query });
   };
-  searchBar.style.height = "100px";
-  searchBar.style.resize = "none";
-  searchBar.style.flexGrow = "1";
-  searchBar.value = getQueryParam("query") || "";
-  searchBar.onkeydown = (e) => {
+  searchTextarea.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && e.ctrlKey) {
       e.preventDefault();
-      queryLogs(searchBar.value);
+      queryLogs(searchTextarea.value);
     }
+  });
+  searchButton.addEventListener("click", () => queryLogs(searchTextarea.value));
+  const updateStreamButtonText = (isStreaming) => {
+    streamButton.innerHTML = isStreaming ? "stop" : "stream";
   };
-  options.appendChild(searchBar);
-  const searchButton = document.createElement("button");
-  searchButton.onclick = () => {
-    queryLogs(searchBar.value);
-  };
-  searchButton.innerHTML = "Search";
-  options.appendChild(searchButton);
-  const streamButton = document.createElement("button");
-  const streamButtonState = (state) => state ? "Stop<br />Stream" : "Start<br />Stream";
-  streamButton.innerHTML = streamButtonState(args.isStreaming);
-  streamButton.onclick = () => {
+  streamButton.addEventListener("click", () => {
     const isStreaming = args.toggleIsStreaming();
-    streamButton.innerHTML = streamButtonState(isStreaming);
-  };
-  options.appendChild(streamButton);
-  root.appendChild(options);
-  const table = document.createElement("table");
-  table.style.width = "100%";
-  const thead = document.createElement("thead");
-  thead.style.position = "sticky";
-  thead.style.top = "100px";
-  thead.style.backgroundColor = "white";
-  thead.innerHTML = `
-\t\t<tr>
-\t\t\t<th>Timestamp</th>
-\t\t\t<th>Level</th>
-\t\t\t<th>Props</th>
-\t\t\t<th>Message</th>
-\t\t</tr>
-\t`;
-  table.appendChild(thead);
-  table.appendChild(tbody);
-  const tableWrapper = document.createElement("div");
-  tableWrapper.style.overflow = "auto";
-  tableWrapper.appendChild(table);
-  root.appendChild(table);
-  const last = document.createElement("div");
-  last.style.height = "100px";
-  last.innerHTML = "Loading...";
-  root.appendChild(last);
-  let moreRows = true;
-  const observer = new IntersectionObserver(() => {
-    console.log("intersect");
-    if (!moreRows)
+    updateStreamButtonText(isStreaming);
+  });
+  const observer = new IntersectionObserver((entries) => {
+    if (!moreRows || !entries[0].isIntersecting)
       return;
-    console.log("need to fetch more");
     moreRows = false;
     args.fetchMore({
       offset: logEntries.length,
       count: 100,
-      query: searchBar.value
+      query: searchTextarea.value
     });
   }, {
-    root: null,
-    rootMargin: "0px",
-    threshold: 0.1
+    threshold: OBSERVER_THRESHOLD
   });
-  observer.observe(last);
-  const escapeHTML = (str) => {
-    const div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
-  };
+  observer.observe(loadingIndicator);
   return {
-    root,
-    setIsStreaming: (isStreaming) => {
-      streamButton.innerHTML = streamButtonState(isStreaming);
-    },
+    setIsStreaming: updateStreamButtonText,
     onError(err) {
-      last.innerHTML = err;
+      loadingIndicator.textContent = err;
     },
-    addLogEntries: (entries) => {
+    addLogEntries(entries) {
       if (entries.length === 0) {
-        last.innerHTML = "No more rows";
+        loadingIndicator.textContent = "No more rows";
         return;
       }
       setTimeout(() => {
         moreRows = true;
-      }, 500);
-      for (const entry of entries) {
-        if (logids.has(entry.id)) {
-          continue;
-        }
-        logids.add(entry.id);
+      }, FETCH_DEBOUNCE_MS);
+      const newEntries = entries.filter((entry) => !logIds.has(entry.id));
+      newEntries.forEach((entry) => {
+        logIds.add(entry.id);
         logEntries.push(entry);
-      }
+      });
       logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      if (logEntries.length > MAX_LOG_ENTRIES) {
-        if (tableWrapper.scrollTop === 0) {
-          const removed = logEntries.splice(0, MAX_LOG_ENTRIES);
-          for (const r of removed) {
-            logids.delete(r.id);
-          }
-        }
+      if (logEntries.length > MAX_LOG_ENTRIES && args.root.scrollTop === 0) {
+        const removed = logEntries.splice(MAX_LOG_ENTRIES);
+        removed.forEach((r) => logIds.delete(r.id));
       }
-      const body = `
-\t\t\t\t${logEntries.map((r) => {
-        return `
-\t\t\t\t\t\t<tr style="height: 35px">
-\t\t\t\t\t\t\t<td style="white-space: nowrap; vertical-align: top; text-align: center;">${formatTimestamp(r.timestamp)}</td>
-\t\t\t\t\t\t\t<td style="color: ${logColors[r.level]}; vertical-align: top; text-align: center;text-align: center;">${r.level}</td>
-\t\t\t\t\t\t\t<td style="vertical-align: top; text-align: left;">${r.props.map((p) => `${p.key}=${p.value}`).join("<br />")}</td>
-\t\t\t\t\t\t\t<td style="word-break: break-all; vertical-align: top">${escapeHTML(`${r.msg.slice(0, 700)}${r.msg.length > 700 ? "..." : ""}`)}</td>
-\t\t\t\t\t\t</tr>
-\t\t\t\t\t`;
-      }).join("")}
-\t\t\t`;
-      tbody.innerHTML = body;
+      logsList.innerHTML = logEntries.map((entry) => `
+\t\t\t\t<div class="logs-list-row">
+\t\t\t\t\t<div>
+\t\t\t\t\t\t${formatTimestamp(entry.timestamp)} 
+\t\t\t\t\t\t<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
+\t\t\t\t\t\t${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
+\t\t\t\t\t</div>
+\t\t\t\t\t<div class="logs-list-row-msg">
+\t\t\t\t\t\t${escapeHTML(truncateMessage(entry.msg))}
+\t\t\t\t\t</div>
+\t\t\t\t</div>
+\t\t\t`).join("");
     }
   };
 };
@@ -278,16 +223,18 @@ var randomLogline = () => {
   const linebreaks = Math.floor(Math.random() * 10);
   return logline(length, linebreaks);
 };
-var logtableTest = () => {
-  const { root, addLogEntries } = logsSearchPage({
+var logtableTest = (root) => {
+  const { addLogEntries } = logsSearchPage({
+    root,
     isStreaming: false,
     toggleIsStreaming: () => false,
     fetchMore: (args) => {
       const logEntries = [];
       for (let i = args.offset;i < args.offset + args.count; i++) {
         logEntries.push({
+          id: i.toString(),
           timestamp: new Date().toISOString(),
-          level: "Info",
+          level: "info",
           props: [
             { key: "key", value: "value" },
             { key: "key2", value: "value2" }
@@ -301,8 +248,24 @@ var logtableTest = () => {
   return root;
 };
 
+// ts/utility.ts
+var setQueryParam = (field, value) => {
+  const url = new URL(window.location.href);
+  url.searchParams.set(field, value);
+  window.history.pushState({}, "", url.toString());
+};
+var getQueryParam = (field) => {
+  const url = new URL(window.location.href);
+  return url.searchParams.get(field);
+};
+var removeQueryParam = (field) => {
+  const url = new URL(window.location.href);
+  url.searchParams.delete(field);
+  window.history.pushState({}, "", url.toString());
+};
+
 // ts/main-page.ts
-var mainPage = () => {
+var mainPage = (root) => {
   let query = getQueryParam("query") || "";
   let logEventSource = null;
   let isStreaming = getQueryParam("stream") === "true";
@@ -341,7 +304,8 @@ var mainPage = () => {
       setIsStreaming(false);
     };
   };
-  const { root, addLogEntries, onError, setIsStreaming } = logsSearchPage({
+  const { addLogEntries, onError, setIsStreaming } = logsSearchPage({
+    root,
     isStreaming,
     toggleIsStreaming: () => {
       isStreaming = !isStreaming;
@@ -400,7 +364,7 @@ var mainPage = () => {
 };
 
 // ts/settings.ts
-var settingsPage = () => {
+var settingsPage = (root) => {
   const infoText = document.createElement("div");
   infoText.style.color = "red";
   let originalQuery = "";
@@ -419,7 +383,7 @@ var settingsPage = () => {
       console.error("Failed to update query", err);
     });
   };
-  const root = document.createElement("div");
+  root.innerHTML = "";
   const header = document.createElement("h1");
   header.innerHTML = "Settings";
   root.appendChild(header);
@@ -468,14 +432,9 @@ window.onload = () => {
   if (!body) {
     throw new Error("No body element found");
   }
-  const navigate = routes({
-    "/tests": () => {
-      const tests = document.createElement("div");
-      tests.innerHTML = "Tests";
-      return tests;
-    },
-    "/tests/logtable": () => logtableTest(),
-    "/settings": () => settingsPage(),
-    "/*": () => mainPage()
-  }, body);
+  routes({
+    "/tests/logs": () => logtableTest(body),
+    "/settings": () => settingsPage(body),
+    "/*": () => mainPage(body)
+  });
 };

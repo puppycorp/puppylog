@@ -1,192 +1,170 @@
-import { getQueryParam } from "./utility"
+import { navigate } from "./router";
 
-export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal"
-export const logColors = {
-	trace: "gray",
-	debug: "blue",
-	info: "green",
-	warn: "orange",
-	error: "red",
-	fatal: "purple"
-}
+export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
 export type Prop = {
-	key: string
-	value: string
+	key: string;
+	value: string;
 }
 
 export type LogEntry = {
-	id: string
-	timestamp: string
-	level: LogLevel
-	props: Prop[]
-	msg: string
-}
-
-export type SortDir = "asc" | "desc";
-
-const formatTimestamp = (ts: string) => {
-	const date = new Date(ts)
-	return date.toLocaleString()
+	id: string;
+	timestamp: string;
+	level: LogLevel;
+	props: ReadonlyArray<Prop>;
+	msg: string;
 }
 
 export type FetchMoreArgs = {
-	offset: number
-	count: number
-	query: string
+	offset: number;
+	count: number;
+	query: string;
 }
 
-const MAX_LOG_ENTRIES = 10_000
-
-export const logsSearchPage = (args: {
+interface LogsSearchPageArgs {
+	root: HTMLElement
 	isStreaming: boolean
 	fetchMore: (args: FetchMoreArgs) => void
 	toggleIsStreaming: () => boolean
-}) => {
-	const root = document.createElement("div")
-	const logids = new Set<string>()
-	const logEntries: LogEntry[] = []
-	const options = document.createElement("div")
-	options.style.position = "sticky"
-	options.style.top = "0"
-	options.style.gap = "10px"
-	options.style.backgroundColor = "white"
-	options.style.height = "100px"
-	options.style.display = "flex"
-	const searchBar = document.createElement("textarea")
-	const tbody = document.createElement("tbody")
-	tbody.style.width = "400px"
-	const queryLogs = (query: string) => {
-		logEntries.length = 0
-		logids.clear()
-		tbody.innerHTML = ""
-		last.innerHTML = "Loading..."
-		args.fetchMore({
-			offset: 0,
-			count: 100,
-			query
-		})
-	}
-	searchBar.style.height = "100px"
-	searchBar.style.resize = "none"
-	searchBar.style.flexGrow = "1"
-	searchBar.value = getQueryParam("query") || ""
-	searchBar.onkeydown = (e) => {
-		if (e.key === "Enter" && e.ctrlKey) {
-			e.preventDefault()
-			queryLogs(searchBar.value)
-		}
-	}
-	options.appendChild(searchBar)
-	const searchButton = document.createElement("button")
-	searchButton.onclick = () => {
-		queryLogs(searchBar.value)
-	}
-	searchButton.innerHTML = "Search"
-	options.appendChild(searchButton)
-	const streamButton = document.createElement("button")
-	const streamButtonState = (state: boolean) => state ? "Stop<br />Stream" : "Start<br />Stream"
-	streamButton.innerHTML = streamButtonState(args.isStreaming)
-	streamButton.onclick = () => {
-		const isStreaming = args.toggleIsStreaming()
-		streamButton.innerHTML = streamButtonState(isStreaming)
-	}
-	options.appendChild(streamButton)
-	root.appendChild(options)
-	const table = document.createElement("table")
-	table.style.width = "100%"
-	const thead = document.createElement("thead")
-	thead.style.position = "sticky"
-	thead.style.top = "100px"
-	thead.style.backgroundColor = "white"
-	thead.innerHTML = `
-		<tr>
-			<th>Timestamp</th>
-			<th>Level</th>
-			<th>Props</th>
-			<th>Message</th>
-		</tr>
-	`
-	table.appendChild(thead)
-	table.appendChild(tbody)
-	const tableWrapper = document.createElement("div")
-	tableWrapper.style.overflow = "auto"
-	tableWrapper.appendChild(table)
-	root.appendChild(table)
-	const last = document.createElement("div")
-	last.style.height = "100px"
-	last.innerHTML = "Loading..."
-	root.appendChild(last)
-	let moreRows = true
-	const observer = new IntersectionObserver(() => {
-		console.log("intersect")
-		if (!moreRows) return
-		console.log("need to fetch more")
-		moreRows = false
-		args.fetchMore({
-			offset: logEntries.length,
-			count: 100,
-			query: searchBar.value
-		})
-	}, {
-		root: null,
-		rootMargin: "0px",
-		threshold: 0.1,
-	})
-	observer.observe(last)
+}
 
-	const escapeHTML = (str: string) => {
-		const div = document.createElement('div');
-		div.textContent = str;
-		return div.innerHTML;
+const MAX_LOG_ENTRIES = 10_000;
+const MESSAGE_TRUNCATE_LENGTH = 700;
+const FETCH_DEBOUNCE_MS = 500;
+const OBSERVER_THRESHOLD = 0.1;
+
+const LOG_COLORS = {
+	trace: "#6B7280",  // gray
+	debug: "#3B82F6",  // blue
+	info: "#10B981",   // green
+	warn: "#F59E0B",   // orange
+	error: "#EF4444",  // red
+	fatal: "#8B5CF6"   // purple
+} as const;
+
+export const settingsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings w-5 h-5"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>`
+export const searchSvg = `<svg xmlns="http://www.w3.org/2000/svg"  viewBox="0 0 50 50" width="20px" height="20px"><path d="M 21 3 C 11.601563 3 4 10.601563 4 20 C 4 29.398438 11.601563 37 21 37 C 24.355469 37 27.460938 36.015625 30.09375 34.34375 L 42.375 46.625 L 46.625 42.375 L 34.5 30.28125 C 36.679688 27.421875 38 23.878906 38 20 C 38 10.601563 30.398438 3 21 3 Z M 21 7 C 28.199219 7 34 12.800781 34 20 C 34 27.199219 28.199219 33 21 33 C 13.800781 33 8 27.199219 8 20 C 8 12.800781 13.800781 7 21 7 Z"/></svg>`
+
+const formatTimestamp = (ts: string): string => {
+	const date = new Date(ts);
+	return date.toLocaleString();
+};
+
+const escapeHTML = (str: string): string => {
+	const div = document.createElement('div');
+	div.textContent = str;
+	return div.innerHTML;
+};
+
+const truncateMessage = (msg: string): string =>
+	msg.length > MESSAGE_TRUNCATE_LENGTH
+		? `${msg.slice(0, MESSAGE_TRUNCATE_LENGTH)}...`
+		: msg;
+
+export const logsSearchPage = (args: LogsSearchPageArgs) => {
+	const logIds = new Set<string>();
+	const logEntries: LogEntry[] = [];
+	let moreRows = true;
+
+	args.root.innerHTML = ``
+
+	const logsOptions = document.createElement("div")
+	logsOptions.className = "logs-options"
+	args.root.appendChild(logsOptions)
+	const searchTextarea = document.createElement("textarea")
+	searchTextarea.className = "logs-search-bar"
+	logsOptions.appendChild(searchTextarea)
+	const optionsRightPanel = document.createElement("div")
+	optionsRightPanel.className = "logs-options-right-panel"
+	logsOptions.appendChild(optionsRightPanel)
+	const settingsButton = document.createElement("button")
+	settingsButton.innerHTML = settingsSvg
+	settingsButton.onclick = () => navigate("/settings")
+	const searchButton = document.createElement("button")
+	searchButton.innerHTML = searchSvg
+	const streamButton = document.createElement("button")
+	streamButton.innerHTML = "stream"
+	optionsRightPanel.append(settingsButton, searchButton, streamButton)
+
+	const logsList = document.createElement("div")
+	logsList.className = "logs-list"
+	args.root.appendChild(logsList)
+	const loadingIndicator = document.createElement("div")
+	args.root.appendChild(loadingIndicator)
+
+	const queryLogs = (query: string): void => {
+		logEntries.length = 0
+		logIds.clear()
+		logsList.innerHTML = ""
+		loadingIndicator.textContent = "Loading..."
+		args.fetchMore({ offset: 0, count: 100, query })
 	};
 
-	return {
-		root,
-		setIsStreaming: (isStreaming: boolean) => {
-			streamButton.innerHTML = streamButtonState(isStreaming)
-		},
-		onError (err: string) {
-			last.innerHTML = err
-		},
-		addLogEntries: (entries: LogEntry[]) => {	
-			if (entries.length === 0) {
-				last.innerHTML = "No more rows"
-				return
-			}
-			setTimeout(() => {
-				moreRows = true
-			}, 500)
-			for (const entry of entries) {
-				if (logids.has(entry.id)) {
-					continue
-				}
-				logids.add(entry.id)
-				logEntries.push(entry)
-			}
-			logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-			if (logEntries.length > MAX_LOG_ENTRIES) {
-				if (tableWrapper.scrollTop === 0) {
-					const removed = logEntries.splice(0, MAX_LOG_ENTRIES)
-					for (const r of removed) {
-						logids.delete(r.id)
-					}
-				}
-			}
-			const body = `
-				${logEntries.map((r) => {
-					// const textNode = document.createTextNode();
-					return`
-						<tr style="height: 35px">
-							<td style="white-space: nowrap; vertical-align: top; text-align: center;">${formatTimestamp(r.timestamp)}</td>
-							<td style="color: ${logColors[r.level]}; vertical-align: top; text-align: center;text-align: center;">${r.level}</td>
-							<td style="vertical-align: top; text-align: left;">${r.props.map((p) => `${p.key}=${p.value}`).join("<br />")}</td>
-							<td style="word-break: break-all; vertical-align: top">${escapeHTML(`${r.msg.slice(0, 700)}${r.msg.length > 700 ? "..." : ""}`)}</td>
-						</tr>
-					`	
-				}).join("")}
-			`
-			tbody.innerHTML = body
+	searchTextarea.addEventListener("keydown", (e: KeyboardEvent) => {
+		if (e.key === "Enter" && e.ctrlKey) {
+			e.preventDefault()
+			queryLogs(searchTextarea.value)
 		}
+	})
+	searchButton.addEventListener("click", () => queryLogs(searchTextarea.value))
+	const updateStreamButtonText = (isStreaming: boolean) => {
+		streamButton.innerHTML = isStreaming ? "stop" : "stream"
 	}
-}
+	streamButton.addEventListener("click", () => {
+		const isStreaming = args.toggleIsStreaming();
+		updateStreamButtonText(isStreaming);
+	});
+	const observer = new IntersectionObserver(
+		(entries) => {
+			if (!moreRows || !entries[0].isIntersecting) return;
+			moreRows = false;
+			args.fetchMore({
+				offset: logEntries.length,
+				count: 100,
+				query: searchTextarea.value
+			});
+		},
+		{
+			threshold: OBSERVER_THRESHOLD
+		}
+	);
+	observer.observe(loadingIndicator);
+
+	// Return public interface
+	return {
+		setIsStreaming: updateStreamButtonText,
+		onError(err: string): void {
+			loadingIndicator.textContent = err;
+		},
+		addLogEntries(entries: ReadonlyArray<LogEntry>): void {
+			if (entries.length === 0) {
+				loadingIndicator.textContent = 'No more rows';
+				return;
+			}
+			setTimeout(() => { moreRows = true; }, FETCH_DEBOUNCE_MS);
+			const newEntries = entries.filter(entry => !logIds.has(entry.id));
+			newEntries.forEach(entry => {
+				logIds.add(entry.id);
+				logEntries.push(entry);
+			});
+			logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+			if (logEntries.length > MAX_LOG_ENTRIES && args.root.scrollTop === 0) {
+				const removed = logEntries.splice(MAX_LOG_ENTRIES);
+				removed.forEach(r => logIds.delete(r.id));
+			}
+
+			logsList.innerHTML = logEntries.map(entry => `
+				<div class="logs-list-row">
+					<div>
+						${formatTimestamp(entry.timestamp)} 
+						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
+						${entry.props.map(p => `${p.key}=${p.value}`).join(" ")}
+					</div>
+					<div class="logs-list-row-msg">
+						${escapeHTML(truncateMessage(entry.msg))}
+					</div>
+				</div>
+			`).join('');
+		}
+	};
+};
