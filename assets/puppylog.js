@@ -115,6 +115,8 @@ var logsSearchPage = (args) => {
   args.root.appendChild(logsOptions);
   const searchTextarea = document.createElement("textarea");
   searchTextarea.className = "logs-search-bar";
+  searchTextarea.placeholder = "Search logs (ctrl+enter to search)";
+  searchTextarea.value = args.query || "";
   logsOptions.appendChild(searchTextarea);
   const optionsRightPanel = document.createElement("div");
   optionsRightPanel.className = "logs-options-right-panel";
@@ -307,6 +309,7 @@ var mainPage = (root) => {
   const { addLogEntries, onError, setIsStreaming } = logsSearchPage({
     root,
     isStreaming,
+    query,
     toggleIsStreaming: () => {
       isStreaming = !isStreaming;
       if (isStreaming) {

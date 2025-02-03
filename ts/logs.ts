@@ -24,6 +24,7 @@ export type FetchMoreArgs = {
 interface LogsSearchPageArgs {
 	root: HTMLElement
 	isStreaming: boolean
+	query?: string
 	fetchMore: (args: FetchMoreArgs) => void
 	toggleIsStreaming: () => boolean
 }
@@ -73,6 +74,8 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	args.root.appendChild(logsOptions)
 	const searchTextarea = document.createElement("textarea")
 	searchTextarea.className = "logs-search-bar"
+	searchTextarea.placeholder = "Search logs (ctrl+enter to search)"
+	searchTextarea.value = args.query || ""
 	logsOptions.appendChild(searchTextarea)
 	const optionsRightPanel = document.createElement("div")
 	optionsRightPanel.className = "logs-options-right-panel"

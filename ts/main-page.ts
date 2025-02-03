@@ -39,6 +39,7 @@ export const mainPage = (root: HTMLElement) => {
 	const { addLogEntries, onError, setIsStreaming } = logsSearchPage({
 		root,
 		isStreaming,
+		query,
 		toggleIsStreaming: () => {
 			isStreaming = !isStreaming
 			if (isStreaming) {
