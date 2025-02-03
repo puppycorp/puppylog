@@ -177,6 +177,23 @@ Event stream which receives commands from server. This can be used to control th
 | Start date  | 8    | Earliest logline to send |
 | End date    | 8    | Lastest logline to send  |
 
+### WS /api/device/:deviceId/ws
+
+### GET /api/settings/query
+
+Get log collection query from server so that clients can filter logs on device side.
+
+**Body**
+Query string
+
+### POST /api/settings/query
+
+Send log collection query to clients so that they can filter logs on device side.
+
+**Body**
+Query string
+
+
 ### POST /api/logs
 
 Device can send batch of loglines to server in compressed format like tar.gz. Payload will have one or more loglines in specified format. Supports gzip and zstd compression. Also supports streaming logs with chunked transfer encoding.
