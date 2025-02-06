@@ -14,7 +14,6 @@ use tungstenite::http::Uri;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{ClientRequestBuilder, Message, WebSocket};
 
-use crate::log_buffer::LogBuffer;
 use crate::{check_expr, parse_log_query};
 use crate::LogEntry;
 use crate::LogLevel;
@@ -40,10 +39,6 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 	let mut client: Option<WebSocket<MaybeTlsStream<TcpStream>>> = None;
 	let mut logquery: Option<QueryAst> = None;
 	let mut connect_timer = Instant::now();
-	let mut buffer = LogBuffer::new(&builder);
-	if let Some(path) = &builder.log_folder {
-		buffer.set_folder_path(&builder);
-	}
 	let mut send_timer = Instant::now();
 	let mut serialize_buffer = Vec::with_capacity(builder.max_buffer_size);
 	let mut queue = VecDeque::new();
