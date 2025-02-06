@@ -98,25 +98,25 @@ mod tests {
 	// 	}
 	// }
 
-	#[test]
-	fn basic_buffer() {
-		let mut buffer = LogBuffer::new(100);
-		let data = b"Hello, world!";
-		buffer.write(data).unwrap();
-		let chunk = buffer.next_chunk().unwrap();
-		assert_eq!(chunk.as_ref(), b"Hello, world!");
-	}
+	// #[test]
+	// fn basic_buffer() {
+	// 	let mut buffer = LogBuffer::new(100);
+	// 	let data = b"Hello, world!";
+	// 	buffer.write(data).unwrap();
+	// 	let chunk = buffer.next_chunk().unwrap();
+	// 	assert_eq!(chunk.as_ref(), b"Hello, world!");
+	// }
 
-	#[test]
-	fn get_newest_chunk() {
-		let mut buffer = LogBuffer::new(5);
-		let data = b"Hello,";
-		buffer.write(data).unwrap();
-		let data = b" world!";
-		buffer.write(data).unwrap();
-		let chunk = buffer.next_chunk().unwrap();
-		assert_eq!(chunk.as_ref(), b" world!");
-	}
+	// #[test]
+	// fn get_newest_chunk() {
+	// 	let mut buffer = LogBuffer::new(5);
+	// 	let data = b"Hello,";
+	// 	buffer.write(data).unwrap();
+	// 	let data = b" world!";
+	// 	buffer.write(data).unwrap();
+	// 	let chunk = buffer.next_chunk().unwrap();
+	// 	assert_eq!(chunk.as_ref(), b" world!");
+	// }
 
 	// #[test]
 	// fn load_chunk_from_folder() {

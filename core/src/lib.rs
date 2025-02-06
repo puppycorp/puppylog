@@ -6,6 +6,7 @@ mod logentry;
 mod query_eval;
 mod query_parsing;
 mod log_buffer;
+mod log_buffer2;
 mod log_rotator;
 
 pub use chunk_reader::ChunkReader;
