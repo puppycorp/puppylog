@@ -1,9 +1,11 @@
+use std::collections::VecDeque;
 use std::net::TcpStream;
 use std::str::FromStr;
 use std::sync::mpsc::{self, Receiver};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
+use bytes::Bytes;
 use log::{Record, Level, Metadata, SetLoggerError};
 use chrono::Utc;
 use native_tls::TlsConnector;
@@ -43,6 +45,8 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 		buffer.set_folder_path(&builder);
 	}
 	let mut send_timer = Instant::now();
+	let mut serialize_buffer = Vec::with_capacity(builder.max_buffer_size);
+	let mut queue = VecDeque::new();
 
 	'main: loop {
 		loop {
@@ -53,8 +57,9 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 					// 		entry.serialize(&mut buffer).unwrap_or_default();
 					// 	}
 					// }
-					entry.serialize(&mut buffer).unwrap_or_default();
-					if buffer.buffer_size() > builder.max_buffer_size {
+					entry.serialize(&mut serialize_buffer).unwrap_or_default();
+					if serialize_buffer.len() > builder.max_buffer_size {
+						println!("max serialize buffer size reached");
 						break;
 					}
 					if send_timer.elapsed() > builder.send_interval {
@@ -77,6 +82,11 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 					break 'main
 				}
 			};
+		}
+
+		if serialize_buffer.len() > 10 {
+			queue.push_back(Bytes::copy_from_slice(&serialize_buffer));
+			serialize_buffer.clear();
 		}
 
 		let mut client_broken = false;
@@ -114,17 +124,15 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 				}
 
 				send_timer = Instant::now();
-				while let Some(chunk) = buffer.next_chunk() {
-					let len = chunk.len();
-					println!("sending chunk: {}", len);
-					match c.send(Message::Binary(chunk)) {
-						Ok(_) => { buffer.pop_newest_chunk(); },
+				if let Some(batch) = queue.pop_front() {
+					match c.send(Message::Binary(batch)) {
+						Ok(_) => { serialize_buffer.clear(); },
 						Err(e) => {
 							eprintln!("Failed to send message: {}", e);
 							client_broken = true;
 						}
 					};
-				};
+				}
 			},
 			None => {
 				if connect_timer.elapsed().as_secs() < 1 {
@@ -347,7 +355,7 @@ impl PuppylogBuilder {
 			min_buffer_size: 1024,
 			max_buffer_size: 1024 * 1024,
 			max_batch_size: 1024 * 1024,
-			send_interval: Duration::from_secs(15),
+			send_interval: Duration::from_secs(5),
 			log_folder: None,
 			log_server: None,
 			log_stdout: true,
