@@ -307,7 +307,8 @@ impl LogEntryChunkParser {
                     self.chunck_parser.commit();
                     self.log_entries.push(entry);
                 },
-                Err(_) => {
+                Err(err) => {
+					log::error!("Error parsing log entry: {:?}", err);
                     self.chunck_parser.rollback();
                     break;
                 }

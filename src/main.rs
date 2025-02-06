@@ -125,6 +125,7 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 		log::info!("Sending event to client {:?}", txt);
 		socket.send(axum::extract::ws::Message::Text(txt.into())).await.unwrap();
 	}
+	let mut i = 0;
 	loop {
 		tokio::select! {
 			e = rx.recv() => {
@@ -144,7 +145,9 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 						match msg {
 							axum::extract::ws::Message::Text(utf8_bytes) => {},
 							axum::extract::ws::Message::Binary(bytes) => {
+								let byteslen = bytes.len();
 								chunk_reader.add_chunk(bytes);
+								log::info!("received {} bytes parsed {} entries", byteslen, chunk_reader.log_entries.len());
 								for entry in &chunk_reader.log_entries {
 									//log::info!("Received log entry: {:?}", entry);
 									if let Err(err) = ctx.logentry_saver.save(entry.clone()).await {
@@ -153,6 +156,10 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 									}
 									if let Err(e) = ctx.publisher.send(entry.clone()).await {
 										log::error!("Failed to publish log entry: {}", e);
+									}
+									i += 1;
+									if i % 100 == 0 {
+										log::info!("[{}] parsed", i);
 									}
 								}
 								chunk_reader.log_entries.clear();

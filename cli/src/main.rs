@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use log::Level;
 use puppylog::{DrainParser, LogEntry, LogLevel, PuppylogBuilder};
-use rand::{distributions::Alphanumeric, prelude::*};
+use rand::prelude::*;
 use reqwest;
 use std::collections::HashMap;
 use std::error::Error;
@@ -110,35 +110,35 @@ enum TokenizeSubcommands {
     }
 }
 
-// Helper functions to generate random IDs
-fn generate_random_id(prefix: &str, length: usize) -> String {
-    let rand_str: String = thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(length)
-        .map(char::from)
-        .collect();
-    format!("{}-{}", prefix, rand_str)
-}
+// // Helper functions to generate random IDs
+// fn generate_random_id(prefix: &str, length: usize) -> String {
+//     let rand_str: String = thread_rng()
+//         .sample_iter(&Alphanumeric)
+//         .take(length)
+//         .map(char::from)
+//         .collect();
+//     format!("{}-{}", prefix, rand_str)
+// }
 
-fn random_string_name() -> String {
-    let length = thread_rng().gen_range(5..11);
-    thread_rng()
-        .sample_iter(&Alphanumeric)
-        .filter(|c| c.is_ascii_alphabetic())
-        .take(length)
-        .map(char::from)
-        .collect()
-}
+// fn random_string_name() -> String {
+//     let length = thread_rng().gen_range(5..11);
+//     thread_rng()
+//         .sample_iter(&Alphanumeric)
+//         .filter(|c| c.is_ascii_alphabetic())
+//         .take(length)
+//         .map(char::from)
+//         .collect()
+// }
 
-fn random_email() -> String {
-    let username: String = thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(7)
-        .map(char::from)
-        .collect();
-    let domain = EMAIL_DOMAINS.choose(&mut thread_rng()).unwrap();
-    format!("{}@{}", username.to_lowercase(), domain)
-}
+// fn random_email() -> String {
+//     let username: String = thread_rng()
+//         .sample_iter(&Alphanumeric)
+//         .take(7)
+//         .map(char::from)
+//         .collect();
+//     let domain = EMAIL_DOMAINS.choose(&mut thread_rng()).unwrap();
+//     format!("{}@{}", username.to_lowercase(), domain)
+// }
 
 // fn random_timestamp(base_time: DateTime<Utc>) -> DateTime<Utc> {
 //     let offset = Duration::seconds(thread_rng().gen_range(0..100000));
@@ -311,6 +311,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				.stdout()
 				.authorization(&args.auth.unwrap_or_default())
 				.prop("app", "puppylogcli")
+				.folder("./workdir/logbuffer")
 				.build()
 				.unwrap();
 
@@ -326,13 +327,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				None => Utc::now()
 			};
 
+			let mut rng = rand::rng();
+
 			let mut i = 0;
 			loop {
-				println!("timestamp: {:?}", now);
+				let random = rng.random();
 				logger.send_logentry(LogEntry {
+					random,
 					timestamp: now,
 					level: LogLevel::Info,
-					msg: format!("Hello, world! {}", i),
+					msg: format!("Hello, world! {} random: {}", i, random),
 					props: Vec::new(),
 					..Default::default()
 				});
@@ -345,6 +349,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				}
 				sleep(Duration::from_millis(args.interval));
 			}
+
+			sleep(Duration::from_secs(2));
 		},
         Commands::Upload { address } => todo!(),
         Commands::Tokenize { subcommand } => {

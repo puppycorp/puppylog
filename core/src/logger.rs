@@ -1,12 +1,9 @@
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Cursor, Read, Write};
 use std::net::TcpStream;
 use std::str::FromStr;
 use std::sync::mpsc::{self, Receiver};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
-use bytes::Bytes;
 use log::{Record, Level, Metadata, SetLoggerError};
 use chrono::Utc;
 use native_tls::TlsConnector;
@@ -16,163 +13,15 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{ClientRequestBuilder, Message, WebSocket};
 
 use crate::log_buffer::LogBuffer;
-use crate::{check_expr, parse_log_query, LogEntry, LogLevel, Prop, PuppylogEvent, QueryAst};
+use crate::parse_log_query;
+use crate::LogEntry;
+use crate::LogLevel;
+use crate::Prop;
+use crate::PuppylogEvent;
+use crate::QueryAst;
 
-pub struct LogRotator {
-    folder: PathBuf,
-    file: Option<std::fs::File>,
-    current_size: u64,
-    max_size: u64,
-    max_files: u32,
-}
+struct Settings {
 
-impl LogRotator {
-    pub fn new(logfolder: PathBuf, max_files: u32, max_size: u64) -> Self {
-		if !logfolder.exists() {
-			if let Err(err) = std::fs::create_dir_all(&logfolder) {
-				eprintln!("Failed to create log folder: {}", err);
-			}
-		}
-        LogRotator {
-            current_size: 0,
-            file: None,
-            folder: logfolder,
-            max_files,
-            max_size
-        }
-    }
-
-    fn rename_files(&self) -> Result<(), PuppyLogError> {
-        let mut files: Vec<_> = std::fs::read_dir(&self.folder)?
-            .filter_map(|f| f.ok())
-            .filter(|f| f.file_type().map(|t| t.is_file()).unwrap_or(false))
-            .map(|f| f.path())
-            .filter_map(|p| {
-				let file_name = match p.file_name() {
-					Some(name) => name.to_string_lossy().to_string(),
-					None => return None,
-				};
-				let parts: Vec<&str> = file_name.split('.').collect();
-				if parts.len() != 3 {
-					return None;
-				}
-				let index = match parts[2].parse::<u32>() {
-					Ok(i) => i,
-					Err(_) => return None,
-				};
-				Some(index)
-			})
-            .collect();
-        
-        files.sort_by(|a, b| b.cmp(a));
-        
-        for i in files.iter() {
-			let path = self.folder.join(format!("app.log.{}", i));
-            if *i >= self.max_files {
-				println!("too many files, removing: {}", path.display());
-                std::fs::remove_file(path)?;
-                continue;
-            }
-            let new_path = self.folder.join(format!("app.log.{}", i + 1));
-            std::fs::rename(path, new_path)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn choose(&mut self) -> Result<(), PuppyLogError> {
-        if let Some(file) = &self.file {
-            if self.current_size < self.max_size {
-				//println!("current size: {}, max size: {}", self.current_size, self.max_size);
-                return Ok(());
-            }
-        }
-        
-        self.rename_files()?;
-        self.file = None;
-        
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .write(true)
-            .open(self.folder.join("app.log.1"))?;
-            
-        let meta = file.metadata()?;
-        self.current_size = meta.len();
-        self.file = Some(file);
-        Ok(())
-    }
-
-    pub fn write(&mut self, data: &[u8]) -> Result<(), PuppyLogError> {
-        self.choose()?;
-        if let Some(file) = &mut self.file {
-            file.write_all(data)?;
-            self.current_size += data.len() as u64;
-        }
-        Ok(())
-    }
-
-	/// Truncate the log files by removing a total of `count` bytes,
-    /// starting with the newest file (`app.log.1`) and proceeding to older files
-    /// if necessary. When a file’s size is less than or equal to the remaining bytes
-    /// to remove, the file is deleted; otherwise, it is truncated (by cutting off the end).
-    pub fn truncate(&mut self, count: usize) -> Result<(), PuppyLogError> {
-        // The number of bytes left to remove.
-        let mut remaining = count as u64;
-
-        // Find all log files matching the pattern "app.log.<number>"
-        let mut logs = Vec::new();
-        for entry in fs::read_dir(&self.folder)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
-                continue;
-            }
-            let path = entry.path();
-            if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                // Expecting names like "app.log.1", "app.log.2", etc.
-                let parts: Vec<&str> = file_name.split('.').collect();
-                if parts.len() == 3 && parts[0] == "app" && parts[1] == "log" {
-                    if let Ok(index) = parts[2].parse::<u32>() {
-                        logs.push((index, path));
-                    }
-                }
-            }
-        }
-
-        // Sort logs by index ascending so that app.log.1 (newest) comes first
-        logs.sort_by_key(|(index, _)| *index);
-
-        // Process each file in order until we've removed the requested bytes.
-        for (index, path) in logs {
-            if remaining == 0 {
-                break;
-            }
-            let metadata = fs::metadata(&path)?;
-            let file_size = metadata.len();
-            if file_size <= remaining {
-                // Remove the entire file
-                fs::remove_file(&path)?;
-                remaining -= file_size;
-                // If the active log is removed, clear our in-memory handle.
-                if index == 1 {
-                    self.file = None;
-                    self.current_size = 0;
-                }
-            } else {
-                // We need to remove part of this file.
-                let new_size = file_size - remaining;
-                let file = OpenOptions::new().write(true).open(&path)?;
-                file.set_len(new_size)?;
-                // If this is the current (active) log file, update our current_size.
-                if index == 1 {
-                    self.current_size = new_size;
-                }
-                remaining = 0;
-            }
-        }
-
-        Ok(())
-    }
 }
 
 enum WorkerMessage {
@@ -189,18 +38,26 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 	let mut client: Option<WebSocket<MaybeTlsStream<TcpStream>>> = None;
 	let mut logquery: Option<QueryAst> = None;
 	let mut connect_timer = Instant::now();
-	let mut buffer = LogBuffer::new(builder.max_buffer_size as usize);
+	let mut buffer = LogBuffer::new(&builder);
+	if let Some(path) = &builder.log_folder {
+		buffer.set_folder_path(&builder);
+	}
+	let mut send_timer = Instant::now();
 
 	'main: loop {
 		loop {
 			match rx.recv_timeout(Duration::from_millis(100)) {
 				Ok(WorkerMessage::LogEntry(entry)) => {
-					if let Some(q) = &logquery {
-						if let Ok(true) = check_expr(&q.root, &entry) {
-							entry.serialize(&mut buffer).unwrap_or_default();
-						}
+					// if let Some(q) = &logquery {
+					// 	if let Ok(true) = check_expr(&q.root, &entry) {
+					// 		entry.serialize(&mut buffer).unwrap_or_default();
+					// 	}
+					// }
+					entry.serialize(&mut buffer).unwrap_or_default();
+					if buffer.buffer_size() > builder.max_buffer_size {
+						break;
 					}
-					if buffer.size() > builder.max_buffer_size {
+					if send_timer.elapsed() > builder.send_interval {
 						break;
 					}
 				},
@@ -211,8 +68,14 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 					let _ = ack.send(());
 					break;
 				},
-				Err(mpsc::RecvTimeoutError::Timeout) => break,
-				Err(mpsc::RecvTimeoutError::Disconnected) => break 'main,
+				Err(mpsc::RecvTimeoutError::Timeout) => {
+					println!("timeout");
+					break;
+				},
+				Err(mpsc::RecvTimeoutError::Disconnected) => {
+					eprintln!("channel disconnected");
+					break 'main
+				}
 			};
 		}
 
@@ -239,18 +102,23 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 								}
 							}
 						},
-						Message::Binary(bytes) => {},
-						Message::Ping(bytes) => {},
-						Message::Pong(bytes) => {},
-						Message::Close(close_frame) => {},
-						Message::Frame(frame) => {},
+						Message::Close(close_frame) => {
+							println!("received close frame: {:?}", close_frame);
+							client_broken = true;
+							break;
+						},
+						msg => {
+							println!("unhandled msg: {:?}", msg);
+						}
 					}
 				}
 
+				send_timer = Instant::now();
 				while let Some(chunk) = buffer.next_chunk() {
 					let len = chunk.len();
+					println!("sending chunk: {}", len);
 					match c.send(Message::Binary(chunk)) {
-						Ok(_) => { buffer.truncate(len); },
+						Ok(_) => { buffer.pop_newest_chunk(); },
 						Err(e) => {
 							eprintln!("Failed to send message: {}", e);
 							client_broken = true;
@@ -447,35 +315,39 @@ impl std::fmt::Display for PuppyLogError {
 	}
 }
 
-impl From<io::Error> for PuppyLogError {
-	fn from(error: io::Error) -> Self {
+impl From<std::io::Error> for PuppyLogError {
+	fn from(error: std::io::Error) -> Self {
 		PuppyLogError::new(&error.to_string())
 	}
 }
 
 pub struct PuppylogBuilder {
-	max_log_file_size: u64,
-	max_log_files: u32,
-	min_buffer_size: u64,
-	max_buffer_size: u64,
-	max_batch_size: u64,
-	log_folder: Option<PathBuf>,
-	log_server: Option<Uri>,
-	authorization: Option<String>,
-	log_stdout: bool,
-	level_filter: Level,
-	props: Vec<Prop>,
-	internal_logging: bool,
+	pub chunk_size: usize,
+	pub max_file_count: usize,
+	pub max_file_size: usize,
+	pub min_buffer_size: u64,
+	pub max_buffer_size: usize,
+	pub max_batch_size: u64,
+	pub send_interval: Duration,
+	pub log_folder: Option<PathBuf>,
+	pub log_server: Option<Uri>,
+	pub authorization: Option<String>,
+	pub log_stdout: bool,
+	pub level_filter: Level,
+	pub props: Vec<Prop>,
+	pub internal_logging: bool,
 }
 
 impl PuppylogBuilder {
 	pub fn new() -> Self {
 		PuppylogBuilder {
-			max_log_file_size: 1024 * 1024 * 10,
-			max_log_files: 10,
+			chunk_size: 4096,
+			max_file_count: 5,
+			max_file_size: 1024 * 1024 * 10,
 			min_buffer_size: 1024,
 			max_buffer_size: 1024 * 1024,
 			max_batch_size: 1024 * 1024,
+			send_interval: Duration::from_secs(15),
 			log_folder: None,
 			log_server: None,
 			log_stdout: true,
