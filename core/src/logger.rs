@@ -15,7 +15,7 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{ClientRequestBuilder, Message, WebSocket};
 
 use crate::log_buffer::LogBuffer;
-use crate::parse_log_query;
+use crate::{check_expr, parse_log_query};
 use crate::LogEntry;
 use crate::LogLevel;
 use crate::Prop;
@@ -52,12 +52,13 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 		loop {
 			match rx.recv_timeout(Duration::from_millis(100)) {
 				Ok(WorkerMessage::LogEntry(entry)) => {
-					// if let Some(q) = &logquery {
-					// 	if let Ok(true) = check_expr(&q.root, &entry) {
-					// 		entry.serialize(&mut buffer).unwrap_or_default();
-					// 	}
-					// }
-					entry.serialize(&mut serialize_buffer).unwrap_or_default();
+					if let Some(q) = &logquery {
+						if let Ok(true) = check_expr(&q.root, &entry) {
+							if let Err(err) = entry.serialize(&mut serialize_buffer) {
+								eprintln!("Failed to serialize log entry: {}", err);
+							}
+						}
+					}
 					if serialize_buffer.len() > builder.max_buffer_size {
 						println!("max serialize buffer size reached");
 						break;
@@ -87,6 +88,9 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 		if serialize_buffer.len() > 10 {
 			queue.push_back(Bytes::copy_from_slice(&serialize_buffer));
 			serialize_buffer.clear();
+			if queue.len() > 30 {
+				queue.pop_front();
+			}
 		}
 
 		let mut client_broken = false;
