@@ -1,4 +1,4 @@
-use std::io::{self, Cursor, Read, Write};
+use std::collections::VecDeque;
 use std::net::TcpStream;
 use std::str::FromStr;
 use std::sync::mpsc::{self, Receiver};
@@ -14,7 +14,17 @@ use tungstenite::http::Uri;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{ClientRequestBuilder, Message, WebSocket};
 
-use crate::{check_expr, parse_log_query, LogEntry, LogLevel, Prop, PuppylogEvent, QueryAst};
+use crate::log_buffer::LogBuffer;
+use crate::{check_expr, parse_log_query};
+use crate::LogEntry;
+use crate::LogLevel;
+use crate::Prop;
+use crate::PuppylogEvent;
+use crate::QueryAst;
+
+struct Settings {
+
+}
 
 enum WorkerMessage {
     LogEntry(LogEntry),
@@ -28,19 +38,32 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 		None => return,
 	};
 	let mut client: Option<WebSocket<MaybeTlsStream<TcpStream>>> = None;
-	let mut buffer = Cursor::new(Vec::new());
 	let mut logquery: Option<QueryAst> = None;
 	let mut connect_timer = Instant::now();
+	let mut buffer = LogBuffer::new(&builder);
+	if let Some(path) = &builder.log_folder {
+		buffer.set_folder_path(&builder);
+	}
+	let mut send_timer = Instant::now();
+	let mut serialize_buffer = Vec::with_capacity(builder.max_buffer_size);
+	let mut queue = VecDeque::new();
+
 	'main: loop {
 		loop {
 			match rx.recv_timeout(Duration::from_millis(100)) {
 				Ok(WorkerMessage::LogEntry(entry)) => {
 					if let Some(q) = &logquery {
 						if let Ok(true) = check_expr(&q.root, &entry) {
-							entry.serialize(&mut buffer).unwrap_or_default();
+							if let Err(err) = entry.serialize(&mut serialize_buffer) {
+								eprintln!("Failed to serialize log entry: {}", err);
+							}
 						}
 					}
-					if buffer.position() > builder.max_buffer_size {
+					if serialize_buffer.len() > builder.max_buffer_size {
+						println!("max serialize buffer size reached");
+						break;
+					}
+					if send_timer.elapsed() > builder.send_interval {
 						break;
 					}
 				},
@@ -51,11 +74,26 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 					let _ = ack.send(());
 					break;
 				},
-				Err(mpsc::RecvTimeoutError::Timeout) => break,
-				Err(mpsc::RecvTimeoutError::Disconnected) => break 'main,
+				Err(mpsc::RecvTimeoutError::Timeout) => {
+					println!("timeout");
+					break;
+				},
+				Err(mpsc::RecvTimeoutError::Disconnected) => {
+					eprintln!("channel disconnected");
+					break 'main
+				}
 			};
 		}
 
+		if serialize_buffer.len() > 10 {
+			queue.push_back(Bytes::copy_from_slice(&serialize_buffer));
+			serialize_buffer.clear();
+			if queue.len() > 30 {
+				queue.pop_front();
+			}
+		}
+
+		let mut client_broken = false;
 		match &mut client {
 			Some(c) => {
 				while let Ok(msg) = c.read() {
@@ -78,22 +116,26 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 								}
 							}
 						},
-						Message::Binary(bytes) => {},
-						Message::Ping(bytes) => {},
-						Message::Pong(bytes) => {},
-						Message::Close(close_frame) => {},
-						Message::Frame(frame) => {},
+						Message::Close(close_frame) => {
+							println!("received close frame: {:?}", close_frame);
+							client_broken = true;
+							break;
+						},
+						msg => {
+							println!("unhandled msg: {:?}", msg);
+						}
 					}
 				}
 
-				if buffer.position() > 0 {
-					println!("sending {} bytes", buffer.position());
-					if let Err(err) = c.send(Message::Binary(Bytes::from(buffer.get_ref().to_vec()))) {
-						eprintln!("Failed to send message: {}", err);
-						client = None;
-					}
-					buffer.get_mut().clear();
-					buffer.set_position(0);
+				send_timer = Instant::now();
+				if let Some(batch) = queue.pop_front() {
+					match c.send(Message::Binary(batch)) {
+						Ok(_) => { serialize_buffer.clear(); },
+						Err(e) => {
+							eprintln!("Failed to send message: {}", e);
+							client_broken = true;
+						}
+					};
 				}
 			},
 			None => {
@@ -165,6 +207,10 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 				client = Some(c);
 			},
 		};
+
+		if client_broken {
+			client = None;
+		}
 	}
 
 	println!("worker done");
@@ -281,33 +327,39 @@ impl std::fmt::Display for PuppyLogError {
 	}
 }
 
-impl From<io::Error> for PuppyLogError {
-	fn from(error: io::Error) -> Self {
+impl From<std::io::Error> for PuppyLogError {
+	fn from(error: std::io::Error) -> Self {
 		PuppyLogError::new(&error.to_string())
 	}
 }
 
 pub struct PuppylogBuilder {
-	max_log_file_size: u64,
-	max_log_files: u32,
-	min_buffer_size: u64,
-	max_buffer_size: u64,
-	log_folder: Option<PathBuf>,
-	log_server: Option<Uri>,
-	authorization: Option<String>,
-	log_stdout: bool,
-	level_filter: Level,
-	props: Vec<Prop>,
-	internal_logging: bool,
+	pub chunk_size: usize,
+	pub max_file_count: usize,
+	pub max_file_size: usize,
+	pub min_buffer_size: u64,
+	pub max_buffer_size: usize,
+	pub max_batch_size: u64,
+	pub send_interval: Duration,
+	pub log_folder: Option<PathBuf>,
+	pub log_server: Option<Uri>,
+	pub authorization: Option<String>,
+	pub log_stdout: bool,
+	pub level_filter: Level,
+	pub props: Vec<Prop>,
+	pub internal_logging: bool,
 }
 
 impl PuppylogBuilder {
 	pub fn new() -> Self {
 		PuppylogBuilder {
-			max_log_file_size: 1024 * 1024 * 10,
-			max_log_files: 10,
+			chunk_size: 4096,
+			max_file_count: 5,
+			max_file_size: 1024 * 1024 * 10,
 			min_buffer_size: 1024,
 			max_buffer_size: 1024 * 1024,
+			max_batch_size: 1024 * 1024,
+			send_interval: Duration::from_secs(5),
 			log_folder: None,
 			log_server: None,
 			log_stdout: true,
