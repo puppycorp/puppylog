@@ -39,6 +39,7 @@ use tower_http::cors::Any;
 use tower_http::cors::CorsLayer;
 use tower_http::decompression::RequestDecompressionLayer;
 use types::Context;
+use types::DeviceStatus;
 
 mod logline;
 mod cache;
@@ -87,7 +88,7 @@ async fn main() {
 		.route("/favicon-512x512.png", get(favicon_512x512))
 		.route("/manifest.json", get(manifest))
 		.route("/api/logs", get(get_logs)).layer(cors.clone())
-		.route("/api/logs/stream", get(stream_logs)).layer(cors)
+		.route("/api/logs/stream", get(stream_logs)).layer(cors.clone())
 		.route("/api/logs", post(upload_logs))
 			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
 			.layer(RequestDecompressionLayer::new().gzip(true).zstd(true))
@@ -95,6 +96,13 @@ async fn main() {
 		.route("/api/settings/query", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/settings/query", get(get_settings_query)).with_state(ctx.clone())
 		.route("/api/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
+		.route("/api/v1/logs", get(get_logs)).layer(cors.clone())
+		.route("/api/v1/logs/stream", get(stream_logs)).layer(cors.clone())
+		.route("/api/v1/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
+		.route("/api/v1/device/{deviceId}/status", get(get_device_status)).layer(cors.clone())
+		.route("/api/v1/device/{deviceId}/logs", get(get_logs)).layer(cors.clone())
+		.route("/api/v1/settings", post(post_settings_query)).with_state(ctx.clone())
+		.route("/api/v1/settings", get(get_settings_query)).with_state(ctx.clone())
 		.fallback(get(root));
 
 	// run our app with hyper, listening globally on port 3000
@@ -103,6 +111,15 @@ async fn main() {
 		listener,
 		app,
 	).await.unwrap();
+}
+
+async fn get_device_status(Path(device_id): Path<String>) -> Json<Value> {
+	let status = DeviceStatus {
+		query: None,
+		level: None,
+		send_logs: true
+	};
+	Json(status)
 }
 
 async fn device_ws_handler(
@@ -158,7 +175,7 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 									}
 									if let Err(err) = ctx.logentry_saver.save(entry.clone()).await {
 										log::error!("Failed to save log entry: {}", err);
-										return;
+										return;	
 									}
 									if let Err(e) = ctx.publisher.send(entry.clone()).await {
 										log::error!("Failed to publish log entry: {}", e);

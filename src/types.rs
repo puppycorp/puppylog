@@ -1,4 +1,5 @@
 use puppylog::LogEntry;
+use puppylog::LogLevel;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
 use serde::Serialize;
@@ -45,4 +46,11 @@ impl Context {
 pub struct SubscribeReq {
 	pub res_tx: mpsc::Sender<LogEntry>,
 	pub query: QueryAst
+}
+
+#[derive(Serialize, Default)]
+pub struct DeviceStatus {
+	pub query: Option<String>,
+	pub level: Option<LogLevel>,
+	pub send_logs: bool
 }
