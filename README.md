@@ -188,17 +188,10 @@ Gets status for device. Usefull for determining if device is allowed to send log
 **application/json**
 ```json
 {
-	"query": "PGL query string",
-	"minInterval": 60,
-	"maxInterval": 3600,
 	"level": "LogLevel" | null,
-	"max_logfile_size": 1000000, // 1MB
-	"max_logfile_count": 5,
 	"should_send_logs": true | false
 }
 ```
-
-Post will set settings for device and get will get settings for device.
 
 ### POST /api/v1/device/:deviceId/logs
 
@@ -222,3 +215,14 @@ Content-Encoding: gzip, zstd, none
 ```
 
 Post will set settings and get will get settings.
+
+
+## Install
+
+### Linux
+
+```
+sudo apt-get install gcc libssl-dev pkg-config
+cargo run
+```
+
