@@ -119,7 +119,7 @@ async fn get_device_status(Path(device_id): Path<String>) -> Json<Value> {
 		level: None,
 		send_logs: true
 	};
-	Json(status)
+	Json(serde_json::to_value(&status).unwrap())
 }
 
 async fn device_ws_handler(
