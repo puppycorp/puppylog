@@ -1,13 +1,13 @@
 # PuppyLog - Make Logging Great Again
 
-PuppyLog is log collection server where clients can submit logs and the send queries to get logs. Log queries are send in Puppy Query Language (PQL) format. Server supports streaming logs and querying logs. Protocol is designed to be efficient and easy to implement in different environments like server, desktop, mobile and IOT devices.
+PuppyLog is a log collection server where clients can submit logs and send queries using the Puppy Query Language (PQL) to retrieve logs. Server supports streaming logs and querying logs. Protocol is designed to be efficient and easy to implement in different environments like server, desktop, mobile and IOT devices.
 
 ## PQL - Puppy Query Language
 
 **Compare Operators**
 ```
 < // Smaller than
-> // Larger tha
+> // Larger than
 = // Equal
 != // Not equal
 >= // Larger or equal than 
@@ -57,7 +57,6 @@ PuppyLog is log collection server where clients can submit logs and the send que
 3. AND, OR
 ```
 
-
 ## Data Structures
 
 ### Logentry
@@ -70,7 +69,7 @@ Logline is a binary structure which stores log information. Each LogEntry unique
 | Timestamp  | 8    | Timestamp of the log in micros       |
 | Random     | 4    | Ensure uniqueness within microsecond |
 | Level      | 1    | Log level                            |
-| PropsCount | 1    | Project identifier                   |
+| PropsCount | 1    | Property count                       |
 | Props      | x    | Properties of the logentry           |
 | MsgLen     | 4    | Length of the message                |
 | Message    | x    | Log message payload                  |
@@ -95,10 +94,23 @@ Logline is a binary structure which stores log information. Each LogEntry unique
 | ValLen | 1    | Length of the value   |
 | Value  | x    | Value of the property |
 
+### LogBatch
+
+Logbatch is a binary structure which stores multiple loglines. Logbatch is compressed with gzip or zstd. Logbatch is used to send multiple loglines to server in one go. Supported decryption by server is gzip and zstd.
+
+| Field      | Size | Description                                  |
+|------------|------|----------------------------------------------|
+| Version    | 2	| Version of logbatch (current 1)              |
+| Seq		 | 4    | Sequence number of the logbatch              |
+| Crc32      | 4    | CRC32 checksum of the logbatch               |
+| Size       | 4    | Payload size in bytes                        |
+| LogEntries | x    | LogEntries in binary format                  |
+
 ## API
 
-### GET /api/logs
-Get logs
+### GET /api/v1/logs
+
+Search logs with PQL query. Returns logs in json format. 
 
 #### Query
 
@@ -127,18 +139,16 @@ Get logs
 ]
 ```
 
-### GET /api/logs/stream
+### GET /api/v1/logs/stream
 
 #### Query
 
 | Field     | DataType | Description                       |
 | --------- | -------- | --------------------------------- |
-| loglevel  | enum[]   | Debug, Info, Warning, Error       |
-| props	 	| string[] | Properties of the logentry        |
-| search    | string[] | Message payload of the logmessage |
+| query     | string   | Query string in PQL format        |
 
 #### Response
-Returns eventstream of json objects like this.
+Returns EventStream of json objects like this.
 
 data:
 ```json
@@ -156,53 +166,59 @@ data:
 }
 ```
 
+### WS /api/v1/device/:deviceId/ws
+
+**Binary**
+Client will send `LogBatch` in binary format to server and when server has processed it will send ack back to client with sequence number. After ack is recevided client can remove batch from it's memory.
+
+**application/json**
+Server send json encoded mesages to client in one of these formats:
+```json
+{
+	"type": "settings",
+	"settings": "SettingsObject"
+}
+```
 
 
-### GET /api/commands
-Event stream which receives commands from server. This can be used to control the clients like do they send logs or not. In some environments data amount need to be restricted like IOT devices so log sending can be turned on demand.
+### GET /api/v1/device/:deviceId/status
 
-**Command**
+Gets status for device. Usefull for determining if device is allowed to send logs or not and what logs should be sent. Client can use this api to keep TLS connection alive or makes sure not to waste bandwidth sending logs to server which is not ready to receive logs. In some environments like IOT devices it's important to save battery and bandwidth.
 
-|Field       |Size|Description             |
-|------------|----|------------------------|
-|type        | 1  | Type of command        |
-|payload len | 4  | Payload of the command |
+**application/json**
+```json
+{
+	"query": "PGL query string",
+	"minInterval": 60,
+	"maxInterval": 3600,
+	"level": "LogLevel" | null,
+	"max_logfile_size": 1000000, // 1MB
+	"max_logfile_count": 5,
+	"should_send_logs": true | false
+}
+```
 
-**Stream Command**
+Post will set settings for device and get will get settings for device.
 
-**Send logs**
+### POST /api/v1/device/:deviceId/logs
 
-| Field       | Size | Description              |
-|-------------|------|--------------------------|
-| Start date  | 8    | Earliest logline to send |
-| End date    | 8    | Lastest logline to send  |
-
-### WS /api/device/:deviceId/ws
-
-### GET /api/settings/query
-
-Get log collection query from server so that clients can filter logs on device side.
-
-**Body**
-Query string
-
-### POST /api/settings/query
-
-Send log collection query to clients so that they can filter logs on device side.
-
-**Body**
-Query string
-
-
-### POST /api/logs
-
-Device can send batch of loglines to server in compressed format like tar.gz. Payload will have one or more loglines in specified format. Supports gzip and zstd compression. Also supports streaming logs with chunked transfer encoding.
+Device sends logs to server in LogBatch format and server will send ack back to client with sequence number. After ack is received it is safe to remove batch from client memory. This api works both with chunked transfer encoding and normal post request.
 
 Transfer-Encoding: chunked // If streaming logs
 Content-Encoding: gzip, zstd, none
 
-Back to back list of loglines in binary format.
+### /api/v1/settings
 
-### POST /api/ping
+**application/json**
+```json
+{
+	"query": "PGL query string",
+	"minInterval": 60,
+	"maxInterval": 3600,
+	"level": "LogLevel" | null,
+	"max_logfile_size": 1000000, // 1MB
+	"max_logfile_count": 5,
+}
+```
 
-Ping endpoint to check if server is ready to receive logs. Returns 200 OK if server is ready to receive logs. Client can use this to keep TLS connection alive or makes sure not to waste bandwidth sending logs to server which is not ready to receive logs. In some environments like IOT devices it's important to save battery and bandwidth.
+Post will set settings and get will get settings.
