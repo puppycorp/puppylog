@@ -18,6 +18,7 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::Json;
 use axum::Router;
+use chrono::Datelike;
 use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
@@ -144,9 +145,17 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 						match msg {
 							axum::extract::ws::Message::Text(utf8_bytes) => {},
 							axum::extract::ws::Message::Binary(bytes) => {
+								let current_year = chrono::Utc::now().year();
 								chunk_reader.add_chunk(bytes);
 								for entry in &chunk_reader.log_entries {
-									//log::info!("Received log entry: {:?}", entry);
+									if entry.timestamp.year() > current_year + 1 {
+										log::error!("[ws] Invalid year in log entry: {:?}", entry);
+										continue;
+									}
+									if entry.timestamp.year() < current_year - 1 {
+										log::error!("[ws] Invalid year in log entry: {:?}", entry);
+										continue;
+									}
 									if let Err(err) = ctx.logentry_saver.save(entry.clone()).await {
 										log::error!("Failed to save log entry: {}", err);
 										return;
@@ -266,17 +275,24 @@ async fn manifest() -> Result<Response, StatusCode> {
 
 async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
 	let mut stream: BodyDataStream = body.into_data_stream();
-	let mut i = 0;
 	let mut chunk_reader = LogEntryChunkParser::new();
-	
+	let current_year = chrono::Utc::now().year();
+
 	while let Some(chunk_result) = stream.next().await {
 		match chunk_result {
 			Ok(chunk) => {
-				log::info!("Received chunk of size {}", chunk.len());
 				chunk_reader.add_chunk(chunk);
 				for entry in &chunk_reader.log_entries {
-					log::info!("[{}] parsed", i);
-					i += 1;
+					if entry.timestamp.year() > current_year + 1 {
+						log::error!("Invalid year in log entry: {:?}", entry);
+						continue;
+					}
+
+					if entry.timestamp.year() < current_year - 1 {
+						log::error!("Invalid year in log entry: {:?}", entry);
+						continue;
+					}
+
 					if let Err(err) = ctx.logentry_saver.save(entry.clone()).await {
 						log::error!("Failed to save log entry: {}", err);
 						return;

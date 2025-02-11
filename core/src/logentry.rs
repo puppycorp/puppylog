@@ -241,6 +241,9 @@ impl LogEntry {
 
 	pub fn deserialize<R: Read>(reader: &mut R) -> io::Result<LogEntry> {
 		let version = reader.read_u16::<LittleEndian>()?;
+		if version > 1 {
+			return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid version"));
+		}
 		let timestamp = reader.read_i64::<LittleEndian>()?;
 		let timestamp = match DateTime::from_timestamp_micros(timestamp) {
 			Some(timestamp) => timestamp,
@@ -261,11 +264,11 @@ impl LogEntry {
 			let key_len = reader.read_u8()?;
 			let mut key = vec![0; key_len as usize];
 			reader.read_exact(&mut key)?;
-			let key = String::from_utf8_lossy(&key).to_string();
+			let key = String::from_utf8(key).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid prop key"))?;
 			let value_len = reader.read_u8()?;
 			let mut value = vec![0; value_len as usize];
 			reader.read_exact(&mut value)?;
-			let value = String::from_utf8_lossy(&value).to_string();
+			let value = String::from_utf8(value).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid prop value"))?;
 			props.push(Prop {
 				key,
 				value
@@ -274,7 +277,7 @@ impl LogEntry {
 		let msg_len = reader.read_u32::<LittleEndian>()?;
 		let mut msg = vec![0; msg_len as usize];
 		reader.read_exact(&mut msg)?;
-		let msg = String::from_utf8_lossy(&msg).to_string();
+		let msg = String::from_utf8(msg).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid message"))?;
 		Ok(LogEntry {
 			version,
 			random,
