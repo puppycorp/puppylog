@@ -100,7 +100,11 @@ async fn main() {
 		.route("/api/v1/logs/stream", get(stream_logs)).layer(cors.clone())
 		.route("/api/v1/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/status", get(get_device_status)).layer(cors.clone())
-		.route("/api/v1/device/{deviceId}/logs", get(get_logs)).layer(cors.clone())
+		.route("/api/v1/device/{deviceId}/logs", post(upload_device_logs))
+			.layer(cors.clone())
+			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
+			.layer(RequestDecompressionLayer::new().gzip(true).zstd(true))
+			.with_state(ctx.clone())
 		.route("/api/v1/settings", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/settings", get(get_settings_query)).with_state(ctx.clone())
 		.fallback(get(root));
@@ -113,7 +117,51 @@ async fn main() {
 	).await.unwrap();
 }
 
+async fn upload_device_logs(
+	State(ctx): State<Arc<Context>>,
+	Path(device_id): Path<String>,
+	body: Body
+) {
+	log::info!("upload_device_logs device_id: {}", device_id);
+	let mut stream: BodyDataStream = body.into_data_stream();
+	let mut chunk_reader = LogEntryChunkParser::new();
+	let current_year = chrono::Utc::now().year();
+	let mut i = 0;
+	while let Some(chunk_result) = stream.next().await {
+		match chunk_result {
+			Ok(chunk) => {
+				chunk_reader.add_chunk(chunk);
+				for entry in &chunk_reader.log_entries {
+					i += 1;
+					if entry.timestamp.year() > current_year + 1 {
+						log::error!("Invalid year in log entry: {:?}", entry);
+						continue;
+					}
+					if entry.timestamp.year() < current_year - 1 {
+						log::error!("Invalid year in log entry: {:?}", entry);
+						continue;
+					}
+					if let Err(err) = ctx.logentry_saver.save(entry.clone()).await {
+						log::error!("Failed to save log entry: {}", err);
+						return;
+					}
+					if let Err(e) = ctx.publisher.send(entry.clone()).await {
+						log::error!("Failed to publish log entry: {}", e);
+					}
+				}
+				chunk_reader.log_entries.clear();
+			}
+			Err(e) => {
+				log::error!("Error receiving chunk: {}", e);
+				return;
+			}
+		}
+	}
+	log::info!("uploaded {} logs", i);
+}
+
 async fn get_device_status(Path(device_id): Path<String>) -> Json<Value> {
+	log::info!("get_device_status device_id: {}", device_id);
 	let status = DeviceStatus {
 		query: None,
 		level: None,

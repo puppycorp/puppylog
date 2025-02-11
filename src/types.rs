@@ -49,6 +49,7 @@ pub struct SubscribeReq {
 }
 
 #[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceStatus {
 	pub query: Option<String>,
 	pub level: Option<LogLevel>,
