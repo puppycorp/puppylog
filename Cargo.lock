@@ -1440,6 +1440,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "tempfile",
  "tungstenite",
  "webpki-roots",
 ]
