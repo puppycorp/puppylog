@@ -192,17 +192,17 @@ var logsSearchPage = (args) => {
         removed.forEach((r) => logIds.delete(r.id));
       }
       logsList.innerHTML = logEntries.map((entry) => `
-\t\t\t\t<div class="logs-list-row">
-\t\t\t\t\t<div>
-\t\t\t\t\t\t${formatTimestamp(entry.timestamp)} 
-\t\t\t\t\t\t<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
-\t\t\t\t\t\t${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
-\t\t\t\t\t</div>
-\t\t\t\t\t<div class="logs-list-row-msg">
-\t\t\t\t\t\t${escapeHTML(truncateMessage(entry.msg))}
-\t\t\t\t\t</div>
-\t\t\t\t</div>
-\t\t\t`).join("");
+				<div class="logs-list-row">
+					<div>
+						${formatTimestamp(entry.timestamp)} 
+						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
+						${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
+					</div>
+					<div class="logs-list-row-msg" title="${entry.msg}">
+						${escapeHTML(truncateMessage(entry.msg))}
+					</div>
+				</div>
+			`).join("");
     }
   };
 };

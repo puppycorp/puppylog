@@ -163,7 +163,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
 						${entry.props.map(p => `${p.key}=${p.value}`).join(" ")}
 					</div>
-					<div class="logs-list-row-msg">
+					<div class="logs-list-row-msg" title="${entry.msg}">
 						${escapeHTML(truncateMessage(entry.msg))}
 					</div>
 				</div>
