@@ -216,6 +216,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			if (currentStream) currentStream.close()
 			shouldStream = false
 			setStreamButtonText()
+			removeQueryParam("stream")
 		}, 300_000)
 	}
 };

@@ -278,6 +278,7 @@ var logsSearchPage = (args) => {
         currentStream.close();
       shouldStream = false;
       setStreamButtonText();
+      removeQueryParam("stream");
     }, 300000);
   };
 };
