@@ -3,13 +3,13 @@ import { Router } from "./router";
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility";
 
 export const mainPage = (root: HTMLElement) => {
-	let query = getQueryParam("query") || ""
+	let query: string | undefined = getQueryParam("query") || ""
 	let logEventSource: EventSource | null = null  
 	let isStreaming = getQueryParam("stream") === "true"
 	let lastStreamQuery: string | null = null
 	let logEntriesBuffer: LogEntry[] = []
 	let timeout: any = null
-	const startStream = (query: string) => {
+	const startStream = (query: string | undefined) => {
 		if (lastStreamQuery === query) return
 		lastStreamQuery = query
 		if (logEventSource) logEventSource.close()
@@ -62,8 +62,8 @@ export const mainPage = (root: HTMLElement) => {
 			const offsetInHours = -offsetInMinutes / 60;
 			urlQuery.append("timezone", offsetInHours.toString())
 			if (args.query) urlQuery.append("query", args.query)
-			urlQuery.append("count", args.count.toString())
-			urlQuery.append("offset", args.offset.toString())
+			if (args.count) urlQuery.append("count", args.count.toString())
+			if (args.endDate) urlQuery.append("endDate", args.endDate)
 			const url = new URL("/api/logs", window.location.origin)
 			url.search = urlQuery.toString()
 			fetch(url.toString()).then(async (res) => {

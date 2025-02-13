@@ -18,8 +18,9 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::Json;
 use axum::Router;
+use chrono::DateTime;
 use chrono::Datelike;
-use futures::pin_mut;
+use chrono::Utc;
 use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
@@ -29,7 +30,6 @@ use serde_json::json;
 use serde_json::to_string;
 use serde_json::Value;
 use simple_logger::SimpleLogger;
-use storage::search_logs;
 use tokio::io::AsyncReadExt;
 use tokio::time::Instant;
 use tower_http::cors::AllowMethods;
@@ -56,10 +56,11 @@ enum SortDir {
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct GetLogsQuery {
-	pub offset: Option<usize>,
 	pub count: Option<usize>,
 	pub query: Option<String>,
+	pub end_date: Option<DateTime<Utc>>,
 }
 
 
@@ -408,8 +409,8 @@ async fn get_logs(
 		}
 		None => QueryAst::default()
 	};
-	query.offset = params.offset;
 	query.limit = params.count;
+	query.end_date = params.end_date;
 	let timer = Instant::now();
 	let logs = ctx.db.search_logs(query).await.unwrap();
 	log::info!("searched {} logs in {:?}", logs.len(), timer.elapsed());

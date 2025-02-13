@@ -95,10 +95,10 @@ impl DB {
 
 	pub async fn search_logs(&self, query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 		let conn = self.conn.lock().await;
-		let offset = query.offset.unwrap_or(0);
+		let end_date = query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(300));
 		let limit = query.limit.unwrap_or(200);
-		let mut stmt = conn.prepare("SELECT random, timestamp, level, msg, props FROM logs order by timestamp desc limit 1000000 offset ?")?;
-		let mut rows = stmt.query([offset])?;
+		let mut stmt = conn.prepare("SELECT random, timestamp, level, msg, props FROM logs where timestamp < ? order by timestamp desc")?;
+		let mut rows = stmt.query([end_date])?;
 		let mut logs = Vec::new();
 		while let Some(row) = rows.next()? {
 			let mut log_entry = LogEntry {

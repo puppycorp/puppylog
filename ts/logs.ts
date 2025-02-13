@@ -16,9 +16,10 @@ export type LogEntry = {
 }
 
 export type FetchMoreArgs = {
-	offset: number;
-	count: number;
-	query: string;
+	offset?: number;
+	count?: number;
+	endDate?: string;
+	query?: string;
 }
 
 interface LogsSearchPageArgs {
@@ -95,21 +96,30 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const loadingIndicator = document.createElement("div")
 	args.root.appendChild(loadingIndicator)
 
-	const queryLogs = (query: string): void => {
-		logEntries.length = 0
-		logIds.clear()
-		logsList.innerHTML = ""
+	const queryLogs = (clear?: boolean): void => {
 		loadingIndicator.textContent = "Loading..."
-		args.fetchMore({ offset: 0, count: 100, query })
+		let endDate
+		if (logEntries.length > 0) endDate = logEntries[logEntries.length - 1].timestamp
+		if (clear) {
+			console.log("clearing logs")
+			logEntries.length = 0
+			logIds.clear()
+			logsList.innerHTML = ""
+		}
+		args.fetchMore({ 
+			count: 100, 
+			query: searchTextarea.value,
+			endDate: endDate
+		})
 	};
 
 	searchTextarea.addEventListener("keydown", (e: KeyboardEvent) => {
 		if (e.key === "Enter" && e.ctrlKey) {
 			e.preventDefault()
-			queryLogs(searchTextarea.value)
+			queryLogs(true)
 		}
 	})
-	searchButton.addEventListener("click", () => queryLogs(searchTextarea.value))
+	searchButton.addEventListener("click", () => queryLogs(true))
 	const updateStreamButtonText = (isStreaming: boolean) => {
 		streamButton.innerHTML = isStreaming ? "stop" : "stream"
 	}
@@ -121,11 +131,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		(entries) => {
 			if (!moreRows || !entries[0].isIntersecting) return;
 			moreRows = false;
-			args.fetchMore({
-				offset: logEntries.length,
-				count: 100,
-				query: searchTextarea.value
-			});
+			queryLogs()
 		},
 		{
 			threshold: OBSERVER_THRESHOLD

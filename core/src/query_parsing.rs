@@ -71,6 +71,7 @@ pub struct QueryAst {
     pub order_by: Option<OrderBy>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
+	pub end_date: Option<DateTime<Utc>>,
 }
 
 impl QueryAst {

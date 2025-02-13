@@ -134,20 +134,30 @@ var logsSearchPage = (args) => {
   args.root.appendChild(logsList);
   const loadingIndicator = document.createElement("div");
   args.root.appendChild(loadingIndicator);
-  const queryLogs = (query) => {
-    logEntries.length = 0;
-    logIds.clear();
-    logsList.innerHTML = "";
+  const queryLogs = (clear) => {
     loadingIndicator.textContent = "Loading...";
-    args.fetchMore({ offset: 0, count: 100, query });
+    let endDate;
+    if (logEntries.length > 0)
+      endDate = logEntries[logEntries.length - 1].timestamp;
+    if (clear) {
+      console.log("clearing logs");
+      logEntries.length = 0;
+      logIds.clear();
+      logsList.innerHTML = "";
+    }
+    args.fetchMore({
+      count: 100,
+      query: searchTextarea.value,
+      endDate
+    });
   };
   searchTextarea.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && e.ctrlKey) {
       e.preventDefault();
-      queryLogs(searchTextarea.value);
+      queryLogs(true);
     }
   });
-  searchButton.addEventListener("click", () => queryLogs(searchTextarea.value));
+  searchButton.addEventListener("click", () => queryLogs(true));
   const updateStreamButtonText = (isStreaming) => {
     streamButton.innerHTML = isStreaming ? "stop" : "stream";
   };
@@ -159,11 +169,7 @@ var logsSearchPage = (args) => {
     if (!moreRows || !entries[0].isIntersecting)
       return;
     moreRows = false;
-    args.fetchMore({
-      offset: logEntries.length,
-      count: 100,
-      query: searchTextarea.value
-    });
+    queryLogs();
   }, {
     threshold: OBSERVER_THRESHOLD
   });
@@ -336,8 +342,10 @@ var mainPage = (root) => {
       urlQuery.append("timezone", offsetInHours.toString());
       if (args.query)
         urlQuery.append("query", args.query);
-      urlQuery.append("count", args.count.toString());
-      urlQuery.append("offset", args.offset.toString());
+      if (args.count)
+        urlQuery.append("count", args.count.toString());
+      if (args.endDate)
+        urlQuery.append("endDate", args.endDate);
       const url = new URL("/api/logs", window.location.origin);
       url.search = urlQuery.toString();
       fetch(url.toString()).then(async (res) => {
