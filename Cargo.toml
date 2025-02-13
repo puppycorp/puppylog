@@ -10,7 +10,7 @@ tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["macros", "ws"] }
 headers = "0.4"
 serde = { version = "1", features = ["derive"] }
-tower-http = { version = "0.6", features = ["decompression-gzip", "decompression-zstd", "cors"] }
+tower-http = { version = "0.6", features = ["decompression-gzip", "decompression-zstd", "compression-zstd", "cors"] }
 futures-util = "0.3"
 serde_json = "1"
 futures = "0.3"

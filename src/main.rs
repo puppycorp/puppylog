@@ -32,6 +32,7 @@ use serde_json::Value;
 use simple_logger::SimpleLogger;
 use tokio::io::AsyncReadExt;
 use tokio::time::Instant;
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::AllowMethods;
 use tower_http::cors::Any;
 use tower_http::cors::CorsLayer;
@@ -86,7 +87,7 @@ async fn main() {
 		.route("/favicon-192x192.png", get(favicon_192x192))
 		.route("/favicon-512x512.png", get(favicon_512x512))
 		.route("/manifest.json", get(manifest))
-		.route("/api/logs", get(get_logs)).layer(cors.clone())
+		.route("/api/logs", get(get_logs)).layer(CompressionLayer::new()).layer(cors.clone())
 		.route("/api/logs/stream", get(stream_logs)).layer(cors.clone())
 		.route("/api/logs", post(upload_logs))
 			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
