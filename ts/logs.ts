@@ -198,9 +198,6 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		}
 	})
 	searchButton.addEventListener("click", () => queryLogs(true))
-	const updateStreamButtonText = (isStreaming: boolean) => {
-		streamButton.innerHTML = isStreaming ? "stop" : "stream"
-	}
 	const observer = new IntersectionObserver(
 		(entries) => {
 			if (!moreRows || !entries[0].isIntersecting) return;
@@ -218,6 +215,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		activeTimeout = setTimeout(() => {
 			if (currentStream) currentStream.close()
 			shouldStream = false
+			setStreamButtonText()
 		}, 300_000)
 	}
 };

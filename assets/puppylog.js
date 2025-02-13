@@ -261,9 +261,6 @@ var logsSearchPage = (args) => {
     }
   });
   searchButton.addEventListener("click", () => queryLogs(true));
-  const updateStreamButtonText = (isStreaming) => {
-    streamButton.innerHTML = isStreaming ? "stop" : "stream";
-  };
   const observer = new IntersectionObserver((entries) => {
     if (!moreRows || !entries[0].isIntersecting)
       return;
@@ -280,6 +277,7 @@ var logsSearchPage = (args) => {
       if (currentStream)
         currentStream.close();
       shouldStream = false;
+      setStreamButtonText();
     }, 300000);
   };
 };
