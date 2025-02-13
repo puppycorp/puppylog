@@ -34,7 +34,6 @@ export const settingsPage = (root: HTMLElement) => {
 	textarea.style.height = "100px"
 	textarea.style.resize = "none"
 	root.appendChild(textarea)
-	root.appendChild(infoText)
 
 	textarea.oninput = (e) => {
 		console.log("onchange", textarea.value)
@@ -60,10 +59,9 @@ export const settingsPage = (root: HTMLElement) => {
 	saveButton.onclick = () => {
 		updateQuery(textarea.value)
 	}
-	root.appendChild(saveButton)
 
-	// const root = document.createElement("div")
-	root.appendChild(textarea)
+	// const root = document.createElement("div")	
+	root.appendChild(infoText)
 	root.appendChild(saveButton)
 	// root.innerHTML = `
 	// 	<div>

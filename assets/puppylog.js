@@ -80,6 +80,22 @@ var navigate = (path) => {
   handleRoute(path);
 };
 
+// ts/utility.ts
+var setQueryParam = (field, value) => {
+  const url = new URL(window.location.href);
+  url.searchParams.set(field, value);
+  window.history.pushState({}, "", url.toString());
+};
+var getQueryParam = (field) => {
+  const url = new URL(window.location.href);
+  return url.searchParams.get(field);
+};
+var removeQueryParam = (field) => {
+  const url = new URL(window.location.href);
+  url.searchParams.delete(field);
+  window.history.pushState({}, "", url.toString());
+};
+
 // ts/logs.ts
 var MAX_LOG_ENTRIES = 1e4;
 var MESSAGE_TRUNCATE_LENGTH = 700;
@@ -116,7 +132,7 @@ var logsSearchPage = (args) => {
   const searchTextarea = document.createElement("textarea");
   searchTextarea.className = "logs-search-bar";
   searchTextarea.placeholder = "Search logs (ctrl+enter to search)";
-  searchTextarea.value = args.query || "";
+  searchTextarea.value = getQueryParam("query") || "";
   logsOptions.appendChild(searchTextarea);
   const optionsRightPanel = document.createElement("div");
   optionsRightPanel.className = "logs-options-right-panel";
@@ -126,30 +142,117 @@ var logsSearchPage = (args) => {
   settingsButton.onclick = () => navigate("/settings");
   const searchButton = document.createElement("button");
   searchButton.innerHTML = searchSvg;
+  let shouldStream = getQueryParam("stream") === "true";
   const streamButton = document.createElement("button");
-  streamButton.innerHTML = "stream";
+  const setStreamButtonText = () => {
+    if (shouldStream)
+      streamButton.innerHTML = "stop";
+    else
+      streamButton.innerHTML = "stream";
+  };
+  setStreamButtonText();
   optionsRightPanel.append(settingsButton, searchButton, streamButton);
   const logsList = document.createElement("div");
   logsList.className = "logs-list";
   args.root.appendChild(logsList);
   const loadingIndicator = document.createElement("div");
   args.root.appendChild(loadingIndicator);
-  const queryLogs = (clear) => {
+  const addLogs = (logs) => {
+    const newEntries = logs.filter((entry) => !logIds.has(entry.id));
+    newEntries.forEach((entry) => {
+      logIds.add(entry.id);
+      logEntries.push(entry);
+    });
+    logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    if (logEntries.length > MAX_LOG_ENTRIES && args.root.scrollTop === 0) {
+      const removed = logEntries.splice(MAX_LOG_ENTRIES);
+      removed.forEach((r) => logIds.delete(r.id));
+    }
+    logsList.innerHTML = logEntries.map((entry) => `
+			<div class="logs-list-row">
+				<div>
+					${formatTimestamp(entry.timestamp)} 
+					<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
+					${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
+				</div>
+				<div class="logs-list-row-msg" title="${entry.msg}">
+					${escapeHTML(truncateMessage(entry.msg))}
+				</div>
+			</div>
+		`).join("");
+  };
+  let currentStream = null;
+  const startStream = (query) => {
+    const buffer = [];
+    let debounce;
+    currentStream = {
+      query,
+      close: args.streamLogs(query, (log) => {
+        buffer.push(log);
+        if (debounce)
+          return;
+        debounce = setTimeout(() => {
+          addLogs(buffer);
+          debounce = null;
+        }, 30);
+      }, () => {
+        currentStream = null;
+        if (!shouldStream)
+          return;
+        setTimeout(() => startStream(query), 1000);
+      })
+    };
+  };
+  streamButton.onclick = () => {
+    shouldStream = !shouldStream;
+    setStreamButtonText();
+    if (shouldStream)
+      setQueryParam("stream", "true");
+    else
+      removeQueryParam("stream");
+    if (shouldStream && !currentStream)
+      startStream(searchTextarea.value);
+    if (!shouldStream)
+      currentStream?.close();
+  };
+  const clearLogs = () => {
+    logEntries.length = 0;
+    logIds.clear();
+    logsList.innerHTML = "";
+  };
+  const queryLogs = async (clear) => {
+    const query = searchTextarea.value;
+    if (currentStream?.query !== query)
+      currentStream?.close();
+    if (!currentStream && shouldStream)
+      startStream(query);
     loadingIndicator.textContent = "Loading...";
     let endDate;
     if (logEntries.length > 0)
       endDate = logEntries[logEntries.length - 1].timestamp;
-    if (clear) {
-      console.log("clearing logs");
-      logEntries.length = 0;
-      logIds.clear();
-      logsList.innerHTML = "";
+    if (clear)
+      clearLogs();
+    try {
+      const logs = await args.fetchMore({
+        count: 100,
+        query,
+        endDate
+      });
+      if (logs.length === 0) {
+        loadingIndicator.textContent = "No more rows";
+        moreRows = false;
+        return;
+      }
+      moreRows = true;
+      setTimeout(() => {
+        moreRows = true;
+      }, FETCH_DEBOUNCE_MS);
+      addLogs(logs);
+      loadingIndicator.textContent = "";
+    } catch (err) {
+      loadingIndicator.textContent = err.message;
+      clearLogs();
     }
-    args.fetchMore({
-      count: 100,
-      query: searchTextarea.value,
-      endDate
-    });
   };
   searchTextarea.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && e.ctrlKey) {
@@ -161,10 +264,6 @@ var logsSearchPage = (args) => {
   const updateStreamButtonText = (isStreaming) => {
     streamButton.innerHTML = isStreaming ? "stop" : "stream";
   };
-  streamButton.addEventListener("click", () => {
-    const isStreaming = args.toggleIsStreaming();
-    updateStreamButtonText(isStreaming);
-  });
   const observer = new IntersectionObserver((entries) => {
     if (!moreRows || !entries[0].isIntersecting)
       return;
@@ -174,47 +273,19 @@ var logsSearchPage = (args) => {
     threshold: OBSERVER_THRESHOLD
   });
   observer.observe(loadingIndicator);
-  return {
-    setIsStreaming: updateStreamButtonText,
-    onError(err) {
-      loadingIndicator.textContent = err;
-    },
-    addLogEntries(entries) {
-      if (entries.length === 0) {
-        loadingIndicator.textContent = "No more rows";
-        return;
-      }
-      setTimeout(() => {
-        moreRows = true;
-      }, FETCH_DEBOUNCE_MS);
-      const newEntries = entries.filter((entry) => !logIds.has(entry.id));
-      newEntries.forEach((entry) => {
-        logIds.add(entry.id);
-        logEntries.push(entry);
-      });
-      logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      if (logEntries.length > MAX_LOG_ENTRIES && args.root.scrollTop === 0) {
-        const removed = logEntries.splice(MAX_LOG_ENTRIES);
-        removed.forEach((r) => logIds.delete(r.id));
-      }
-      logsList.innerHTML = logEntries.map((entry) => `
-				<div class="logs-list-row">
-					<div>
-						${formatTimestamp(entry.timestamp)} 
-						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
-						${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
-					</div>
-					<div class="logs-list-row-msg" title="${entry.msg}">
-						${escapeHTML(truncateMessage(entry.msg))}
-					</div>
-				</div>
-			`).join("");
-    }
+  let activeTimeout;
+  window.onmousemove = () => {
+    clearTimeout(activeTimeout);
+    activeTimeout = setTimeout(() => {
+      if (currentStream)
+        currentStream.close();
+      shouldStream = false;
+    }, 300000);
   };
 };
 
 // ts/logtable-test.ts
-var logline = (length, linebreaks) => {
+function logline(length, linebreaks) {
   let line = "";
   for (let i = 0;i < length; i++) {
     line += String.fromCharCode(65 + Math.floor(Math.random() * 26));
@@ -225,23 +296,23 @@ var logline = (length, linebreaks) => {
 ` + line.slice(idx);
   }
   return line;
-};
-var randomLogline = () => {
+}
+function randomLogline() {
   const length = Math.floor(Math.random() * 100);
   const linebreaks = Math.floor(Math.random() * 10);
   return logline(length, linebreaks);
-};
+}
 var logtableTest = (root) => {
-  const { addLogEntries } = logsSearchPage({
+  logsSearchPage({
     root,
-    isStreaming: false,
-    toggleIsStreaming: () => false,
-    fetchMore: (args) => {
-      const logEntries = [];
-      for (let i = args.offset;i < args.offset + args.count; i++) {
-        logEntries.push({
-          id: i.toString(),
-          timestamp: new Date().toISOString(),
+    fetchMore: async (args) => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const logs = [];
+      const count = args.count || 100;
+      for (let i = 0;i < count; i++) {
+        logs.push({
+          id: `${Date.now()}-${i}`,
+          timestamp: new Date(Date.now() - i * 1000).toISOString(),
           level: "info",
           props: [
             { key: "key", value: "value" },
@@ -250,92 +321,60 @@ var logtableTest = (root) => {
           msg: `[${i}] ${randomLogline()}`
         });
       }
-      addLogEntries(logEntries);
+      return logs;
+    },
+    streamLogs: (query, onNewLog, onEnd) => {
+      const intervalId = setInterval(() => {
+        onNewLog({
+          id: `${Date.now()}-stream`,
+          timestamp: new Date().toISOString(),
+          level: "debug",
+          props: [{ key: "stream", value: "true" }],
+          msg: `Streamed log: ${randomLogline()}`
+        });
+      }, 2000);
+      const timeoutId = setTimeout(() => {
+        clearInterval(intervalId);
+        onEnd();
+      }, 1e4);
+      return () => {
+        clearInterval(intervalId);
+        clearTimeout(timeoutId);
+      };
     }
   });
   return root;
 };
 
-// ts/utility.ts
-var setQueryParam = (field, value) => {
-  const url = new URL(window.location.href);
-  url.searchParams.set(field, value);
-  window.history.pushState({}, "", url.toString());
-};
-var getQueryParam = (field) => {
-  const url = new URL(window.location.href);
-  return url.searchParams.get(field);
-};
-var removeQueryParam = (field) => {
-  const url = new URL(window.location.href);
-  url.searchParams.delete(field);
-  window.history.pushState({}, "", url.toString());
-};
-
 // ts/main-page.ts
 var mainPage = (root) => {
   let query = getQueryParam("query") || "";
-  let logEventSource = null;
   let isStreaming = getQueryParam("stream") === "true";
-  let lastStreamQuery = null;
-  let logEntriesBuffer = [];
-  let timeout = null;
-  const startStream = (query2) => {
-    if (lastStreamQuery === query2)
-      return;
-    lastStreamQuery = query2;
-    if (logEventSource)
-      logEventSource.close();
-    logEventSource = null;
-    const streamQuery = new URLSearchParams;
-    if (query2)
-      streamQuery.append("query", query2);
-    const streamUrl = new URL("/api/logs/stream", window.location.origin);
-    streamUrl.search = streamQuery.toString();
-    logEventSource = new EventSource(streamUrl);
-    logEventSource.onopen = () => setIsStreaming(true);
-    logEventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      logEntriesBuffer.push(data);
-      if (timeout)
-        return;
-      timeout = setTimeout(() => {
-        addLogEntries(logEntriesBuffer);
-        logEntriesBuffer = [];
-        timeout = null;
-      }, 30);
-    };
-    logEventSource.onerror = (event) => {
-      console.error("EventSource error", event);
-      if (logEventSource)
-        logEventSource.close();
-      setIsStreaming(false);
-    };
-  };
-  const { addLogEntries, onError, setIsStreaming } = logsSearchPage({
+  logsSearchPage({
     root,
-    isStreaming,
-    query,
-    toggleIsStreaming: () => {
-      isStreaming = !isStreaming;
-      if (isStreaming) {
-        startStream(query);
-        setQueryParam("stream", "true");
-      } else {
-        if (logEventSource)
-          logEventSource.close();
-        lastStreamQuery = null;
-        removeQueryParam("stream");
-      }
-      return isStreaming;
+    streamLogs: (query2, onNewLog, onEnd) => {
+      const streamQuery = new URLSearchParams;
+      if (query2)
+        streamQuery.append("query", query2);
+      const streamUrl = new URL("/api/logs/stream", window.location.origin);
+      streamUrl.search = streamQuery.toString();
+      const eventSource = new EventSource(streamUrl);
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        onNewLog(data);
+      };
+      eventSource.onerror = (event) => {
+        eventSource.close();
+        onEnd();
+      };
+      return () => eventSource.close();
     },
-    fetchMore: (args) => {
+    fetchMore: async (args) => {
       query = args.query;
       if (query)
         setQueryParam("query", query);
       else
         removeQueryParam("query");
-      console.log("fetchMore", args);
       const urlQuery = new URLSearchParams;
       const offsetInMinutes = new Date().getTimezoneOffset();
       const offsetInHours = -offsetInMinutes / 60;
@@ -348,27 +387,16 @@ var mainPage = (root) => {
         urlQuery.append("endDate", args.endDate);
       const url = new URL("/api/logs", window.location.origin);
       url.search = urlQuery.toString();
-      fetch(url.toString()).then(async (res) => {
-        if (res.status === 400) {
-          const err = await res.json();
-          console.error("res.error", err);
-          onError(err.error);
-          console.log("res", res);
-          throw new Error("Failed to fetch logs");
-        }
-        return res.json();
-      }).then((data) => {
-        addLogEntries(data);
-      }).catch((err) => {
-        console.error("error", err);
-      });
-      if (isStreaming)
-        startStream(query);
-      else {
-        if (logEventSource) {
-          logEventSource.close();
-        }
+      const res = await fetch(url.toString());
+      if (res.status === 400) {
+        const err = await res.json();
+        console.error("res.error", err);
+        throw new Error(err.error);
+      } else if (res.status !== 200) {
+        const text = await res.text();
+        throw new Error(text);
       }
+      return res.json();
     }
   });
   return root;
@@ -406,7 +434,6 @@ var settingsPage = (root) => {
   textarea.style.height = "100px";
   textarea.style.resize = "none";
   root.appendChild(textarea);
-  root.appendChild(infoText);
   textarea.oninput = (e) => {
     console.log("onchange", textarea.value);
     if (originalQuery === textarea.value)
@@ -431,8 +458,7 @@ var settingsPage = (root) => {
   saveButton.onclick = () => {
     updateQuery(textarea.value);
   };
-  root.appendChild(saveButton);
-  root.appendChild(textarea);
+  root.appendChild(infoText);
   root.appendChild(saveButton);
   return root;
 };

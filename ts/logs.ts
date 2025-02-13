@@ -1,4 +1,5 @@
 import { navigate } from "./router";
+import { getQueryParam, removeQueryParam, setQueryParam } from "./utility";
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 
@@ -24,10 +25,8 @@ export type FetchMoreArgs = {
 
 interface LogsSearchPageArgs {
 	root: HTMLElement
-	isStreaming: boolean
-	query?: string
-	fetchMore: (args: FetchMoreArgs) => void
-	toggleIsStreaming: () => boolean
+	fetchMore: (args: FetchMoreArgs) => Promise<LogEntry[]>
+	streamLogs: (query: string, onNewLog: (log: LogEntry) => void, onEnd: () => void) => () => void
 }
 
 const MAX_LOG_ENTRIES = 10_000;
@@ -63,20 +62,23 @@ const truncateMessage = (msg: string): string =>
 		? `${msg.slice(0, MESSAGE_TRUNCATE_LENGTH)}...`
 		: msg;
 
+type CurrentStream = {
+	query: string
+	close: () => void
+}
+
 export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const logIds = new Set<string>();
 	const logEntries: LogEntry[] = [];
 	let moreRows = true;
-
 	args.root.innerHTML = ``
-
 	const logsOptions = document.createElement("div")
 	logsOptions.className = "logs-options"
 	args.root.appendChild(logsOptions)
 	const searchTextarea = document.createElement("textarea")
 	searchTextarea.className = "logs-search-bar"
 	searchTextarea.placeholder = "Search logs (ctrl+enter to search)"
-	searchTextarea.value = args.query || ""
+	searchTextarea.value = getQueryParam("query") || ""
 	logsOptions.appendChild(searchTextarea)
 	const optionsRightPanel = document.createElement("div")
 	optionsRightPanel.className = "logs-options-right-panel"
@@ -86,31 +88,107 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	settingsButton.onclick = () => navigate("/settings")
 	const searchButton = document.createElement("button")
 	searchButton.innerHTML = searchSvg
+	let shouldStream = getQueryParam("stream") === "true"
 	const streamButton = document.createElement("button")
-	streamButton.innerHTML = "stream"
+	const setStreamButtonText = () => {
+		if (shouldStream) streamButton.innerHTML = "stop"
+		else streamButton.innerHTML = "stream"
+	}
+	setStreamButtonText()
 	optionsRightPanel.append(settingsButton, searchButton, streamButton)
-
 	const logsList = document.createElement("div")
 	logsList.className = "logs-list"
 	args.root.appendChild(logsList)
 	const loadingIndicator = document.createElement("div")
 	args.root.appendChild(loadingIndicator)
-
-	const queryLogs = (clear?: boolean): void => {
+	const addLogs = (logs: LogEntry[]) => {
+		const newEntries = logs.filter(entry => !logIds.has(entry.id));
+		newEntries.forEach(entry => {
+			logIds.add(entry.id);
+			logEntries.push(entry);
+		});
+		logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+		if (logEntries.length > MAX_LOG_ENTRIES && args.root.scrollTop === 0) {
+			const removed = logEntries.splice(MAX_LOG_ENTRIES);
+			removed.forEach(r => logIds.delete(r.id));
+		}
+		logsList.innerHTML = logEntries.map(entry => `
+			<div class="logs-list-row">
+				<div>
+					${formatTimestamp(entry.timestamp)} 
+					<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
+					${entry.props.map(p => `${p.key}=${p.value}`).join(" ")}
+				</div>
+				<div class="logs-list-row-msg" title="${entry.msg}">
+					${escapeHTML(truncateMessage(entry.msg))}
+				</div>
+			</div>
+		`).join('');
+	}
+	let currentStream: CurrentStream | null = null
+	const startStream = (query: string) => {
+		const buffer: LogEntry[] = []
+		let debounce: any
+		currentStream = {
+			query,
+			close: args.streamLogs(
+				query,
+				(log) => {
+					buffer.push(log)
+					if (debounce) return
+					debounce = setTimeout(() => {
+						addLogs(buffer)
+						debounce = null
+					}, 30)
+				},
+				() => {
+					currentStream = null
+					if (!shouldStream) return
+					setTimeout(() => startStream(query), 1000)
+				}
+			)
+		}
+	}
+	streamButton.onclick = () => {
+		shouldStream = !shouldStream
+		setStreamButtonText()
+		if (shouldStream) setQueryParam("stream", "true")
+		else removeQueryParam("stream")
+		if (shouldStream && !currentStream) startStream(searchTextarea.value)
+		if (!shouldStream) currentStream?.close()
+	}
+	const clearLogs = () => {
+		logEntries.length = 0
+		logIds.clear()
+		logsList.innerHTML = ""
+	}
+	const queryLogs = async (clear?: boolean) => {
+		const query = searchTextarea.value
+		if (currentStream?.query !== query) currentStream?.close()
+		if (!currentStream && shouldStream) startStream(query)
 		loadingIndicator.textContent = "Loading..."
 		let endDate
 		if (logEntries.length > 0) endDate = logEntries[logEntries.length - 1].timestamp
-		if (clear) {
-			console.log("clearing logs")
-			logEntries.length = 0
-			logIds.clear()
-			logsList.innerHTML = ""
+		if (clear) clearLogs()
+		try {
+			const logs = await args.fetchMore({ 
+				count: 100, 
+				query,
+				endDate: endDate
+			})
+			if (logs.length === 0) {
+				loadingIndicator.textContent = 'No more rows';
+				moreRows = false
+				return;
+			}
+			moreRows = true
+			setTimeout(() => { moreRows = true; }, FETCH_DEBOUNCE_MS);
+			addLogs(logs)
+			loadingIndicator.textContent = ""
+		} catch (err: any) {
+			loadingIndicator.textContent = err.message
+			clearLogs()
 		}
-		args.fetchMore({ 
-			count: 100, 
-			query: searchTextarea.value,
-			endDate: endDate
-		})
 	};
 
 	searchTextarea.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -123,10 +201,6 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const updateStreamButtonText = (isStreaming: boolean) => {
 		streamButton.innerHTML = isStreaming ? "stop" : "stream"
 	}
-	streamButton.addEventListener("click", () => {
-		const isStreaming = args.toggleIsStreaming();
-		updateStreamButtonText(isStreaming);
-	});
 	const observer = new IntersectionObserver(
 		(entries) => {
 			if (!moreRows || !entries[0].isIntersecting) return;
@@ -138,42 +212,12 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		}
 	);
 	observer.observe(loadingIndicator);
-
-	// Return public interface
-	return {
-		setIsStreaming: updateStreamButtonText,
-		onError(err: string): void {
-			loadingIndicator.textContent = err;
-		},
-		addLogEntries(entries: ReadonlyArray<LogEntry>): void {
-			if (entries.length === 0) {
-				loadingIndicator.textContent = 'No more rows';
-				return;
-			}
-			setTimeout(() => { moreRows = true; }, FETCH_DEBOUNCE_MS);
-			const newEntries = entries.filter(entry => !logIds.has(entry.id));
-			newEntries.forEach(entry => {
-				logIds.add(entry.id);
-				logEntries.push(entry);
-			});
-			logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-			if (logEntries.length > MAX_LOG_ENTRIES && args.root.scrollTop === 0) {
-				const removed = logEntries.splice(MAX_LOG_ENTRIES);
-				removed.forEach(r => logIds.delete(r.id));
-			}
-
-			logsList.innerHTML = logEntries.map(entry => `
-				<div class="logs-list-row">
-					<div>
-						${formatTimestamp(entry.timestamp)} 
-						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
-						${entry.props.map(p => `${p.key}=${p.value}`).join(" ")}
-					</div>
-					<div class="logs-list-row-msg" title="${entry.msg}">
-						${escapeHTML(truncateMessage(entry.msg))}
-					</div>
-				</div>
-			`).join('');
-		}
-	};
+	let activeTimeout: any
+	window.onmousemove = () => {
+		clearTimeout(activeTimeout)
+		activeTimeout = setTimeout(() => {
+			if (currentStream) currentStream.close()
+			shouldStream = false
+		}, 300_000)
+	}
 };
