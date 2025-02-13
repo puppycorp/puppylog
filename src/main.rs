@@ -19,14 +19,11 @@ use axum::routing::post;
 use axum::Json;
 use axum::Router;
 use chrono::Datelike;
+use futures::pin_mut;
 use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
-use puppylog::parse_log_query;
-use puppylog::LogEntry;
-use puppylog::LogEntryChunkParser;
-use puppylog::PuppylogEvent;
-use puppylog::QueryAst;
+use puppylog::*;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::to_string;
@@ -34,6 +31,7 @@ use serde_json::Value;
 use simple_logger::SimpleLogger;
 use storage::search_logs;
 use tokio::io::AsyncReadExt;
+use tokio::time::Instant;
 use tower_http::cors::AllowMethods;
 use tower_http::cors::Any;
 use tower_http::cors::CorsLayer;
@@ -49,6 +47,7 @@ mod worker;
 mod subscriber;
 mod config;
 mod settings;
+mod db;
 
 #[derive(Deserialize, Debug)]
 enum SortDir {
@@ -69,7 +68,6 @@ async fn main() {
 	// initialize tracing
 	//tracing_subscriber::fmt::init();
 	SimpleLogger::new().with_level(LevelFilter::Info).init().unwrap();
-
 	let ctx = Context::new();
 	let ctx = Arc::new(ctx);
 
@@ -123,33 +121,17 @@ async fn upload_device_logs(
 	body: Body
 ) {
 	log::info!("upload_device_logs device_id: {}", device_id);
+	let upload_timer = Instant::now();
 	let mut stream: BodyDataStream = body.into_data_stream();
 	let mut chunk_reader = LogEntryChunkParser::new();
-	let current_year = chrono::Utc::now().year();
 	let mut i = 0;
+	let mut total_bytes = 0;
 	while let Some(chunk_result) = stream.next().await {
 		match chunk_result {
 			Ok(chunk) => {
+				total_bytes += chunk.len();
 				chunk_reader.add_chunk(chunk);
-				for entry in &chunk_reader.log_entries {
-					i += 1;
-					if entry.timestamp.year() > current_year + 1 {
-						log::error!("Invalid year in log entry: {:?}", entry);
-						continue;
-					}
-					if entry.timestamp.year() < current_year - 1 {
-						log::error!("Invalid year in log entry: {:?}", entry);
-						continue;
-					}
-					if let Err(err) = ctx.logentry_saver.save(entry.clone()).await {
-						log::error!("Failed to save log entry: {}", err);
-						return;
-					}
-					if let Err(e) = ctx.publisher.send(entry.clone()).await {
-						log::error!("Failed to publish log entry: {}", e);
-					}
-				}
-				chunk_reader.log_entries.clear();
+				i += chunk_reader.log_entries.len();
 			}
 			Err(e) => {
 				log::error!("Error receiving chunk: {}", e);
@@ -157,7 +139,15 @@ async fn upload_device_logs(
 			}
 		}
 	}
-	log::info!("uploaded {} logs", i);
+	log::info!("uploaded {} logs in {:?}", i, upload_timer.elapsed());
+	let timer = Instant::now();
+	ctx.db.handle_device_upload(&device_id, total_bytes as u32, &chunk_reader.log_entries).await.unwrap();
+	log::info!("inserted {} logs to database in {:?}", i, timer.elapsed());
+	for entry in &chunk_reader.log_entries {
+		if let Err(e) = ctx.publisher.send(entry.clone()).await {
+			log::error!("Failed to publish log entry: {}", e);
+		}
+	}
 }
 
 async fn get_device_status(Path(device_id): Path<String>) -> Json<Value> {
@@ -182,7 +172,6 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 	log::info!("device connected: {:?}", device_id);
 	let mut rx = ctx.event_tx.subscribe();
 	let mut chunk_reader = LogEntryChunkParser::new();
-
 	{
 		let settings = ctx.settings.inner().await;
 		let query = settings.collection_query.clone();
@@ -210,21 +199,14 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 						match msg {
 							axum::extract::ws::Message::Text(utf8_bytes) => {},
 							axum::extract::ws::Message::Binary(bytes) => {
-								let current_year = chrono::Utc::now().year();
+								let bytes_len = bytes.len();
+								log::info!("received batch of {} bytes", bytes_len);
 								chunk_reader.add_chunk(bytes);
+								let timer = Instant::now();
+								log::info!("inserting {} logs to database", chunk_reader.log_entries.len());
+								ctx.db.handle_device_upload(&device_id, bytes_len as u32, &chunk_reader.log_entries).await.unwrap();
+								log::info!("inserted {} logs to database in {:?}", chunk_reader.log_entries.len(), timer.elapsed());
 								for entry in &chunk_reader.log_entries {
-									if entry.timestamp.year() > current_year + 1 {
-										log::error!("[ws] Invalid year in log entry: {:?}", entry);
-										continue;
-									}
-									if entry.timestamp.year() < current_year - 1 {
-										log::error!("[ws] Invalid year in log entry: {:?}", entry);
-										continue;
-									}
-									if let Err(err) = ctx.logentry_saver.save(entry.clone()).await {
-										log::error!("Failed to save log entry: {}", err);
-										return;	
-									}
 									if let Err(e) = ctx.publisher.send(entry.clone()).await {
 										log::error!("Failed to publish log entry: {}", e);
 									}
@@ -233,7 +215,10 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 							},
 							axum::extract::ws::Message::Ping(bytes) => {},
 							axum::extract::ws::Message::Pong(bytes) => {},
-							axum::extract::ws::Message::Close(close_frame) => {},
+							axum::extract::ws::Message::Close(close_frame) => {
+								log::info!("Connection closed: {:?}", close_frame);
+								break;
+							},
 						}
 					}
 					Some(Err(err)) => {
@@ -423,14 +408,13 @@ async fn get_logs(
 		}
 		None => QueryAst::default()
 	};
-
-	log::info!("query: {:?}", query);
 	query.offset = params.offset;
 	query.limit = params.count;
-
-	let log_entries = search_logs(query).await.unwrap();
-	let log_entries = log_entries.into_iter().map(|entry| logentry_to_json(&entry)).collect::<Vec<_>>();
-	Ok(Json(serde_json::to_value(&log_entries).unwrap()))
+	let timer = Instant::now();
+	let logs = ctx.db.search_logs(query).await.unwrap();
+	log::info!("searched {} logs in {:?}", logs.len(), timer.elapsed());
+	let logs = logs.iter().map(|p| logentry_to_json(p)).collect::<Vec<_>>();
+	Ok(Json(serde_json::to_value(&logs).unwrap()))
 }
 
 async fn stream_logs(
@@ -451,6 +435,5 @@ async fn stream_logs(
 			let data = to_string(&logentry_to_json(&p)).unwrap();
 			Ok(Event::default().data(data))
 		});
-
 	Ok(Sse::new(stream))
 }

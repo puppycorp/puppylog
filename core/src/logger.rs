@@ -21,10 +21,6 @@ use crate::Prop;
 use crate::PuppylogEvent;
 use crate::QueryAst;
 
-struct Settings {
-
-}
-
 enum WorkerMessage {
     LogEntry(LogEntry),
     Flush(mpsc::Sender<()>),
@@ -47,18 +43,22 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 		loop {
 			match rx.recv_timeout(Duration::from_millis(100)) {
 				Ok(WorkerMessage::LogEntry(entry)) => {
-					if let Some(q) = &logquery {
-						if let Ok(true) = check_expr(&q.root, &entry) {
-							if let Err(err) = entry.serialize(&mut serialize_buffer) {
-								eprintln!("Failed to serialize log entry: {}", err);
-							}
-						}
+					// if let Some(q) = &logquery {
+					// 	if let Ok(true) = check_expr(&q.root, &entry) {
+					// 		if let Err(err) = entry.serialize(&mut serialize_buffer) {
+					// 			eprintln!("Failed to serialize log entry: {}", err);
+					// 		}
+					// 	}
+					// }
+					if let Err(err) = entry.serialize(&mut serialize_buffer) {
+						eprintln!("Failed to serialize log entry: {}", err);
 					}
 					if serialize_buffer.len() > builder.max_buffer_size {
 						println!("max serialize buffer size reached");
 						break;
 					}
 					if send_timer.elapsed() > builder.send_interval {
+						println!("send interval reached");
 						break;
 					}
 				},
@@ -124,6 +124,7 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 
 				send_timer = Instant::now();
 				if let Some(batch) = queue.pop_front() {
+					println!("seding batch size: {}", batch.len());
 					match c.send(Message::Binary(batch)) {
 						Ok(_) => { serialize_buffer.clear(); },
 						Err(e) => {

@@ -8,3 +8,4 @@ node_modules
 workdir
 logs
 settings.json
+puppylog.db

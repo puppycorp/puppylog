@@ -2,10 +2,14 @@ use puppylog::LogEntry;
 use puppylog::LogLevel;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
+use rusqlite::Connection;
 use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Mutex;
+use crate::db::open_db;
+use crate::db::DB;
 use crate::settings::Settings;
 use crate::storage::LogEntrySaver;
 use crate::subscriber::Subscriber;
@@ -21,7 +25,8 @@ pub struct Context {
 	pub publisher: Sender<LogEntry>,
 	pub logentry_saver: LogEntrySaver,
 	pub settings: Settings,
-	pub event_tx: broadcast::Sender<PuppylogEvent>
+	pub event_tx: broadcast::Sender<PuppylogEvent>,
+	pub db: DB
 }
 
 impl Context {
@@ -38,7 +43,8 @@ impl Context {
 			publisher: pubtx,
 			logentry_saver: LogEntrySaver::new(),
 			settings: Settings::load().unwrap(),
-			event_tx
+			event_tx,
+			db: DB::new(open_db())
 		}
 	}
 }

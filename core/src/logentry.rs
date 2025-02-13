@@ -1,6 +1,7 @@
 use std::io::{self, Read, Write};
 use byteorder::LittleEndian;
 use bytes::Bytes;
+use chrono::Datelike;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde::Serialize;
@@ -44,10 +45,8 @@ impl LogLevel {
 			_ => LogLevel::Uknown
 		}
 	}
-}
 
-impl Into<u8> for &LogLevel {
-	fn into(self) -> u8 {
+	pub fn to_u8(&self) -> u8 {
 		match self {
 			LogLevel::Trace => 1,
 			LogLevel::Debug => 2,
@@ -57,6 +56,12 @@ impl Into<u8> for &LogLevel {
 			LogLevel::Fatal => 6,
 			LogLevel::Uknown => 0
 		}
+	}
+}
+
+impl Into<u8> for &LogLevel {
+	fn into(self) -> u8 {
+		self.to_u8()
 	}
 }
 
@@ -151,11 +156,18 @@ impl LogEntry {
 		format!("{:032x}", self.id())
 	}
 
-	pub fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-		writer.write_u16::<LittleEndian>(self.version)?;
-		writer.write_i64::<LittleEndian>(self.timestamp.timestamp_micros())?;
-		writer.write_u32::<LittleEndian>(self.random)?;
-		writer.write_u8((&self.level).into())?;
+	pub fn id_bytes(&self) -> [u8; 12] {
+		let timestamp_ms = self.timestamp.timestamp_millis() as u64;
+		let random = self.random;
+		let mut bytes = [0u8; 12];
+		// In little-endian, random (4 bytes) goes in the first 4 bytes.
+		bytes[..4].copy_from_slice(&random.to_le_bytes());
+		// Timestamp (8 bytes) goes in the next 8 bytes.
+		bytes[4..].copy_from_slice(&timestamp_ms.to_le_bytes());
+		bytes
+	}
+
+	pub fn serialize_props<W: Write>(&self, writer: &mut W) -> io::Result<()> {
 		writer.write_u8(self.props.len() as u8)?;
 		for prop in &self.props {
 			writer.write_u8(prop.key.len() as u8)?;
@@ -163,9 +175,38 @@ impl LogEntry {
 			writer.write_u8(prop.value.len() as u8)?;
 			writer.write_all(prop.value.as_bytes())?;
 		}
+		Ok(())
+	}
+
+	pub fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+		writer.write_u16::<LittleEndian>(self.version)?;
+		writer.write_i64::<LittleEndian>(self.timestamp.timestamp_micros())?;
+		writer.write_u32::<LittleEndian>(self.random)?;
+		writer.write_u8((&self.level).into())?;
+		self.serialize_props(writer)?;
 		writer.write_u32::<LittleEndian>(self.msg.len() as u32)?;
 		writer.write_all(self.msg.as_bytes())?;
 		Ok(())
+	}
+
+	pub fn deserialize_props(buff: &[u8], props: &mut Vec<Prop>) {
+		let mut ptr = 0;
+		let prop_count = buff[ptr];
+		ptr += 1;
+		for _ in 0..prop_count {
+			let key_len = buff[ptr] as usize;
+			ptr += 1;
+			let key = String::from_utf8_lossy(&buff[ptr..ptr + key_len]).to_string();
+			ptr += key_len;
+			let value_len = buff[ptr] as usize;
+			ptr += 1;
+			let value = String::from_utf8_lossy(&buff[ptr..ptr + value_len]).to_string();
+			ptr += value_len;
+			props.push(Prop {
+				key,
+				value
+			});
+		}
 	}
 
 	pub fn fast_deserialize(data: &[u8], ptr: &mut usize) -> Result<LogEntry, LogentryDeserializerError> {
@@ -303,11 +344,20 @@ impl LogEntryChunkParser {
     }
 
     pub fn add_chunk(&mut self, chunk: Bytes) {
+		let current_year = chrono::Utc::now().year();
         self.chunck_parser.add_chunk(chunk);
         loop {
             match LogEntry::deserialize(&mut self.chunck_parser) {
                 Ok(entry) => {
                     self.chunck_parser.commit();
+					if entry.timestamp.year() > current_year + 1 {
+						log::error!("Invalid year in log entry: {:?}", entry);
+						continue;
+					}
+					if entry.timestamp.year() < current_year - 1 {
+						log::error!("Invalid year in log entry: {:?}", entry);
+						continue;
+					}
                     self.log_entries.push(entry);
                 },
                 Err(_) => {
