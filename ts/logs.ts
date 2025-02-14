@@ -120,7 +120,8 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 					${entry.props.map(p => `${p.key}=${p.value}`).join(" ")}
 				</div>
 				<div class="logs-list-row-msg" title="${entry.msg}">
-					${escapeHTML(truncateMessage(entry.msg))}
+					<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
+					<div class="msg-full">${escapeHTML(entry.msg)}</div>
 				</div>
 			</div>
 		`).join('');

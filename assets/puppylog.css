@@ -183,5 +183,28 @@ body {
 }
 
 .logs-list-row-msg {
+	position: relative;
+	display: inline-block;
 	max-width: 100%;
+	cursor: pointer;
+}
+
+.msg-summary {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-height: 3em;
+}
+
+.msg-full {
+	display: none;
+	white-space: normal;
+	background-color: #fff;
+}
+
+.logs-list-row-msg:hover .msg-summary {
+	display: none;
+}
+
+.logs-list-row-msg:hover .msg-full {
+	display: block;
 }
