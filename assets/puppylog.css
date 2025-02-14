@@ -199,6 +199,7 @@ body {
 	display: none;
 	white-space: normal;
 	background-color: #fff;
+	word-break: break-word;
 }
 
 .logs-list-row-msg:hover .msg-summary {
