@@ -49,6 +49,7 @@ mod subscriber;
 mod config;
 mod settings;
 mod db;
+mod segment;
 
 #[derive(Deserialize, Debug)]
 enum SortDir {

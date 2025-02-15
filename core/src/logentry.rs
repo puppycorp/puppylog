@@ -118,7 +118,7 @@ pub struct Prop {
 	pub value: String
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LogEntry {
 	pub version: u16,
 	pub random: u32,
