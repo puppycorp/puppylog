@@ -328,7 +328,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 			let mut i = 0;
 			loop {
-				println!("timestamp: {:?}", now);
+				if i % 1000 == 0 {
+					println!("[{}] timestamp: {}", i, now);
+				}
 				logger.send_logentry(LogEntry {
 					timestamp: now,
 					level: LogLevel::Info,
@@ -345,6 +347,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				}
 				sleep(Duration::from_millis(args.interval));
 			}
+
+			logger.close();
 		},
         Commands::Upload { address } => todo!(),
         Commands::Tokenize { subcommand } => {

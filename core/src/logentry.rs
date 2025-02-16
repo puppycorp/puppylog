@@ -128,6 +128,19 @@ pub struct LogEntry {
 	pub msg: String
 }
 
+impl PartialOrd for LogEntry {
+	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+		self.timestamp.partial_cmp(&other.timestamp)
+	}
+}
+
+impl Eq for LogEntry {}
+impl Ord for LogEntry {
+	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+		self.timestamp.cmp(&other.timestamp)
+	}
+}
+
 impl Default for LogEntry {
 	fn default() -> Self {
 		LogEntry {
@@ -350,7 +363,7 @@ impl LogEntryChunkParser {
             match LogEntry::deserialize(&mut self.chunck_parser) {
                 Ok(entry) => {
                     self.chunck_parser.commit();
-					if entry.timestamp.year() > current_year + 1 {
+					if entry.timestamp.year() > current_year + 10 {
 						log::error!("Invalid year in log entry: {:?}", entry);
 						continue;
 					}

@@ -21,10 +21,12 @@ use axum::Router;
 use chrono::DateTime;
 use chrono::Datelike;
 use chrono::Utc;
+use config::log_path;
 use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
 use puppylog::*;
+use segment::save_segment;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::to_string;
@@ -37,19 +39,20 @@ use tower_http::cors::AllowMethods;
 use tower_http::cors::Any;
 use tower_http::cors::CorsLayer;
 use tower_http::decompression::RequestDecompressionLayer;
-use types::Context;
-use types::DeviceStatus;
+use context::Context;
+use context::DeviceStatus;
 
 mod logline;
 mod cache;
 mod storage;
-mod types;
+mod context;
 mod worker;
 mod subscriber;
 mod config;
 mod settings;
 mod db;
 mod segment;
+mod wal;
 
 #[derive(Deserialize, Debug)]
 enum SortDir {
@@ -90,10 +93,6 @@ async fn main() {
 		.route("/manifest.json", get(manifest))
 		.route("/api/logs", get(get_logs)).layer(CompressionLayer::new()).layer(cors.clone())
 		.route("/api/logs/stream", get(stream_logs)).layer(cors.clone())
-		.route("/api/logs", post(upload_logs))
-			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
-			.layer(RequestDecompressionLayer::new().gzip(true).zstd(true))
-			.with_state(ctx.clone())
 		.route("/api/settings/query", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/settings/query", get(get_settings_query)).with_state(ctx.clone())
 		.route("/api/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
@@ -144,13 +143,8 @@ async fn upload_device_logs(
 	}
 	log::info!("uploaded {} logs in {:?}", i, upload_timer.elapsed());
 	let timer = Instant::now();
-	ctx.db.handle_device_upload(&device_id, total_bytes as u32, &chunk_reader.log_entries).await.unwrap();
-	log::info!("inserted {} logs to database in {:?}", i, timer.elapsed());
-	for entry in &chunk_reader.log_entries {
-		if let Err(e) = ctx.publisher.send(entry.clone()).await {
-			log::error!("Failed to publish log entry: {}", e);
-		}
-	}
+	ctx.save_logs(&chunk_reader.log_entries).await;
+	log::info!("saved {} logs in {:?}", i, timer.elapsed());
 }
 
 async fn get_device_status(Path(device_id): Path<String>) -> Json<Value> {
@@ -206,14 +200,9 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 								log::info!("received batch of {} bytes", bytes_len);
 								chunk_reader.add_chunk(bytes);
 								let timer = Instant::now();
-								log::info!("inserting {} logs to database", chunk_reader.log_entries.len());
-								ctx.db.handle_device_upload(&device_id, bytes_len as u32, &chunk_reader.log_entries).await.unwrap();
-								log::info!("inserted {} logs to database in {:?}", chunk_reader.log_entries.len(), timer.elapsed());
-								for entry in &chunk_reader.log_entries {
-									if let Err(e) = ctx.publisher.send(entry.clone()).await {
-										log::error!("Failed to publish log entry: {}", e);
-									}
-								}
+								log::info!("saving {} logs", chunk_reader.log_entries.len());
+								ctx.save_logs(&chunk_reader.log_entries).await;
+								log::info!("saved {} logs in {:?}", chunk_reader.log_entries.len(), timer.elapsed());
 								chunk_reader.log_entries.clear();
 							},
 							axum::extract::ws::Message::Ping(bytes) => {},
@@ -229,7 +218,7 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 					}
 					None => {
 						log::error!("Connection closed");
-						return;
+						break;
 					}
 				}
 			}
@@ -326,44 +315,6 @@ async fn manifest() -> Result<Response, StatusCode> {
 	).into_response())
 }
 
-async fn upload_logs(State(ctx): State<Arc<Context>>, body: Body) {
-	let mut stream: BodyDataStream = body.into_data_stream();
-	let mut chunk_reader = LogEntryChunkParser::new();
-	let current_year = chrono::Utc::now().year();
-
-	while let Some(chunk_result) = stream.next().await {
-		match chunk_result {
-			Ok(chunk) => {
-				chunk_reader.add_chunk(chunk);
-				for entry in &chunk_reader.log_entries {
-					if entry.timestamp.year() > current_year + 1 {
-						log::error!("Invalid year in log entry: {:?}", entry);
-						continue;
-					}
-
-					if entry.timestamp.year() < current_year - 1 {
-						log::error!("Invalid year in log entry: {:?}", entry);
-						continue;
-					}
-
-					if let Err(err) = ctx.logentry_saver.save(entry.clone()).await {
-						log::error!("Failed to save log entry: {}", err);
-						return;
-					}
-					if let Err(e) = ctx.publisher.send(entry.clone()).await {
-						log::error!("Failed to publish log entry: {}", e);
-					}
-				}
-				chunk_reader.log_entries.clear();
-			}
-			Err(e) => {
-				log::error!("Error receiving chunk: {}", e);
-				return;
-			}
-		}
-	}
-}
-
 #[derive(Debug)]
 struct BadRequestError(String);
 
@@ -414,9 +365,22 @@ async fn get_logs(
 	query.limit = params.count;
 	query.end_date = params.end_date;
 	let timer = Instant::now();
-	let logs = ctx.db.search_logs(query).await.unwrap();
-	log::info!("searched {} logs in {:?}", logs.len(), timer.elapsed());
-	let logs = logs.iter().map(|p| logentry_to_json(p)).collect::<Vec<_>>();
+	let end = query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
+	let count = query.limit.unwrap_or(200);
+	let mut logs = Vec::new();
+	// log::info!("segments: {:?}", ctx.logsegments);
+	let segments = ctx.logsegments.lock().await;
+	segments.for_each(end, |entry| {
+		if check_expr(&query.root, &entry).unwrap() {
+			logs.push(entry.clone());
+		}
+		if logs.len() >= count {
+			false
+		} else {
+			true
+		}
+	});
+
 	Ok(Json(serde_json::to_value(&logs).unwrap()))
 }
 

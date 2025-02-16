@@ -1,7 +1,7 @@
 use puppylog::LogEntry;
 use puppylog::QueryAst;
 use tokio::sync::mpsc;
-use crate::types::SubscribeReq;
+use crate::context::SubscribeReq;
 
 struct Subscriber {
 	res_tx: mpsc::Sender<LogEntry>,
