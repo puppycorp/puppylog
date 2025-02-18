@@ -73,7 +73,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	let moreRows = true;
 	args.root.innerHTML = ``
 	const logsOptions = document.createElement("div")
-	logsOptions.className = "logs-options"
+	logsOptions.className = "page-header"
 	args.root.appendChild(logsOptions)
 	const searchTextarea = document.createElement("textarea")
 	searchTextarea.className = "logs-search-bar"
@@ -113,7 +113,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			removed.forEach(r => logIds.delete(r.id));
 		}
 		logsList.innerHTML = logEntries.map(entry => `
-			<div class="logs-list-row">
+			<div class="list-row">
 				<div>
 					${formatTimestamp(entry.timestamp)} 
 					<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>

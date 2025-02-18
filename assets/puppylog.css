@@ -1,53 +1,58 @@
-.logs-root {
+body {
+	font-family: Arial, sans-serif;
+}
+.page-root {
 	display: flex;
 	flex-direction: column;
 	height: 100%;
 	width: 100%;
+	background-color: #f9fafb;
+	font-family: Arial, sans-serif;
 }
-
-.logs-options {
+.page-header {
 	position: sticky;
 	top: 0;
 	display: flex;
+	align-items: center;
 	gap: 10px;
-	background-color: white;
+	background-color: #fff;
 	padding: 16px;
 	border-bottom: 1px solid #E5E7EB;
 	z-index: 10;
 }
-
 .logs-options-right-panel {
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
 	margin-left: auto;
+	align-items: flex-end;
 }
-
 .logs-search-bar {
-	/* height: 100px; */
 	resize: none;
 	flex-grow: 1;
 	padding: 8px;
 	border: 1px solid #D1D5DB;
 	border-radius: 4px;
 	font-family: inherit;
-	/* height: 100px; */
+	height: 120px;
 }
-
-.logs-button {
+.logs-button,
+button {
 	padding: 8px 16px;
 	background-color: #F3F4F6;
 	border: 1px solid #D1D5DB;
 	border-radius: 4px;
 	cursor: pointer;
 	white-space: pre-line;
+	transition: background-color 0.2s ease;
 }
 
-.logs-button:hover {
+.logs-button:hover,
+button:hover {
 	background-color: #E5E7EB;
 }
 
-.logs-table-cell {
+.table-cell {
 	padding: 8px 12px;
 	border-bottom: 1px solid #E5E7EB;
 }
@@ -60,28 +65,28 @@
 	color: #6B7280;
 }
 
-.logs-timestamp-cell {
+.logs-timestamp-cell,
+.logs-level-cell,
+.logs-props-cell,
+.logs-message-cell {
 	padding: 8px 12px;
 	border-bottom: 1px solid #E5E7EB;
+}
+
+.logs-timestamp-cell {
 	white-space: nowrap;
 	text-align: center;
 }
 
 .logs-level-cell {
-	padding: 8px 12px;
-	border-bottom: 1px solid #E5E7EB;
 	text-align: center;
 }
 
 .logs-props-cell {
-	padding: 8px 12px;
-	border-bottom: 1px solid #E5E7EB;
 	text-align: left;
 }
 
 .logs-message-cell {
-	padding: 8px 12px;
-	border-bottom: 1px solid #E5E7EB;
 	word-break: break-all;
 }
 
@@ -109,103 +114,93 @@
 .logs-level-fatal {
 	color: #8B5CF6;
 }
-
-button {
-	padding: 8px 16px;
-	background-color: #F3F4F6;
-	border: 1px solid #D1D5DB;
-	border-radius: 4px;
-	cursor: pointer;
-	white-space: pre-line;
-}
-
 body {
-	padding: 0px;
-	margin: 0px;
+	padding: 0;
+	margin: 0;
 }
-
 .sticky-table-header {
 	position: sticky;
-	top: 500;
-	background-color: white;
+	top: 500px;
+	background-color: #fff;
 	z-index: 5;
 }
-
 .logs-table {
-	/* width: 100%; */
-	/* max-width: 100%; */
 	display: flex;
 	flex-direction: column;
 	border-collapse: collapse;
 	font-size: 14px;
 	overflow-x: auto;
-	/* display: block; */
 }
-
 .logs-table-header {
-	/* position: sticky;
-	top: 150px; */
-	background-color: white;
+	background-color: #fff;
 	z-index: 5;
 	padding: 12px;
 	text-align: left;
 	border-bottom: 2px solid #E5E7EB;
 }
-
 .logs-table-body {
 	/* overflow-x: auto; */
 }
-
 .logs-table-row-msg {
 	min-width: 300px;
 	word-break: break-all;
 }
-
 .logs-prop {
 	white-space: nowrap;
 }
-
 .logs-timestamp {
 	white-space: nowrap;
 }
-
 .logs-list {
-	gap: 10px;
 	display: flex;
 	flex-direction: column;
+	gap: 5px;
 	overflow-x: auto;
+	padding: 16px;
 }
-
-.logs-list-row {
-	border-top: #E5E7EB 1px solid;
-	border-bottom: #E5E7EB 1px solid;
-
+.list-row {
+	border: 1px solid #E5E7EB;
+	border-radius: 4px;
+	padding: 8px;
+	background-color: #fff;
+	transition: box-shadow 0.2s ease;
 }
-
+.list-row:hover {
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
 .logs-list-row-msg {
 	position: relative;
 	display: inline-block;
 	max-width: 100%;
 	cursor: pointer;
 }
-
 .msg-summary {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	max-height: 3em;
 }
-
 .msg-full {
 	display: none;
 	white-space: normal;
 	background-color: #fff;
 	word-break: break-word;
 }
-
 .logs-list-row-msg:hover .msg-summary {
 	display: none;
 }
-
 .logs-list-row-msg:hover .msg-full {
 	display: block;
+}
+.device-details {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 8px;
+}
+.device-details > div {
+	flex: 1 1 200px;
+	padding: 4px 8px;
+	border: 1px solid #E5E7EB;
+	border-radius: 4px;
+	background-color: #f3f4f6;
 }

@@ -1,37 +1,44 @@
 // ts/devices.ts
 var devicesPage = async (root) => {
-  root.innerHTML = "<h1>Devices</h1>";
+  root.innerHTML = `
+		<div class="page-header">
+			<h1>Devices</h1>
+		</div>
+		<div class="logs-list" id="devicesList">
+		<div class="logs-loading-indicator">Loading devices...</div>
+		</div>
+	`;
   try {
     const res = await fetch("/api/v1/devices").then((res2) => res2.json());
     console.log("res", res);
+    const devicesList = document.getElementById("devicesList");
+    if (!devicesList)
+      return;
+    devicesList.innerHTML = "";
     if (Array.isArray(res) && res.length > 0) {
-      const listContainer = document.createElement("ul");
-      listContainer.style.listStyle = "none";
-      listContainer.style.padding = "0";
       res.forEach((device) => {
-        const listItem = document.createElement("li");
-        listItem.style.border = "1px solid #ccc";
-        listItem.style.borderRadius = "4px";
-        listItem.style.marginBottom = "10px";
-        listItem.style.padding = "10px";
-        listItem.innerHTML = `
-			<div><strong>ID:</strong> ${device.id}</div>
-			<div><strong>Created at:</strong> ${new Date(device.created_at).toLocaleString()}</div>
-			<div><strong>Filter level:</strong> ${device.filter_level}</div>
-			<div><strong>Last upload:</strong> ${new Date(device.last_upload_at).toLocaleString()}</div>
-			<div><strong>Logs count:</strong> ${device.logs_count}</div>
-			<div><strong>Logs size:</strong> ${device.logs_size} bytes</div>
-			<div><strong>Send logs:</strong> ${device.send_logs ? "Yes" : "No"}</div>
-		  `;
-        listContainer.appendChild(listItem);
+        const deviceRow = document.createElement("div");
+        deviceRow.classList.add("list-row");
+        deviceRow.innerHTML = `
+					<div class="table-cell"><strong>ID:</strong> ${device.id}</div>
+					<div class="table-cell"><strong>Created at:</strong> ${new Date(device.created_at).toLocaleString()}</div>
+					<div class="table-cell"><strong>Filter level:</strong> ${device.filter_level}</div>
+					<div class="table-cell"><strong>Last upload:</strong> ${new Date(device.last_upload_at).toLocaleString()}</div>
+					<div class="table-cell"><strong>Logs count:</strong> ${device.logs_count}</div>
+					<div class="table-cell"><strong>Logs size:</strong> ${device.logs_size} bytes</div>
+					<div class="table-cell"><strong>Send logs:</strong> ${device.send_logs ? "Yes" : "No"}</div>
+				`;
+        devicesList.appendChild(deviceRow);
       });
-      root.appendChild(listContainer);
     } else {
-      root.innerHTML += "<p>No devices found.</p>";
+      devicesList.innerHTML = `<p>No devices found.</p>`;
     }
   } catch (error) {
     console.error("Error fetching devices:", error);
-    root.innerHTML += `<p>Error fetching devices. Please try again later.</p>`;
+    const devicesList = document.getElementById("devicesList");
+    if (devicesList) {
+      devicesList.innerHTML = `<p>Error fetching devices. Please try again later.</p>`;
+    }
   }
 };
 
@@ -164,7 +171,7 @@ var logsSearchPage = (args) => {
   let moreRows = true;
   args.root.innerHTML = ``;
   const logsOptions = document.createElement("div");
-  logsOptions.className = "logs-options";
+  logsOptions.className = "page-header";
   args.root.appendChild(logsOptions);
   const searchTextarea = document.createElement("textarea");
   searchTextarea.className = "logs-search-bar";
@@ -206,7 +213,7 @@ var logsSearchPage = (args) => {
       removed.forEach((r) => logIds.delete(r.id));
     }
     logsList.innerHTML = logEntries.map((entry) => `
-			<div class="logs-list-row">
+			<div class="list-row">
 				<div>
 					${formatTimestamp(entry.timestamp)} 
 					<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
