@@ -32,11 +32,10 @@ impl Wal {
 			while let Ok(cmd) = rx.recv() {
 				match cmd {
 					Cmd::WriteLog(log) => {
-						println!("Adding log: {:?}", log);
 						log.serialize(&mut wal_file).unwrap();
 					},
 					Cmd::Clear => {
-						println!("Clearing logs");
+						log::info!("clearing logs from wal");
 						wal_file.set_len(0).unwrap();
 					}
 				}

@@ -38,7 +38,7 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 	let mut send_timer = Instant::now();
 	let mut serialize_buffer = Vec::with_capacity(builder.max_buffer_size);
 	let mut queue = VecDeque::new();
-	let mut close_channel = None;
+	let mut close_ack = None;
 	'main: loop {
 		loop {
 			match rx.recv_timeout(Duration::from_millis(100)) {
@@ -66,7 +66,7 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 					let _ = ack.send(());
 				},
 				Ok(WorkerMessage::FlushClose(ack)) => {
-					close_channel = Some(ack);
+					close_ack = Some(ack);
 					break;
 				},
 				Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -80,10 +80,16 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 			};
 		}
 
-		queue.push_back(Bytes::copy_from_slice(&serialize_buffer));
-		serialize_buffer.clear();
-		if queue.len() > 30 {
-			queue.pop_front();
+		if close_ack.is_some() && serialize_buffer.is_empty() && queue.is_empty() {
+			break;
+		}
+
+		if serialize_buffer.len() > 0 {
+			queue.push_back(Bytes::copy_from_slice(&serialize_buffer));
+			serialize_buffer.clear();
+			if queue.len() > 30 {
+				queue.pop_front();
+			}
 		}
 
 		let mut client_broken = false;
@@ -208,7 +214,7 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 	}
 	println!("worker done");
 
-	if let Some(ack) = close_channel {
+	if let Some(ack) = close_ack {
 		let _ = ack.send(());
 	}
 }

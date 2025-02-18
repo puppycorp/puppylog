@@ -26,7 +26,6 @@ use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
 use puppylog::*;
-use segment::save_segment;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::to_string;
@@ -74,7 +73,7 @@ async fn main() {
 	// initialize tracing
 	//tracing_subscriber::fmt::init();
 	SimpleLogger::new().with_level(LevelFilter::Info).init().unwrap();
-	let ctx = Context::new();
+	let ctx = Context::new().await;
 	let ctx = Arc::new(ctx);
 
 	let cors = CorsLayer::new()
@@ -368,19 +367,16 @@ async fn get_logs(
 	let end = query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
 	let count = query.limit.unwrap_or(200);
 	let mut logs = Vec::new();
-	// log::info!("segments: {:?}", ctx.logsegments);
-	let segments = ctx.logsegments.lock().await;
-	segments.for_each(end, |entry| {
+	ctx.find_logs(end, |entry| {
 		if check_expr(&query.root, &entry).unwrap() {
-			logs.push(entry.clone());
+			logs.push(logentry_to_json(entry));
 		}
 		if logs.len() >= count {
 			false
 		} else {
 			true
 		}
-	});
-
+	}).await;
 	Ok(Json(serde_json::to_value(&logs).unwrap()))
 }
 

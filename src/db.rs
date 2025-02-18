@@ -1,6 +1,8 @@
 use std::fs::create_dir_all;
 
 use anyhow::bail;
+use chrono::DateTime;
+use chrono::Utc;
 use puppylog::LogEntry;
 use puppylog::LogLevel;
 use puppylog::QueryAst;
@@ -9,6 +11,7 @@ use rusqlite::ToSql;
 use tokio::sync::Mutex;
 
 use crate::config::db_path;
+use crate::segment::SegmentMeta;
 
 struct Migration {
     id: u32,
@@ -39,6 +42,16 @@ const MIGRATIONS: &[Migration] = &[
 		);
 		create index logs_timestamp on logs (timestamp);
 		create index logs_level on logs (level);
+		create table log_segments (
+			id integer primary key,
+			bucket_id integer null,
+			first_timestamp timestamp not null,
+			last_timestamp timestamp not null,
+			original_size integer not null,
+			compressed_size integer,
+			logs_count integer not null,
+			created_at timestamp default current_timestamp
+		);
 		"
 	}
 ];
@@ -49,6 +62,14 @@ pub fn open_db() -> Connection {
 		create_dir_all(path.parent().unwrap()).unwrap();
 	}
 	Connection::open(db_path()).unwrap()
+}
+
+pub struct NewSegmentArgs {
+	pub first_timestamp: chrono::DateTime<chrono::Utc>,
+	pub last_timestamp: chrono::DateTime<chrono::Utc>,
+	pub original_size: usize,
+	pub compressed_size: usize,
+	pub logs_count: u64,
 }
 
 #[derive(Debug)]
@@ -125,8 +146,43 @@ impl DB {
 		}
 		Ok(logs)
 	}
-}
 
+	pub async fn new_segment(&self, args: NewSegmentArgs) -> anyhow::Result<u32> {
+		let mut conn = self.conn.lock().await;
+		let tx = conn.transaction()?;
+		let new_id = {
+			let mut stmt = tx.prepare(
+				"INSERT INTO log_segments (first_timestamp, last_timestamp, original_size, compressed_size, logs_count)
+				 VALUES (?1, ?2, ?3, ?4, ?5)"
+			)?;
+			stmt.execute(&[
+				&args.first_timestamp as &dyn ToSql,
+				&args.last_timestamp as &dyn ToSql,
+				&args.original_size as &dyn ToSql,
+				&args.compressed_size as &dyn ToSql,
+				&args.logs_count as &dyn ToSql,
+			])?;
+			tx.last_insert_rowid()
+		};
+		tx.commit()?;
+		Ok(new_id as u32)
+	}
+
+	pub async fn get_segment_metadatas(&self) -> anyhow::Result<Vec<SegmentMeta>> {
+		let conn = self.conn.lock().await;
+		let mut stmt = conn.prepare("SELECT id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count FROM log_segments")?;
+		let mut rows = stmt.query([])?;
+		let mut metas = Vec::new();
+		while let Some(row) = rows.next()? {
+			metas.push(SegmentMeta {
+				id: row.get(0)?,
+				first_timestamp: row.get(1)?,
+				last_timestamp: row.get(2)?,
+			});
+		}
+		Ok(metas)
+	}
+}
 
 pub fn run_migrations(conn: &mut Connection) -> anyhow::Result<()> {
 	log::info!("running migrations");
@@ -138,44 +194,26 @@ pub fn run_migrations(conn: &mut Connection) -> anyhow::Result<()> {
         )",
         (),
     )?;
-
     let applied_migrations: Vec<u32> = {
         let mut stmt = conn.prepare("SELECT id FROM migrations")?;
         let m = stmt.query_map((), |row| row.get(0))?;
     	m.filter_map(Result::ok).collect()
     };
-
-    let mut pending_migrations: Vec<&Migration> = MIGRATIONS
-        .iter()
+    let mut pending_migrations: Vec<&Migration> = MIGRATIONS.iter()
         .filter(|migration| !applied_migrations.contains(&migration.id))
         .collect();
-
-    // Sort pending migrations by id to ensure correct order
     pending_migrations.sort_by_key(|migration| migration.id);
     if !pending_migrations.is_empty() {
         for migration in &pending_migrations {
             log::info!("applying migration {}: {}", migration.id, migration.name);
-
-            // Begin a transaction for atomicity
             let tx = conn.transaction()?;
-
-            // Execute the migration SQL
             tx.execute_batch(migration.sql)?;
-
-            // Record the applied migration
-            tx.execute(
-                "INSERT INTO migrations (id, name) VALUES (?1, ?2)",
-				&[&migration.id as &dyn ToSql, &migration.name as &dyn ToSql],
-            )?;
-
-            // Commit the transaction
+            tx.execute("INSERT INTO migrations (id, name) VALUES (?1, ?2)", &[&migration.id as &dyn ToSql, &migration.name as &dyn ToSql])?;
             tx.commit()?;
-
             log::info!("migration {} applied successfully.", migration.id);
         }
     } else {
         log::info!("No new migrations to apply.");
     }
-
     Ok(())
 }

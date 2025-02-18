@@ -2,7 +2,7 @@ use chrono::{NaiveDate, TimeZone};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use log::Level;
-use puppylog::{DrainParser, LogEntry, LogLevel, PuppylogBuilder};
+use puppylog::{DrainParser, LogEntry, LogLevel, Prop, PuppylogBuilder};
 use rand::{distributions::Alphanumeric, prelude::*};
 use reqwest;
 use std::collections::HashMap;
@@ -65,6 +65,129 @@ const WEBHOOK_SOURCES: &[&str] = &["GitHub", "Stripe", "Slack", "Twilio"];
 const LICENSE_TYPES: &[&str] = &["Pro", "Enterprise", "Basic", "Premium"];
 const REPORT_TYPES: &[&str] = &["Sales", "Inventory", "UserActivity", "Performance"];
 
+// Helper functions to generate random IDs
+fn generate_random_id(prefix: &str, length: usize) -> String {
+    let rand_str: String = thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(length)
+        .map(char::from)
+        .collect();
+    format!("{}-{}", prefix, rand_str)
+}
+
+fn random_string_name() -> String {
+    let length = thread_rng().gen_range(5..11);
+    thread_rng()
+        .sample_iter(&Alphanumeric)
+        .filter(|c| c.is_ascii_alphabetic())
+        .take(length)
+        .map(char::from)
+        .collect()
+}
+
+fn random_email() -> String {
+    let username: String = thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(7)
+        .map(char::from)
+        .collect();
+    let domain = EMAIL_DOMAINS.choose(&mut thread_rng()).unwrap();
+    format!("{}@{}", username.to_lowercase(), domain)
+}
+
+fn random_num() -> u32 {
+	thread_rng().gen_range(1000..10000)
+}
+
+fn random_log_entry(timestamp: DateTime<Utc>) -> LogEntry {
+	let mut rng = thread_rng();
+	
+	// Select log level using weights
+	let level = LOG_LEVELS.choose_weighted(&mut rng, |&item| {
+		LOG_LEVEL_WEIGHTS[LOG_LEVELS.iter().position(|&x| x == item).unwrap()]
+	}).unwrap().clone();
+	
+	let entity = *ENTITY_TYPES.choose(&mut rng).unwrap();
+	let actions = ACTIONS.get(entity).unwrap();
+	let action = *actions.choose(&mut rng).unwrap();
+	
+	// Generate the log line based on entity type
+	let log_line = match entity {
+		"user" => {
+			let username = random_string_name();
+			LogEntry {
+				random: random_num(),
+				timestamp,
+				level,
+				msg: format!("{} {} {}", entity, username, action),
+				props: vec![
+					Prop {
+						key: "username".to_string(),
+						value: username
+					}
+				],
+				..Default::default()
+			}
+		},
+		"api request" => {
+			let api_name = API_NAMES.choose(&mut rng).unwrap();
+			if action == "returned status" {
+				let status = STATUS_CODES.choose(&mut rng).unwrap();
+				LogEntry {
+					random: random_num(),
+					timestamp,
+					level,
+					msg: format!("{} {} returned status {}", entity, api_name, status),
+					props: vec![
+						Prop {
+							key: "api_name".to_string(),
+							value: api_name.to_string()
+						},
+						Prop {
+							key: "status".to_string(),
+							value: status.to_string()
+						}
+					],
+					..Default::default()
+				}
+			} else {
+				LogEntry {
+					random: random_num(),
+					timestamp,
+					level,
+					msg: format!("{} {} {}", entity, api_name, action),
+					props: vec![
+						Prop {
+							key: "api_name".to_string(),
+							value: api_name.to_string()
+						}
+					],
+					..Default::default()
+				}
+			}
+		},
+		// Add similar matches for other entity types...
+		_ => {
+			let generic_id = generate_random_id("id", 8);
+			LogEntry {
+				random: random_num(),
+				timestamp,
+				level,
+				msg: format!("{} {} {}", entity, generic_id, action),
+				props: vec![
+					Prop {
+						key: "id".to_string(),
+						value: generic_id
+					}
+				],
+				..Default::default()
+			}
+		}
+	};
+	
+	log_line
+}
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -109,135 +232,6 @@ enum TokenizeSubcommands {
         output: Option<String>,
     }
 }
-
-// Helper functions to generate random IDs
-fn generate_random_id(prefix: &str, length: usize) -> String {
-    let rand_str: String = thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(length)
-        .map(char::from)
-        .collect();
-    format!("{}-{}", prefix, rand_str)
-}
-
-fn random_string_name() -> String {
-    let length = thread_rng().gen_range(5..11);
-    thread_rng()
-        .sample_iter(&Alphanumeric)
-        .filter(|c| c.is_ascii_alphabetic())
-        .take(length)
-        .map(char::from)
-        .collect()
-}
-
-fn random_email() -> String {
-    let username: String = thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(7)
-        .map(char::from)
-        .collect();
-    let domain = EMAIL_DOMAINS.choose(&mut thread_rng()).unwrap();
-    format!("{}@{}", username.to_lowercase(), domain)
-}
-
-// fn random_timestamp(base_time: DateTime<Utc>) -> DateTime<Utc> {
-//     let offset = Duration::seconds(thread_rng().gen_range(0..100000));
-//     base_time + offset
-// }
-
-// fn generate_log_line(order: u32, base_time: DateTime<Utc>) -> LogEntry {
-//     let mut rng = thread_rng();
-    
-//     // Select log level using weights
-//     let level = LOG_LEVELS.choose_weighted(&mut rng, |&item| {
-//         LOG_LEVEL_WEIGHTS[LOG_LEVELS.iter().position(|&x| x == item).unwrap()]
-//     }).unwrap().clone();
-    
-//     let entity = *ENTITY_TYPES.choose(&mut rng).unwrap();
-//     let actions = ACTIONS.get(entity).unwrap();
-//     let action = *actions.choose(&mut rng).unwrap();
-    
-//     let timestamp = random_timestamp(base_time);
-// 	println!("timestamp: {:?}", timestamp);
-    
-//     // Generate the log line based on entity type
-//     let log_line = match entity {
-//         "user" => {
-//             let username = random_string_name();
-//             // format!("{} {} {} {} {}", 
-//             //        timestamp.to_rfc3339(),
-//             //        log_level,
-//             //        entity,
-//             //        username,
-//             //        action);
-// 			LogEntry {
-// 				timestamp,
-// 				level,
-// 				msg: format!("{} {} {}", entity, username, action),
-// 				props: vec![("username".to_string(), username)]
-// 			}
-//         },
-//         "api request" => {
-//             let api_name = API_NAMES.choose(&mut rng).unwrap();
-//             if action == "returned status" {
-//                 let status = STATUS_CODES.choose(&mut rng).unwrap();
-//                 // format!("{} {} {} {} returned status {}", 
-//                 //        timestamp.to_rfc3339(),
-//                 //        log_level,
-//                 //        entity,
-//                 //        api_name,
-//                 //        status)
-// 				LogEntry {
-// 					timestamp,
-// 					level,
-// 					msg: format!("{} {} returned status {}", entity, api_name, status),
-// 					props: vec![("api_name".to_string(), api_name.to_string()), ("status".to_string(), status.to_string())]
-// 				}
-// 			} else {
-//                 // format!("{} {} {} {} {}", 
-//                 //        timestamp.to_rfc3339(),
-//                 //        log_level,
-//                 //        entity,
-//                 //        api_name,
-//                 //        action)
-// 				LogEntry {
-// 					timestamp,
-// 					level,
-// 					msg: format!("{} {} {}", entity, api_name, action),
-// 					props: vec![("api_name".to_string(), api_name.to_string())]
-// 				}
-//             }
-//         },
-//         // Add similar matches for other entity types...
-//         _ => {
-//             let generic_id = generate_random_id("id", 8);
-//             // format!("{} {} {} {} {}", 
-//             //        timestamp.to_rfc3339(),
-//             //        log_level,
-//             //        entity,
-//             //        generic_id,
-//             //        action)
-// 			LogEntry {
-// 				timestamp,
-// 				level,
-// 				msg: format!("{} {} {}", entity, generic_id, action),
-// 				props: vec![("id".to_string(), generic_id)]
-// 			}
-//         }
-//     };
-    
-//     log_line
-// }
-
-// fn generate_logs(count: usize) -> Vec<LogEntry> {
-//     let base_time = Utc::now();
-//     (0..count)
-//         .map(|i| {
-//             let order = (i % 3 + 1) as u32;
-//             generate_log_line(order, base_time)
-//         })
-//         .collect()
-// }
 
 async fn upload_logs(address: &str, logs: &[String], compress: bool) -> Result<(), Box<dyn Error>> {
     let client = reqwest::Client::new();
@@ -331,13 +325,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				if i % 1000 == 0 {
 					println!("[{}] timestamp: {}", i, now);
 				}
-				logger.send_logentry(LogEntry {
-					timestamp: now,
-					level: LogLevel::Info,
-					msg: format!("Hello, world! {}", i),
-					props: Vec::new(),
-					..Default::default()
-				});
+				let log = random_log_entry(now);
+				logger.send_logentry(log);
 				now += Duration::from_millis(args.increment as u64);
 				i += 1;
 				if let Some(count) = args.count {
