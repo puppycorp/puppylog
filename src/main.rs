@@ -70,9 +70,13 @@ struct GetLogsQuery {
 
 #[tokio::main]
 async fn main() {
-	// initialize tracing
-	//tracing_subscriber::fmt::init();
 	SimpleLogger::new().with_level(LevelFilter::Info).init().unwrap();
+	let log_path = log_path();
+	log::info!("checking if log path exists: {:?}", log_path);
+	if !log_path.exists() {
+		log::info!("does not exist, creating it");
+		std::fs::create_dir_all(log_path).unwrap();
+	}
 	let ctx = Context::new().await;
 	let ctx = Arc::new(ctx);
 
