@@ -138,12 +138,40 @@ impl DB {
 		Ok(devices)
 	}
 
-	pub async fn get_device(&self, device_id: &str) -> anyhow::Result<Option<Device>> {
+	pub async fn get_or_create_device(&self, device_id: &str) -> anyhow::Result<Device> {
 		let conn = self.conn.lock().await;
-		let mut stmt = conn.prepare("SELECT id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at FROM devices WHERE id = ?")?;
-		let mut rows = stmt.query([&device_id])?;
+		let now = chrono::Utc::now();
+		
+		// Prepare a single query that either inserts a new device or (on conflict) does a no-op update,
+		// then returns the row.
+		let mut stmt = conn.prepare(
+			"INSERT INTO devices 
+			  (id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at)
+			 VALUES 
+			  (?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(id) DO UPDATE SET 
+			  id = id
+			 RETURNING id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at"
+		)?;
+		
+		// Define default values for a new device.
+		let default_send_logs = false;
+		let default_filter_level = LogLevel::Info.to_u8(); // Assuming you have a conversion method.
+		let default_logs_size = 0;
+		let default_logs_count = 0;
+		
+		let mut rows = stmt.query(rusqlite::params![
+			device_id,
+			default_send_logs,
+			default_filter_level,
+			default_logs_size,
+			default_logs_count,
+			now,
+			now,
+		])?;
+		
 		if let Some(row) = rows.next()? {
-			Ok(Some(Device {
+			Ok(Device {
 				id: row.get(0)?,
 				send_logs: row.get(1)?,
 				filter_level: LogLevel::from_i64(row.get(2)?),
@@ -151,9 +179,9 @@ impl DB {
 				logs_count: row.get(4)?,
 				created_at: row.get(5)?,
 				last_upload_at: row.get(6)?,
-			}))
+			})
 		} else {
-			Ok(None)
+			Err(anyhow::anyhow!("Failed to get or create device"))
 		}
 	}
 

@@ -182,18 +182,11 @@ async fn get_device_status(
 	Path(device_id): Path<String>
 ) -> Json<Value> {
 	log::info!("get_device_status device_id: {}", device_id);
-	match ctx.db.get_device(&device_id).await.unwrap() {
-		Some(device) => {
-			Json(json!({
-				"level": device.filter_level.to_string(),
-				"send_logs": device.send_logs
-			}))
-		},
-		None => Json(json!({
-			"level": "info",
-			"send_logs": false
-		}))
-	}
+	let device = ctx.db.get_or_create_device(&device_id).await.unwrap();
+	Json(json!({
+		"level": device.filter_level.to_string(),
+		"send_logs": device.send_logs
+	}))
 }
 
 async fn device_ws_handler(
