@@ -1,3 +1,4 @@
+import { devicesPage } from "./devices";
 import { logtableTest } from "./logtable-test";
 import { mainPage } from "./main-page";
 import { routes } from "./router";
@@ -11,6 +12,7 @@ window.onload = () => {
 	routes({
 		"/tests/logs": () => logtableTest(body),
 		"/settings": () => settingsPage(body),
+		"/devices": () => devicesPage(body),
 		"/*": () => mainPage(body)
 	})
 }

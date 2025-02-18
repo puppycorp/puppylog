@@ -110,6 +110,7 @@ async fn main() {
 			.with_state(ctx.clone())
 		.route("/api/v1/settings", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/settings", get(get_settings_query)).with_state(ctx.clone())
+		.route("/api/v1/devices", get(get_devices)).with_state(ctx.clone())
 		.fallback(get(root));
 
 	// run our app with hyper, listening globally on port 3000
@@ -118,6 +119,11 @@ async fn main() {
 		listener,
 		app,
 	).await.unwrap();
+}
+
+async fn get_devices(State(ctx): State<Arc<Context>>) -> Json<Value> {
+	let devices = ctx.db.get_devices().await.unwrap();
+	Json(serde_json::to_value(&devices).unwrap())
 }
 
 async fn upload_device_logs(

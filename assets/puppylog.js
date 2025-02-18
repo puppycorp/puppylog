@@ -1,3 +1,40 @@
+// ts/devices.ts
+var devicesPage = async (root) => {
+  root.innerHTML = "<h1>Devices</h1>";
+  try {
+    const res = await fetch("/api/v1/devices").then((res2) => res2.json());
+    console.log("res", res);
+    if (Array.isArray(res) && res.length > 0) {
+      const listContainer = document.createElement("ul");
+      listContainer.style.listStyle = "none";
+      listContainer.style.padding = "0";
+      res.forEach((device) => {
+        const listItem = document.createElement("li");
+        listItem.style.border = "1px solid #ccc";
+        listItem.style.borderRadius = "4px";
+        listItem.style.marginBottom = "10px";
+        listItem.style.padding = "10px";
+        listItem.innerHTML = `
+			<div><strong>ID:</strong> ${device.id}</div>
+			<div><strong>Created at:</strong> ${new Date(device.created_at).toLocaleString()}</div>
+			<div><strong>Filter level:</strong> ${device.filter_level}</div>
+			<div><strong>Last upload:</strong> ${new Date(device.last_upload_at).toLocaleString()}</div>
+			<div><strong>Logs count:</strong> ${device.logs_count}</div>
+			<div><strong>Logs size:</strong> ${device.logs_size} bytes</div>
+			<div><strong>Send logs:</strong> ${device.send_logs ? "Yes" : "No"}</div>
+		  `;
+        listContainer.appendChild(listItem);
+      });
+      root.appendChild(listContainer);
+    } else {
+      root.innerHTML += "<p>No devices found.</p>";
+    }
+  } catch (error) {
+    console.error("Error fetching devices:", error);
+    root.innerHTML += `<p>Error fetching devices. Please try again later.</p>`;
+  }
+};
+
 // ts/pattern-matcher.ts
 function patternMatcher(handlers) {
   const typedHandlers = handlers;
@@ -472,6 +509,7 @@ window.onload = () => {
   routes({
     "/tests/logs": () => logtableTest(body),
     "/settings": () => settingsPage(body),
+    "/devices": () => devicesPage(body),
     "/*": () => mainPage(body)
   });
 };

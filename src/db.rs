@@ -8,6 +8,7 @@ use puppylog::LogLevel;
 use puppylog::QueryAst;
 use rusqlite::Connection;
 use rusqlite::ToSql;
+use serde::Serialize;
 use tokio::sync::Mutex;
 
 use crate::config::db_path;
@@ -73,6 +74,17 @@ pub struct NewSegmentArgs {
 	pub logs_count: u64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct Device {
+	pub id: String,
+	pub send_logs: bool,
+	pub filter_level: LogLevel,
+	pub logs_size: usize,
+	pub logs_count: usize,
+	pub created_at: DateTime<Utc>,
+	pub last_upload_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug)]
 pub struct DB {
 	conn: Mutex<Connection>,
@@ -103,6 +115,25 @@ impl DB {
 		tx.commit()?;
 		log::info!("saved device metadata: {} {} {}", device_id, logs_size, logs_count);
 		Ok(())
+	}
+
+	pub async fn get_devices(&self) -> anyhow::Result<Vec<Device>> {
+		let conn = self.conn.lock().await;
+		let mut stmt = conn.prepare("SELECT id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at FROM devices")?;
+		let mut rows = stmt.query([])?;
+		let mut devices = Vec::new();
+		while let Some(row) = rows.next()? {
+			devices.push(Device {
+				id: row.get(0)?,
+				send_logs: row.get(1)?,
+				filter_level: LogLevel::from_i64(row.get(2)?),
+				logs_size: row.get(3)?,
+				logs_count: row.get(4)?,
+				created_at: row.get(5)?,
+				last_upload_at: row.get(6)?,
+			});
+		}
+		Ok(devices)
 	}
 
 	pub async fn handle_device_upload(&self, device_id: &str, new_bytes: u32, logs: &[LogEntry]) -> anyhow::Result<()> {
