@@ -11,6 +11,7 @@ use byteorder::WriteBytesExt;
 use crate::ChunkReader;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum LogLevel {
 	Trace,
 	Debug,

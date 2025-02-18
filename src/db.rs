@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 
 use crate::config::db_path;
 use crate::segment::SegmentMeta;
+use crate::UpdateDeviceSettings;
 
 struct Migration {
     id: u32,
@@ -75,6 +76,7 @@ pub struct NewSegmentArgs {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Device {
 	pub id: String,
 	pub send_logs: bool,
@@ -163,6 +165,22 @@ impl DB {
 		}
 		tx.commit()?;
 		Ok(())
+	}
+
+	pub async fn update_device_settings(&self, device_id: &str, payload: &UpdateDeviceSettings) {
+		let conn = &mut self.conn.lock().await;
+		let mut stmt = conn.prepare(
+			"INSERT INTO devices (id, send_logs, filter_level)
+			VALUES (?1, ?2, ?3)
+			ON CONFLICT(id) DO UPDATE SET
+				send_logs = ?2,
+				filter_level = ?3"
+		).unwrap();
+		stmt.execute(&[
+			&device_id as &dyn ToSql,
+			&payload.send_logs as &dyn ToSql,
+			&payload.filter_level.to_u8() as &dyn ToSql,
+		]).unwrap();
 	}
 
 	pub async fn search_logs(&self, query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {

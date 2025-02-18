@@ -67,6 +67,13 @@ struct GetLogsQuery {
 	pub end_date: Option<DateTime<Utc>>,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct UpdateDeviceSettings {
+	pub send_logs: bool,
+	pub filter_level: LogLevel
+}
+
 
 #[tokio::main]
 async fn main() {
@@ -111,6 +118,7 @@ async fn main() {
 		.route("/api/v1/settings", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/settings", get(get_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/devices", get(get_devices)).with_state(ctx.clone())
+		.route("/api/v1/device/{deviceId}/settings", post(update_device_settings)).with_state(ctx.clone())
 		.fallback(get(root));
 
 	// run our app with hyper, listening globally on port 3000
@@ -119,6 +127,16 @@ async fn main() {
 		listener,
 		app,
 	).await.unwrap();
+}
+
+async fn update_device_settings(
+	State(ctx): State<Arc<Context>>,
+	Path(device_id): Path<String>,
+	body: Json<UpdateDeviceSettings>
+) -> &'static str {
+	log::info!("update_device_settings device_id: {:?}", device_id);
+	ctx.db.update_device_settings(&device_id, &body).await;
+	"ok"
 }
 
 async fn get_devices(State(ctx): State<Arc<Context>>) -> Json<Value> {
