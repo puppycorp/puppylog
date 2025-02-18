@@ -28,7 +28,8 @@ const MIGRATIONS: &[Migration] = &[
 			id text primary key,
 			send_logs boolean not null default false,
 			filter_level int not null default 3,
-			bytes_sent integer not null default 0,
+			logs_size integer not null default 0,
+			logs_count integer not null default 0,
 			created_at timestamp default current_timestamp,
 			last_upload_at timestamp
 		);
@@ -83,6 +84,25 @@ impl DB {
 		DB {
 			conn: Mutex::new(conn),
 		}
+	}
+
+	pub async fn update_device_metadata(&self, device_id: &str, logs_size: usize, logs_count: usize) -> anyhow::Result<()> {
+		let conn = &mut self.conn.lock().await;
+		let tx = conn.transaction()?;
+		{
+			let mut stmt = tx.prepare(
+				"INSERT INTO devices (id, logs_size, logs_count, last_upload_at)
+				 VALUES (?1, ?2, ?3, current_timestamp)
+				 ON CONFLICT(id) DO UPDATE SET
+					 logs_size = devices.logs_size + ?2,
+					 logs_count = devices.logs_count + ?3,
+					 last_upload_at = current_timestamp"
+			)?;
+			stmt.execute(&[&device_id as &dyn ToSql, &logs_size as &dyn ToSql, &logs_count as &dyn ToSql])?;
+		}
+		tx.commit()?;
+		log::info!("saved device metadata: {} {} {}", device_id, logs_size, logs_count);
+		Ok(())
 	}
 
 	pub async fn handle_device_upload(&self, device_id: &str, new_bytes: u32, logs: &[LogEntry]) -> anyhow::Result<()> {

@@ -146,6 +146,9 @@ async fn upload_device_logs(
 	}
 	log::info!("uploaded {} logs in {:?}", i, upload_timer.elapsed());
 	let timer = Instant::now();
+	if let Err(err) = ctx.db.update_device_metadata(&device_id, total_bytes, chunk_reader.log_entries.len()).await {
+		log::error!("Failed to update device metadata: {}", err);
+	}
 	ctx.save_logs(&chunk_reader.log_entries).await;
 	log::info!("saved {} logs in {:?}", i, timer.elapsed());
 }
@@ -204,6 +207,9 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 								chunk_reader.add_chunk(bytes);
 								let timer = Instant::now();
 								log::info!("saving {} logs", chunk_reader.log_entries.len());
+								if let Err(err) = ctx.db.update_device_metadata(&device_id, bytes_len, chunk_reader.log_entries.len()).await {
+									log::error!("Failed to update device metadata: {}", err);
+								}
 								ctx.save_logs(&chunk_reader.log_entries).await;
 								log::info!("saved {} logs in {:?}", chunk_reader.log_entries.len(), timer.elapsed());
 								chunk_reader.log_entries.clear();
