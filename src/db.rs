@@ -138,6 +138,25 @@ impl DB {
 		Ok(devices)
 	}
 
+	pub async fn get_device(&self, device_id: &str) -> anyhow::Result<Option<Device>> {
+		let conn = self.conn.lock().await;
+		let mut stmt = conn.prepare("SELECT id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at FROM devices WHERE id = ?")?;
+		let mut rows = stmt.query([&device_id])?;
+		if let Some(row) = rows.next()? {
+			Ok(Some(Device {
+				id: row.get(0)?,
+				send_logs: row.get(1)?,
+				filter_level: LogLevel::from_i64(row.get(2)?),
+				logs_size: row.get(3)?,
+				logs_count: row.get(4)?,
+				created_at: row.get(5)?,
+				last_upload_at: row.get(6)?,
+			}))
+		} else {
+			Ok(None)
+		}
+	}
+
 	pub async fn handle_device_upload(&self, device_id: &str, new_bytes: u32, logs: &[LogEntry]) -> anyhow::Result<()> {
 		let conn = &mut self.conn.lock().await;
 		let tx = conn.transaction()?;

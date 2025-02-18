@@ -109,7 +109,7 @@ async fn main() {
 		.route("/api/v1/logs", get(get_logs)).layer(cors.clone())
 		.route("/api/v1/logs/stream", get(stream_logs)).layer(cors.clone())
 		.route("/api/v1/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
-		.route("/api/v1/device/{deviceId}/status", get(get_device_status)).layer(cors.clone())
+		.route("/api/v1/device/{deviceId}/status", get(get_device_status)).layer(cors.clone()).with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/logs", post(upload_device_logs))
 			.layer(cors.clone())
 			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
@@ -177,14 +177,23 @@ async fn upload_device_logs(
 	log::info!("saved {} logs in {:?}", i, timer.elapsed());
 }
 
-async fn get_device_status(Path(device_id): Path<String>) -> Json<Value> {
+async fn get_device_status(
+	State(ctx): State<Arc<Context>>, 
+	Path(device_id): Path<String>
+) -> Json<Value> {
 	log::info!("get_device_status device_id: {}", device_id);
-	let status = DeviceStatus {
-		query: None,
-		level: None,
-		send_logs: true
-	};
-	Json(serde_json::to_value(&status).unwrap())
+	match ctx.db.get_device(&device_id).await.unwrap() {
+		Some(device) => {
+			Json(json!({
+				"level": device.filter_level.to_string(),
+				"send_logs": device.send_logs
+			}))
+		},
+		None => Json(json!({
+			"level": "info",
+			"send_logs": false
+		}))
+	}
 }
 
 async fn device_ws_handler(
