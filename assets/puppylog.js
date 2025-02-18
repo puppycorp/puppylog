@@ -10,7 +10,6 @@ var devicesPage = async (root) => {
 	`;
   try {
     const res = await fetch("/api/v1/devices").then((res2) => res2.json());
-    console.log("res", res);
     const devicesList = document.getElementById("devicesList");
     if (!devicesList)
       return;

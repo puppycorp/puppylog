@@ -9,8 +9,6 @@ export const devicesPage = async (root: HTMLElement) => {
 	`;
 	try {
 		const res = await fetch("/api/v1/devices").then((res) => res.json());
-		console.log("res", res);
-
 		const devicesList = document.getElementById("devicesList");
 		if (!devicesList) return;
 		devicesList.innerHTML = "";
