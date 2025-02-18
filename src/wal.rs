@@ -24,11 +24,16 @@ impl Wal {
 	pub fn new() -> Self {
 		let (tx, rx) = mpsc::channel();
 		thread::spawn(move || {
-			let mut wal_file = OpenOptions::new()
+			let mut wal_file = match OpenOptions::new()
 				.append(true)
 				.create(true)
-				.open(wal_path())
-				.unwrap();
+				.open(wal_path()) {
+				Ok(file) => file,
+				Err(err) => {
+					log::error!("Failed to open wal file: {}", err);
+					return;
+				}
+			};
 			while let Ok(cmd) = rx.recv() {
 				match cmd {
 					Cmd::WriteLog(log) => {
