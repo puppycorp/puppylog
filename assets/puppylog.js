@@ -59,6 +59,15 @@ var createDeviceRow = (device) => {
   averageLogSizeCell.className = "table-cell";
   averageLogSizeCell.innerHTML = `<strong>Average log size:</strong> ${formatBytes(device.logsSize / device.logsCount)}`;
   deviceRow.appendChild(averageLogSizeCell);
+  const logsPerSecondCell = document.createElement("div");
+  logsPerSecondCell.className = "table-cell";
+  const lastUploadDate = new Date(device.lastUploadAt);
+  const createdAtDate = new Date(device.createdAt);
+  const diff = lastUploadDate.getTime() - createdAtDate.getTime();
+  const seconds = diff / 1000;
+  const logsPerSecond = device.logsCount / seconds;
+  logsPerSecondCell.innerHTML = `<strong>Logs per second:</strong> ${logsPerSecond.toFixed(2)}`;
+  deviceRow.appendChild(logsPerSecondCell);
   const sendLogsCell = document.createElement("div");
   sendLogsCell.className = "table-cell";
   sendLogsCell.innerHTML = `<strong>Send logs:</strong> ${device.sendLogs ? "Yes" : "No"}`;
