@@ -132,8 +132,7 @@ impl LogSegment {
 			return false;
 		}
 		let first = self.buffer.first().unwrap();
-		let last = self.buffer.last().unwrap();
-		first.timestamp <= date && date <= last.timestamp
+		date >= first.timestamp
 	}
 }
 

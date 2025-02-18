@@ -103,6 +103,7 @@ impl Context {
 		{
 			let current = self.current.lock().await;
 			if current.contains_date(end) {
+				log::info!("current segment contains date");
 				let iter = current.iter(end);
 				for entry in iter {
 					end = entry.timestamp;
