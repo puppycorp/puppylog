@@ -284,10 +284,10 @@ impl DB {
 		Ok(new_id as u32)
 	}
 
-	pub async fn get_segment_metadatas(&self) -> anyhow::Result<Vec<SegmentMeta>> {
+	pub async fn find_segments(&self, date: DateTime<Utc>) -> anyhow::Result<Vec<SegmentMeta>> {
 		let conn = self.conn.lock().await;
-		let mut stmt = conn.prepare("SELECT id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count FROM log_segments")?;
-		let mut rows = stmt.query([])?;
+		let mut stmt = conn.prepare("SELECT id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count FROM log_segments where first_timestamp < ? order by last_timestamp desc")?;
+		let mut rows = stmt.query([date])?;
 		let mut metas = Vec::new();
 		while let Some(row) = rows.next()? {
 			metas.push(SegmentMeta {

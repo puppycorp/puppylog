@@ -17,7 +17,6 @@ use crate::db::open_db;
 use crate::db::NewSegmentArgs;
 use crate::db::DB;
 use crate::segment::LogSegment;
-use crate::segment::LogSegmentArchive;
 use crate::settings::Settings;
 use crate::wal::load_logs_from_wal;
 use crate::wal::Wal;
@@ -32,7 +31,6 @@ pub struct Context {
 	pub event_tx: broadcast::Sender<PuppylogEvent>,
 	pub db: DB,
 	pub current: Mutex<LogSegment>,
-	pub segment_archive: LogSegmentArchive,
 	pub wal: Wal
 }
 
@@ -47,8 +45,6 @@ impl Context {
 		let wal = Wal::new();
 		let logs = load_logs_from_wal();
 		let db = DB::new(open_db());
-		let metas = db.get_segment_metadatas().await.unwrap();
-		log::info!("Loaded {} metas", metas.len());
 		Context {
 			subscriber: Subscriber::new(subtx),
 			publisher: pubtx,
@@ -56,7 +52,6 @@ impl Context {
 			event_tx,
 			db,
 			current: Mutex::new(LogSegment::with_logs(logs)),
-			segment_archive: LogSegmentArchive::new(metas),
 			wal
 		}
 	}
@@ -91,10 +86,7 @@ impl Context {
 			let path = log_path().join(format!("{}.log", segment_id));
 			let mut file = File::create(&path).unwrap();
 			file.write_all(&buff).unwrap();
-			// let mut encoder = zstd::Encoder::new(file, 10).unwrap();
-			// encoder.write_all(&buff).unwrap();
-			let old = std::mem::replace(&mut *current, LogSegment::new());
-			self.segment_archive.add_segment(segment_id, old).await;
+			*current = LogSegment::new();
 		}
 	}
 
@@ -113,14 +105,15 @@ impl Context {
 			}
 		}
 		log::info!("looking from archive");
-		loop {
-			let segment = match self.segment_archive.get_relevant_segment(end).await {
-				Some(segment) => segment,
-				None => break
-			};
+		let segments = self.db.find_segments(end).await.unwrap();
+		for segment in segments {
+			let path = log_path().join(format!("{}.log", segment.id));
+			log::info!("loading segment from disk: {}", path.display());
+			let file: File = File::open(path).unwrap();
+			let mut decoder = zstd::Decoder::new(file).unwrap();
+			let segment = LogSegment::parse(&mut decoder);
 			let iter = segment.iter(end);
 			for entry in iter {
-				end = entry.timestamp;
 				if !cb(entry) {
 					return;
 				}
