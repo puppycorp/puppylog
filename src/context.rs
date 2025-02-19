@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Cursor;
 use std::io::Write;
@@ -20,10 +19,10 @@ use crate::db::DB;
 use crate::segment::LogSegment;
 use crate::segment::LogSegmentArchive;
 use crate::settings::Settings;
-use crate::subscriber::Subscriber;
 use crate::wal::load_logs_from_wal;
 use crate::wal::Wal;
-use crate::worker::Worker;
+use crate::subscribe_worker::Subscriber;
+use crate::subscribe_worker::Worker;
 
 #[derive(Debug)]
 pub struct Context {
@@ -128,11 +127,6 @@ impl Context {
 			}
 		}
 	}
-}
-
-pub struct SubscribeReq {
-	pub res_tx: mpsc::Sender<LogEntry>,
-	pub query: QueryAst
 }
 
 #[derive(Serialize, Default)]
