@@ -18,6 +18,15 @@ var formatBytes = (bytes, decimals = 2) => {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 };
+var formatNumber = (num, decimals = 2) => {
+  if (num === 0)
+    return "0";
+  const k = 1000;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ["", "K", "M", "B", "T"];
+  const i = Math.floor(Math.log(Math.abs(num)) / Math.log(k));
+  return parseFloat((num / Math.pow(k, i)).toFixed(dm)) + sizes[i];
+};
 var levels = ["trace", "debug", "info", "warn", "error", "fatal"];
 var createDeviceRow = (device) => {
   const deviceRow = document.createElement("div");
@@ -49,7 +58,7 @@ var createDeviceRow = (device) => {
   deviceRow.appendChild(lastUploadCell);
   const logsCountCell = document.createElement("div");
   logsCountCell.className = "table-cell";
-  logsCountCell.innerHTML = `<strong>Logs count:</strong> ${device.logsCount}`;
+  logsCountCell.innerHTML = `<strong>Logs count:</strong> ${formatNumber(device.logsCount)}`;
   deviceRow.appendChild(logsCountCell);
   const logsSizeCell = document.createElement("div");
   logsSizeCell.className = "table-cell";
@@ -98,9 +107,7 @@ var devicesPage = async (root) => {
   root.innerHTML = `
 		<div class="page-header">
 			<h1 style="flex-grow: 1">Devices</h1>
-			<div id="devicesSummary">
-				Loading summary...
-			</div>
+			<div id="devicesSummary">Loading summary...</div>
 		</div>
 		<div id="devicesList">
 			<div class="logs-loading-indicator">Loading devices...</div>
@@ -111,19 +118,21 @@ var devicesPage = async (root) => {
     const devices = await res.json();
     const summaryEl = document.getElementById("devicesSummary");
     if (summaryEl) {
-      let totalLogsCount = 0;
-      let totalLogsSize = 0;
-      let totalSeconds = 0;
+      let totalLogsCount = 0, totalLogsSize = 0;
+      let earliestTimestamp = Infinity, latestTimestamp = -Infinity;
       devices.forEach((device) => {
         totalLogsCount += device.logsCount;
         totalLogsSize += device.logsSize;
-        const diff = (new Date(device.lastUploadAt).getTime() - new Date(device.createdAt).getTime()) / 1000;
-        totalSeconds += diff;
+        const createdAtTime = new Date(device.createdAt).getTime();
+        const lastUploadTime = new Date(device.lastUploadAt).getTime();
+        earliestTimestamp = Math.min(earliestTimestamp, createdAtTime);
+        latestTimestamp = Math.max(latestTimestamp, lastUploadTime);
       });
-      const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0;
+      const totalSeconds = (latestTimestamp - earliestTimestamp) / 1000;
       const logsPerSecond = totalSeconds > 0 ? totalLogsCount / totalSeconds : 0;
+      const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0;
       summaryEl.innerHTML = `
-				<div><strong>Total Logs Count:</strong> ${totalLogsCount}</div>
+				<div><strong>Total Logs Count:</strong> ${formatNumber(totalLogsCount)}</div>
 				<div><strong>Total Logs Size:</strong> ${formatBytes(totalLogsSize)}</div>
 				<div><strong>Average Log Size:</strong> ${formatBytes(averageLogSize)}</div>
 				<div><strong>Logs per Second:</strong> ${logsPerSecond.toFixed(2)}</div>
