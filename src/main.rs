@@ -185,7 +185,7 @@ async fn get_device_status(
 	let device = ctx.db.get_or_create_device(&device_id).await.unwrap();
 	Json(json!({
 		"level": device.filter_level.to_string(),
-		"send_logs": device.send_logs
+		"sendLogs": device.send_logs
 	}))
 }
 
