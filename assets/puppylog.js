@@ -97,7 +97,10 @@ var createDeviceRow = (device) => {
 var devicesPage = async (root) => {
   root.innerHTML = `
 		<div class="page-header">
-			<h1>Devices</h1>
+			<h1 style="flex-grow: 1">Devices</h1>
+			<div id="devicesSummary">
+				Loading summary...
+			</div>
 		</div>
 		<div id="devicesList">
 			<div class="logs-loading-indicator">Loading devices...</div>
@@ -106,6 +109,26 @@ var devicesPage = async (root) => {
   try {
     const res = await fetch("/api/v1/devices");
     const devices = await res.json();
+    const summaryEl = document.getElementById("devicesSummary");
+    if (summaryEl) {
+      let totalLogsCount = 0;
+      let totalLogsSize = 0;
+      let totalSeconds = 0;
+      devices.forEach((device) => {
+        totalLogsCount += device.logsCount;
+        totalLogsSize += device.logsSize;
+        const diff = (new Date(device.lastUploadAt).getTime() - new Date(device.createdAt).getTime()) / 1000;
+        totalSeconds += diff;
+      });
+      const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0;
+      const logsPerSecond = totalSeconds > 0 ? totalLogsCount / totalSeconds : 0;
+      summaryEl.innerHTML = `
+				<div><strong>Total Logs Count:</strong> ${totalLogsCount}</div>
+				<div><strong>Total Logs Size:</strong> ${formatBytes(totalLogsSize)}</div>
+				<div><strong>Average Log Size:</strong> ${formatBytes(averageLogSize)}</div>
+				<div><strong>Logs per Second:</strong> ${logsPerSecond.toFixed(2)}</div>
+			`;
+    }
     const devicesList = document.getElementById("devicesList");
     if (!devicesList)
       return;
