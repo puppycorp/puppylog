@@ -222,7 +222,7 @@ impl LogSegmentArchive {
 		LogSegmentArchive {
 			inner: Mutex::new(LogSegmentArchiveInner {
 				metas,
-				segments: LruCache::new(NonZero::new(10).unwrap())
+				segments: LruCache::new(NonZero::new(5).unwrap())
 			})
 		}
 	}
