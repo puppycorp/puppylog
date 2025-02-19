@@ -385,7 +385,6 @@ async fn get_logs(
 				log::info!("query is empty");
 				QueryAst::default()
 			} else {
-				log::info!("query: {:?}", query.as_bytes());
 				match parse_log_query(&query) {
 					Ok(query) => query,
 					Err(err) => return Err(BadRequestError(err.to_string()))
