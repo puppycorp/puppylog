@@ -138,7 +138,9 @@ impl LogSegment {
 mod tests {
 	use std::io::Cursor;
 	use chrono::Duration;
-	use puppylog::LogLevel;
+	use chrono::NaiveDate;
+use chrono::TimeZone;
+use puppylog::LogLevel;
 	use puppylog::Prop;
 	use super::*;
 
@@ -147,7 +149,7 @@ mod tests {
 		let mut segment = LogSegment::new();
 		let log = LogEntry {
 			random: 0,
-			timestamp: Utc::now(),
+			timestamp: Utc.ymd(2025, 2, 20).and_hms(0, 0, 0),
 			level: LogLevel::Info,
 			msg: "Hello, world!".to_string(),
 			props: vec![Prop {

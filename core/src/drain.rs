@@ -106,7 +106,7 @@ impl DrainParser {
             }
         }
         
-        if largest_sim > 0.5 {
+        if largest_sim > 0.3 {
             let template_id = &mut group[largest_inx];
             let template_tokens = &mut self.templates[*template_id as usize];
             for i in 0..length as usize {
