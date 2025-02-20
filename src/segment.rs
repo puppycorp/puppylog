@@ -139,17 +139,18 @@ mod tests {
 	use std::io::Cursor;
 	use chrono::Duration;
 	use chrono::NaiveDate;
-use chrono::TimeZone;
-use puppylog::LogLevel;
+	use chrono::TimeZone;
+	use puppylog::LogLevel;
 	use puppylog::Prop;
 	use super::*;
 
 	#[test]
 	pub fn test_log_segment() {
 		let mut segment = LogSegment::new();
+		let timestamp = DateTime::from_timestamp_micros(1740074054 * 1_000_000).unwrap();
 		let log = LogEntry {
 			random: 0,
-			timestamp: Utc.ymd(2025, 2, 20).and_hms(0, 0, 0),
+			timestamp,
 			level: LogLevel::Info,
 			msg: "Hello, world!".to_string(),
 			props: vec![Prop {
@@ -160,7 +161,7 @@ use puppylog::LogLevel;
 		};
 		segment.add_log_entry(log.clone());
 
-		let mut iter = segment.iter(Utc::now() + Duration::days(1));
+		let mut iter = segment.iter(timestamp + Duration::days(1));
 		let lof1 = iter.next().unwrap();
 		assert_eq!(log, lof1.clone());
 		assert!(iter.next().is_none());
