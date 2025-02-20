@@ -21,6 +21,7 @@ use axum::Router;
 use chrono::DateTime;
 use chrono::Utc;
 use config::log_path;
+use futures::executor::block_on;
 use futures::Stream;
 use futures_util::StreamExt;
 use log::LevelFilter;
@@ -31,6 +32,7 @@ use serde_json::to_string;
 use serde_json::Value;
 use simple_logger::SimpleLogger;
 use tokio::io::AsyncReadExt;
+use tokio::task::spawn_blocking;
 use tokio::time::Instant;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::AllowMethods;
@@ -402,19 +404,23 @@ async fn get_logs(
 	query.limit = params.count;
 	query.end_date = params.end_date;
 	let timer = Instant::now();
-	let end = query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
-	let count = query.limit.unwrap_or(200);
-	let mut logs = Vec::new();
-	ctx.find_logs(end, |entry| {
-		if check_expr(&query.root, &entry).unwrap() {
-			logs.push(logentry_to_json(entry));
-		}
-		if logs.len() >= count {
-			false
-		} else {
-			true
-		}
-	}).await;
+	let logs = spawn_blocking(move || {
+		let end = query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
+		let count = query.limit.unwrap_or(200);
+		let mut logs = Vec::new();
+		block_on(ctx.find_logs(end, |entry| {
+			if check_expr(&query.root, &entry).unwrap() {
+				logs.push(logentry_to_json(entry));
+			}
+			if logs.len() >= count {
+				false
+			} else {
+				true
+			}
+		}));
+		logs
+	}).await.unwrap();
+	
 	Ok(Json(serde_json::to_value(&logs).unwrap()))
 }
 
