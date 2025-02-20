@@ -7,6 +7,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use puppylog::LogEntry;
 use puppylog::LogEntryChunkParser;
+use serde::Serialize;
 
 #[derive(Debug)]
 pub struct LogIterator<'a> {
@@ -40,11 +41,16 @@ pub const MAGIC: &str = "PUPPYLOGSEG";
 pub const VERSION: u16 = 1;
 pub const HEADER_SIZE: usize = 13;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SegmentMeta {
 	pub id: u32,
 	pub first_timestamp: DateTime<Utc>,
 	pub last_timestamp: DateTime<Utc>,
+	pub original_size: usize,
+	pub compressed_size: usize,
+	pub logs_count: u64,
+	pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -286,7 +286,11 @@ impl DB {
 
 	pub async fn find_segments(&self, date: DateTime<Utc>) -> anyhow::Result<Vec<SegmentMeta>> {
 		let conn = self.conn.lock().await;
-		let mut stmt = conn.prepare("SELECT id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count FROM log_segments where first_timestamp < ? order by last_timestamp desc")?;
+		let mut stmt = conn.prepare(r#"
+			SELECT id, first_timestamp, last_timestamp, 
+				original_size, compressed_size, logs_count, created_at
+				FROM log_segments where first_timestamp < ? order by last_timestamp desc
+		"#)?;
 		let mut rows = stmt.query([date])?;
 		let mut metas = Vec::new();
 		while let Some(row) = rows.next()? {
@@ -294,6 +298,10 @@ impl DB {
 				id: row.get(0)?,
 				first_timestamp: row.get(1)?,
 				last_timestamp: row.get(2)?,
+				original_size: row.get(3)?,
+				compressed_size: row.get(4)?,
+				logs_count: row.get(5)?,
+				created_at: row.get(6)?,
 			});
 		}
 		Ok(metas)

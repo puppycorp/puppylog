@@ -115,6 +115,7 @@ async fn main() {
 		.route("/api/v1/settings", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/settings", get(get_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/devices", get(get_devices)).with_state(ctx.clone())
+		.route("/api/v1/segments", get(get_segments)).with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/settings", post(update_device_settings)).with_state(ctx.clone())
 		.fallback(get(root));
 
@@ -139,6 +140,11 @@ async fn update_device_settings(
 async fn get_devices(State(ctx): State<Arc<Context>>) -> Json<Value> {
 	let devices = ctx.db.get_devices().await.unwrap();
 	Json(serde_json::to_value(&devices).unwrap())
+}
+
+async fn get_segments(State(ctx): State<Arc<Context>>) -> Json<Value> {
+	let segments = ctx.db.find_segments(Utc::now()).await.unwrap();
+	Json(serde_json::to_value(&segments).unwrap())
 }
 
 async fn upload_device_logs(

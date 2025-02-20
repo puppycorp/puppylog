@@ -1,13 +1,17 @@
-// ts/devices.ts
-var saveDeviceSettings = async (device) => {
-  await fetch(`/api/v1/device/${device.id}/settings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sendLogs: device.sendLogs,
-      filterLevel: device.filterLevel
-    })
-  });
+// ts/utility.ts
+var setQueryParam = (field, value) => {
+  const url = new URL(window.location.href);
+  url.searchParams.set(field, value);
+  window.history.pushState({}, "", url.toString());
+};
+var getQueryParam = (field) => {
+  const url = new URL(window.location.href);
+  return url.searchParams.get(field);
+};
+var removeQueryParam = (field) => {
+  const url = new URL(window.location.href);
+  url.searchParams.delete(field);
+  window.history.pushState({}, "", url.toString());
 };
 var formatBytes = (bytes, decimals = 2) => {
   if (bytes === 0)
@@ -26,6 +30,18 @@ var formatNumber = (num, decimals = 2) => {
   const sizes = ["", "K", "M", "B", "T"];
   const i = Math.floor(Math.log(Math.abs(num)) / Math.log(k));
   return parseFloat((num / Math.pow(k, i)).toFixed(dm)) + sizes[i];
+};
+
+// ts/devices.ts
+var saveDeviceSettings = async (device) => {
+  await fetch(`/api/v1/device/${device.id}/settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sendLogs: device.sendLogs,
+      filterLevel: device.filterLevel
+    })
+  });
 };
 var levels = ["trace", "debug", "info", "warn", "error", "fatal"];
 var createDeviceRow = (device) => {
@@ -238,22 +254,6 @@ var routes = (routes2) => {
 var navigate = (path) => {
   window.history.pushState({}, "", path);
   handleRoute(path);
-};
-
-// ts/utility.ts
-var setQueryParam = (field, value) => {
-  const url = new URL(window.location.href);
-  url.searchParams.set(field, value);
-  window.history.pushState({}, "", url.toString());
-};
-var getQueryParam = (field) => {
-  const url = new URL(window.location.href);
-  return url.searchParams.get(field);
-};
-var removeQueryParam = (field) => {
-  const url = new URL(window.location.href);
-  url.searchParams.delete(field);
-  window.history.pushState({}, "", url.toString());
 };
 
 // ts/logs.ts
@@ -562,6 +562,41 @@ var mainPage = (root) => {
   return root;
 };
 
+// ts/segment-page.ts
+var segmentsPage = async (root) => {
+  const res = await fetch("/api/v1/segments").then((res2) => res2.json());
+  const totalSegments = res.length;
+  const totalOriginalSize = res.reduce((sum, seg) => sum + seg.originalSize, 0);
+  const totalCompressedSize = res.reduce((sum, seg) => sum + seg.compressedSize, 0);
+  const totalLogsCount = res.reduce((sum, seg) => sum + seg.logsCount, 0);
+  const compressRatio = totalCompressedSize / totalOriginalSize * 100;
+  root.innerHTML = `
+		<div class="page-header">
+			<h1 style="flex-grow: 1">Devices</h1>
+			<div class="summary">
+				<div><strong>Total segments:</strong> ${formatNumber(totalSegments)}</div>
+				<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
+				<div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
+				<div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
+				<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
+			</div>
+		</div>
+		<div>
+			${res.map((segment) => `
+				<div class="list-row">
+					<div class="table-cell"><strong>Segment ID:</strong> ${formatNumber(segment.id)}</div>
+					<div class="table-cell"><strong>First timestamp:</strong> ${segment.firstTimestamp}</div>
+					<div class="table-cell"><strong>Last timestamp:</strong> ${segment.lastTimestamp}</div>
+					<div class="table-cell"><strong>Original size:</strong> ${formatBytes(segment.originalSize)}</div>
+					<div class="table-cell"><strong>Compressed size:</strong> ${formatBytes(segment.compressedSize)}</div>
+					<div class="table-cell"><strong>Logs count:</strong> ${formatNumber(segment.logsCount)}</div>
+					<div class="table-cell"><strong>Compression ratio:</strong> ${(segment.compressedSize / segment.originalSize * 100).toFixed(2)}%</div>
+				</div>
+			`).join("")}
+		</div>
+	`;
+};
+
 // ts/settings.ts
 var settingsPage = (root) => {
   const infoText = document.createElement("div");
@@ -633,6 +668,7 @@ window.onload = () => {
     "/tests/logs": () => logtableTest(body),
     "/settings": () => settingsPage(body),
     "/devices": () => devicesPage(body),
+    "/segments": () => segmentsPage(body),
     "/*": () => mainPage(body)
   });
 };
