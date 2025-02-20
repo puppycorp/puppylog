@@ -572,7 +572,7 @@ var segmentsPage = async (root) => {
   const compressRatio = totalCompressedSize / totalOriginalSize * 100;
   root.innerHTML = `
 		<div class="page-header">
-			<h1 style="flex-grow: 1">Devices</h1>
+			<h1 style="flex-grow: 1">Segments</h1>
 			<div class="summary">
 				<div><strong>Total segments:</strong> ${formatNumber(totalSegments)}</div>
 				<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
