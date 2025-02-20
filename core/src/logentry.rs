@@ -411,7 +411,7 @@ mod tests {
 		buffer.set_position(0);
 		let deserialized = LogEntry::deserialize(&mut buffer).unwrap();
 
-		assert_eq!(entry.timestamp, deserialized.timestamp);
+		assert_eq!(entry.timestamp.timestamp_micros(), deserialized.timestamp.timestamp_micros());
 		assert_eq!(entry.level, deserialized.level);
 		assert_eq!(entry.props, deserialized.props);
 		assert_eq!(entry.msg, deserialized.msg);
@@ -434,7 +434,7 @@ mod tests {
 		entry.serialize(&mut buffer).unwrap();
 		let deserialized = LogEntry::fast_deserialize(&buffer, &mut 0).unwrap();
 
-		assert_eq!(entry.timestamp, deserialized.timestamp);
+		assert_eq!(entry.timestamp.timestamp_micros(), deserialized.timestamp.timestamp_micros());
 		assert_eq!(entry.level, deserialized.level);
 		assert_eq!(entry.props, deserialized.props);
 		assert_eq!(entry.msg, deserialized.msg);
@@ -473,7 +473,7 @@ mod tests {
 		for chunck in chuncks {
 			reader.add_chunk(chunck.into());
             for entry in &reader.log_entries {
-                assert_eq!(entry.timestamp.timestamp_millis(), entries[i].timestamp.timestamp_millis());
+                assert_eq!(entry.timestamp.timestamp_micros(), entries[i].timestamp.timestamp_micros());
                 assert_eq!(entry.level, entries[i].level);
                 assert_eq!(entry.props, entries[i].props);
                 assert_eq!(entry.msg, entries[i].msg);
