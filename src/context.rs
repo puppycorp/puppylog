@@ -65,6 +65,7 @@ impl Context {
 				log::error!("Failed to publish log entry: {}", e);
 			}
 		}
+		current.sort();
 		if current.buffer.len() > 50_000 {
 			log::info!("flushing segment wiht {} logs", current.buffer.len());
 			self.wal.clear();
