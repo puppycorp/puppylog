@@ -166,6 +166,20 @@ data:
 }
 ```
 
+### POST /api/v1/devices/settings
+Apply settings to many devices at once. Devices are matched based on metadata uploaded by devices.
+
+**application/json**
+```json
+{
+	"query": "PGL query string",
+	"minInterval": 60,
+	"maxInterval": 3600,
+	"level": "LogLevel" | null,
+}
+```
+
+
 ### WS /api/v1/device/:deviceId/ws
 
 **Binary**
@@ -215,6 +229,21 @@ Content-Encoding: gzip, zstd, none
 ```
 
 Post will set settings and get will get settings.
+
+## POST /api/v1/dvice/:deviceId/metadata
+
+Devices can upload metadata metadata of them to server. When metadata is uploaded it replaces the old metadata.
+This metadata is used for finding devices and also usefull when sending fleet commands to devices.
+
+**application/json**
+```json
+[
+	{
+		"key": "key",
+		"value": "value"
+	}
+]
+```
 
 
 ## Install

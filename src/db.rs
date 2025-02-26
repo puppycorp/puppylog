@@ -8,6 +8,7 @@ use puppylog::LogLevel;
 use puppylog::QueryAst;
 use rusqlite::Connection;
 use rusqlite::ToSql;
+use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
@@ -22,41 +23,45 @@ struct Migration {
 }
 
 const MIGRATIONS: &[Migration] = &[
-	Migration {
-		id: 20250212,
-		name: "init_database",
-		sql: r"
-		create table devices (
-			id text primary key,
-			send_logs boolean not null default false,
-			filter_level int not null default 3,
-			logs_size integer not null default 0,
-			logs_count integer not null default 0,
-			created_at timestamp default current_timestamp,
-			last_upload_at timestamp
-		);
-		create table logs (
-			random integer,
-			timestamp timestamp not null,
-			level int not null,
-			msg text not null,
-			props bytes,
-			primary key (random, timestamp)
-		);
-		create index logs_timestamp on logs (timestamp);
-		create index logs_level on logs (level);
-		create table log_segments (
-			id integer primary key,
-			bucket_id integer null,
-			first_timestamp timestamp not null,
-			last_timestamp timestamp not null,
-			original_size integer not null,
-			compressed_size integer,
-			logs_count integer not null,
-			created_at timestamp default current_timestamp
-		);
-		"
-	}
+    Migration {
+        id: 20250212,
+        name: "init_database",
+        sql: r#"
+            CREATE TABLE devices (
+                id TEXT PRIMARY KEY,
+                send_logs BOOLEAN NOT NULL DEFAULT false,
+                filter_level INT NOT NULL DEFAULT 3,
+                logs_size INTEGER NOT NULL DEFAULT 0,
+                logs_count INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_upload_at TIMESTAMP
+            );
+            CREATE TABLE log_segments (
+                id INTEGER PRIMARY KEY,
+                bucket_id INTEGER,
+                first_timestamp TIMESTAMP NOT NULL,
+                last_timestamp TIMESTAMP NOT NULL,
+                original_size INTEGER NOT NULL,
+                compressed_size INTEGER,
+                logs_count INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        "#
+    },
+    Migration {
+        id: 20250226,
+        name: "add_send_interval_and_metadata",
+        sql: r#"
+            ALTER TABLE devices ADD COLUMN send_interval INTEGER NOT NULL DEFAULT 60;
+            CREATE TABLE IF NOT EXISTS device_props (
+                device_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (device_id, key, value),
+                FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+            );
+        "#
+    },
 ];
 
 pub fn open_db() -> Connection {
@@ -78,13 +83,42 @@ pub struct NewSegmentArgs {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Device {
-	pub id: String,
+    pub id: String,
+    pub send_logs: bool,
+    pub filter_level: LogLevel,
+    pub send_interval: i32,
+    pub logs_size: usize,
+    pub logs_count: usize,
+    pub created_at: DateTime<Utc>,
+    pub last_upload_at: Option<DateTime<Utc>>,
+	pub props: Vec<MetaProp>,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct MetaProp {
+	pub key: String,
+	pub value: String,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct UpdateDevicesSettings {
+	pub filter_props: Vec<MetaProp>,
 	pub send_logs: bool,
-	pub filter_level: LogLevel,
-	pub logs_size: usize,
-	pub logs_count: usize,
-	pub created_at: DateTime<Utc>,
-	pub last_upload_at: Option<DateTime<Utc>>,
+	pub send_interval: u32,
+	pub level: LogLevel
+}
+
+fn load_device_metadata_locked(conn: &Connection, device_id: &str) -> anyhow::Result<Vec<MetaProp>> {
+	let mut stmt = conn.prepare(r#"SELECT key, value FROM device_props WHERE device_id = ?1 ORDER BY key"#)?;
+	let mut rows = stmt.query([device_id])?;
+	let mut props = Vec::new();
+	while let Some(row) = rows.next()? {
+		props.push(MetaProp {
+			key: row.get(0)?,
+			value: row.get(1)?,
+		});
+	}
+	Ok(props)
 }
 
 #[derive(Debug)]
@@ -100,7 +134,7 @@ impl DB {
 		}
 	}
 
-	pub async fn update_device_metadata(&self, device_id: &str, logs_size: usize, logs_count: usize) -> anyhow::Result<()> {
+	pub async fn update_device_stats(&self, device_id: &str, logs_size: usize, logs_count: usize) -> anyhow::Result<()> {
 		let conn = &mut self.conn.lock().await;
 		let tx = conn.transaction()?;
 		{
@@ -119,47 +153,63 @@ impl DB {
 		Ok(())
 	}
 
-	pub async fn get_devices(&self) -> anyhow::Result<Vec<Device>> {
-		let conn = self.conn.lock().await;
-		let mut stmt = conn.prepare("SELECT id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at FROM devices")?;
-		let mut rows = stmt.query([])?;
-		let mut devices = Vec::new();
-		while let Some(row) = rows.next()? {
-			devices.push(Device {
-				id: row.get(0)?,
-				send_logs: row.get(1)?,
-				filter_level: LogLevel::from_i64(row.get(2)?),
-				logs_size: row.get(3)?,
-				logs_count: row.get(4)?,
-				created_at: row.get(5)?,
-				last_upload_at: row.get(6)?,
-			});
-		}
-		Ok(devices)
-	}
+    pub async fn get_devices(&self) -> anyhow::Result<Vec<Device>> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                id,
+                send_logs,
+                filter_level,
+                logs_size,
+                logs_count,
+                created_at,
+                last_upload_at,
+                send_interval
+            FROM devices
+            "#,
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut list = Vec::new();
+        while let Some(row) = rows.next()? {
+            let device_id: String = row.get(0)?;
+            let props = load_device_metadata_locked(&conn, &device_id)?;
+            list.push(Device {
+                id: device_id,
+                send_logs: row.get(1)?,
+                filter_level: LogLevel::from_i64(row.get(2)?),
+                logs_size: row.get(3)?,
+                logs_count: row.get(4)?,
+                created_at: row.get(5)?,
+                last_upload_at: row.get(6)?,
+                send_interval: row.get(7)?,
+                props,
+            });
+        }
+        Ok(list)
+    }
 
 	pub async fn get_or_create_device(&self, device_id: &str) -> anyhow::Result<Device> {
 		let conn = self.conn.lock().await;
 		let now = chrono::Utc::now();
-		
-		// Prepare a single query that either inserts a new device or (on conflict) does a no-op update,
-		// then returns the row.
+	
 		let mut stmt = conn.prepare(
 			"INSERT INTO devices 
-			  (id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at)
+			  (id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at, send_interval, metadata)
 			 VALUES 
-			  (?, ?, ?, ?, ?, ?, ?)
+			  (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(id) DO UPDATE SET 
 			  id = id
-			 RETURNING id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at"
+			 RETURNING id, send_logs, filter_level, send_interval, metadata, logs_size, logs_count, created_at, last_upload_at"
 		)?;
-		
-		// Define default values for a new device.
+	
 		let default_send_logs = false;
-		let default_filter_level = LogLevel::Info.to_u8(); // Assuming you have a conversion method.
+		let default_filter_level = LogLevel::Info.to_u8();
+		let default_send_interval = 60;
+		let default_metadata = "{}"; // Default JSON metadata as a string.
 		let default_logs_size = 0;
 		let default_logs_count = 0;
-		
+	
 		let mut rows = stmt.query(rusqlite::params![
 			device_id,
 			default_send_logs,
@@ -168,50 +218,25 @@ impl DB {
 			default_logs_count,
 			now,
 			now,
+			default_send_interval,
+			default_metadata,
 		])?;
-		
+	
 		if let Some(row) = rows.next()? {
 			Ok(Device {
 				id: row.get(0)?,
 				send_logs: row.get(1)?,
 				filter_level: LogLevel::from_i64(row.get(2)?),
-				logs_size: row.get(3)?,
-				logs_count: row.get(4)?,
-				created_at: row.get(5)?,
-				last_upload_at: row.get(6)?,
+				send_interval: row.get(3)?,
+				logs_size: row.get(5)?,
+				logs_count: row.get(6)?,
+				created_at: row.get(7)?,
+				last_upload_at: row.get(8)?,
+				props: Vec::new(),
 			})
 		} else {
 			Err(anyhow::anyhow!("Failed to get or create device"))
 		}
-	}
-
-	pub async fn handle_device_upload(&self, device_id: &str, new_bytes: u32, logs: &[LogEntry]) -> anyhow::Result<()> {
-		let conn = &mut self.conn.lock().await;
-		let tx = conn.transaction()?;
-		{
-			let mut stmt = tx.prepare(
-				"INSERT INTO devices (id, last_upload_at, bytes_sent)
-				 VALUES (?1, CURRENT_TIMESTAMP, ?2)
-				 ON CONFLICT(id) DO UPDATE SET
-					 last_upload_at = CURRENT_TIMESTAMP,
-					 bytes_sent = devices.bytes_sent + ?2"
-			)?;
-			stmt.execute(&[&device_id as &dyn ToSql, &new_bytes as &dyn ToSql])?;
-			let mut stmt = tx.prepare("INSERT INTO logs (random, timestamp, level, msg, props) VALUES (?, ?, ?, ?, ?)")?;
-			let mut props = Vec::with_capacity(4096);
-			for log in logs {
-				log.serialize_props(&mut props)?;
-				stmt.execute(&[
-					&log.random as &dyn ToSql,
-					&log.timestamp as &dyn ToSql,
-					&log.level.to_u8() as &dyn ToSql,
-					&log.msg as &dyn ToSql,
-					&props as &dyn ToSql,
-				])?;
-			}
-		}
-		tx.commit()?;
-		Ok(())
 	}
 
 	pub async fn update_device_settings(&self, device_id: &str, payload: &UpdateDeviceSettings) {
@@ -229,6 +254,77 @@ impl DB {
 			&payload.filter_level.to_u8() as &dyn ToSql,
 		]).unwrap();
 	}
+
+	pub async fn update_device_metadata(&self, device_id: &str, metadata: &[MetaProp]) -> anyhow::Result<()> {
+		let conn = self.conn.lock().await;
+		let tx = conn.unchecked_transaction()?;
+		{
+			tx.execute("INSERT OR IGNORE INTO devices (id) VALUES (?1)", [device_id])?;
+			tx.execute("DELETE FROM device_props WHERE device_id = ?1", [device_id])?;
+			let mut ins_stmt = tx.prepare(
+				r#"
+				INSERT INTO device_props (device_id, key, value)
+				VALUES (?1, ?2, ?3)
+				"#
+			)?;
+			for prop in metadata {
+				ins_stmt.execute(rusqlite::params![device_id, prop.key, prop.value])?;
+			}
+		}
+		tx.commit()?;
+		Ok(())
+	}
+
+    // ------------------------------------------------------------------------
+    // Bulk Update Example in a Single Query
+    // ------------------------------------------------------------------------
+
+    /// Update multiple devices at once (send_logs, filter_level, send_interval),
+    /// but **only** those that match **all** of the given key-value `filter_props`.
+    ///
+    /// Implements it as **one single UPDATE statement** using `EXISTS` subqueries.
+    /// 
+    /// **Explanation**: For each `MetaProp`, we append an `AND EXISTS(...)` condition.
+    /// This ensures the device has that (key,value) pair in `device_props`.
+    /// If `filter_props` is empty, we simply update all devices (no filter).
+    pub async fn update_devices_settings(
+        &self,
+        payload: &UpdateDevicesSettings,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().await;
+        let mut query = r#"
+            UPDATE devices
+               SET send_logs    = ?1,
+                   send_interval= ?2,
+                   filter_level = ?3
+               WHERE 1
+        "#
+        .to_string();
+
+        let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+        params.push(Box::new(payload.send_logs));
+        params.push(Box::new(payload.send_interval as i32));
+        params.push(Box::new(payload.level.to_u8()));
+
+        for prop in &payload.filter_props {
+            query.push_str(
+                r#"
+                  AND EXISTS (
+                    SELECT 1 FROM device_props dp
+                    WHERE dp.device_id = devices.id
+                      AND dp.key = ?
+                      AND dp.value = ?
+                  )
+                "#,
+            );
+            params.push(Box::new(prop.key.clone()));
+            params.push(Box::new(prop.value.clone()));
+        }
+
+        let mut stmt = conn.prepare(&query)?;
+        stmt.execute(rusqlite::params_from_iter(params.iter().map(|p| &**p)))?;
+        Ok(())
+    }
 
 	pub async fn search_logs(&self, query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 		let conn = self.conn.lock().await;

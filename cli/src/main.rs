@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use log::Level;
 use puppylog::{DrainParser, LogEntry, LogLevel, Prop, PuppylogBuilder};
 use rand::{distributions::Alphanumeric, prelude::*};
-use reqwest;
+use reqwest::{self, Client, RequestBuilder};
 use std::collections::HashMap;
 use std::error::Error;
 use std::thread::sleep;
@@ -211,6 +211,15 @@ struct StreamLogsArgs {
 	start: Option<String>,
 }
 
+#[derive(Parser)]
+struct UpdateMetadataArgs {
+	#[arg(long)]
+	auth: Option<String>,
+	#[arg(long)]
+	address: String,
+	props_path: String,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Upload log data
@@ -222,7 +231,8 @@ enum Commands {
     Tokenize {
         #[command(subcommand)]
         subcommand: TokenizeSubcommands,
-    }
+    },
+	UpdateMetadata(UpdateMetadataArgs),
 }
 
 #[derive(Subcommand)]
@@ -375,6 +385,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+		Commands::UpdateMetadata(args) => {
+			let props = std::fs::read_to_string(args.props_path)?;
+			println!("props: {}", props);
+			let req = Client::new().post(&args.address)
+				.header("Authorization", args.auth.unwrap_or_default())
+				.header("Content-Type", "application/json")
+				.body(props)
+				.send()
+				.await?;
+
+			println!("Response: {:?}", req);
+
+			// let props: Vec<Prop> = serde_json::from_str(&props)?;
+			// let logger = PuppylogBuilder::new()
+			// 	.server(&address).unwrap()
+			// 	.level(Level::Info)
+			// 	.stdout()
+			// 	.authorization("Bearer 123456")
+			// 	.prop("app", "puppylogcli")
+			// 	.build()
+			// 	.unwrap();
+			// logger.update_metadata(&device_id, props);
+			// logger.close();	
+		}
     }
     
     Ok(())

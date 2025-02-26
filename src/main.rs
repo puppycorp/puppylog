@@ -21,6 +21,8 @@ use axum::Router;
 use chrono::DateTime;
 use chrono::Utc;
 use config::log_path;
+use db::MetaProp;
+use db::UpdateDevicesSettings;
 use futures::executor::block_on;
 use futures::Stream;
 use futures_util::StreamExt;
@@ -107,6 +109,7 @@ async fn main() {
 		.route("/api/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
 		.route("/api/v1/logs", get(get_logs)).layer(cors.clone())
 		.route("/api/v1/logs/stream", get(stream_logs)).layer(cors.clone())
+		.route("/api/v1/device/settings", post(update_devices_settings)).with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/status", get(get_device_status)).layer(cors.clone()).with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/logs", post(upload_device_logs))
@@ -114,6 +117,7 @@ async fn main() {
 			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
 			.layer(RequestDecompressionLayer::new().gzip(true).zstd(true))
 			.with_state(ctx.clone())
+		.route("/api/v1/device/{deviceId}/metadata", post(update_device_metadata)).with_state(ctx.clone())
 		.route("/api/v1/settings", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/settings", get(get_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/devices", get(get_devices)).with_state(ctx.clone())
@@ -175,11 +179,20 @@ async fn upload_device_logs(
 	}
 	log::info!("uploaded {} logs in {:?}", i, upload_timer.elapsed());
 	let timer = Instant::now();
-	if let Err(err) = ctx.db.update_device_metadata(&device_id, total_bytes, chunk_reader.log_entries.len()).await {
+	if let Err(err) = ctx.db.update_device_stats(&device_id, total_bytes, chunk_reader.log_entries.len()).await {
 		log::error!("Failed to update device metadata: {}", err);
 	}
 	ctx.save_logs(&chunk_reader.log_entries).await;
 	log::info!("saved {} logs in {:?}", i, timer.elapsed());
+}
+
+async fn update_devices_settings(
+	State(ctx): State<Arc<Context>>,
+	body: Json<UpdateDevicesSettings>
+) -> &'static str {
+	log::info!("update_devices_settings: {:?}", body);
+	ctx.db.update_devices_settings(&body).await;
+	"ok"
 }
 
 async fn get_device_status(
@@ -190,8 +203,19 @@ async fn get_device_status(
 	let device = ctx.db.get_or_create_device(&device_id).await.unwrap();
 	Json(json!({
 		"level": device.filter_level.to_string(),
-		"sendLogs": device.send_logs
+		"sendLogs": device.send_logs,
+		"sendInterval": device.send_interval,
 	}))
+}
+
+async fn update_device_metadata(
+	State(ctx): State<Arc<Context>>,
+	Path(device_id): Path<String>,
+	body: Json<Vec<MetaProp>>
+) -> &'static str {
+	log::info!("update_device_metadata device_id: {:?}", device_id);
+	ctx.db.update_device_metadata(&device_id, &body).await.unwrap();
+	"ok"
 }
 
 async fn device_ws_handler(
@@ -238,7 +262,7 @@ async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Contex
 								chunk_reader.add_chunk(bytes);
 								let timer = Instant::now();
 								log::info!("saving {} logs", chunk_reader.log_entries.len());
-								if let Err(err) = ctx.db.update_device_metadata(&device_id, bytes_len, chunk_reader.log_entries.len()).await {
+								if let Err(err) = ctx.db.update_device_stats(&device_id, bytes_len, chunk_reader.log_entries.len()).await {
 									log::error!("Failed to update device metadata: {}", err);
 								}
 								ctx.save_logs(&chunk_reader.log_entries).await;
