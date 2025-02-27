@@ -125,20 +125,7 @@ var devicesPage = async (root) => {
 			<h1 style="flex-grow: 1">Devices</h1>
 			<div id="devicesSummary">Loading summary...</div>
 		</div>
-		<div>
-			<div>
-				<input type="checkbox" /> a
-			</div>
-			<div>
-				<input type="checkbox" />
-			</div>
-			<div>
-				<input type="checkbox" />
-			</div>
-			<div>
-				<input type="checkbox" />
-			</div>
-		</div>
+		
 		<div id="devicesList">
 			<div class="logs-loading-indicator">Loading devices...</div>
 		</div>
@@ -439,8 +426,7 @@ function logline(length, linebreaks) {
   }
   for (let i = 0;i < linebreaks; i++) {
     const idx = Math.floor(Math.random() * (line.length + 1));
-    line = line.slice(0, idx) + `
-` + line.slice(idx);
+    line = line.slice(0, idx) + "\n" + line.slice(idx);
   }
   return line;
 }
@@ -454,10 +440,10 @@ var logtableTest = (root) => {
     root,
     fetchMore: async (args) => {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      const logs = [];
+      const logs2 = [];
       const count = args.count || 100;
       for (let i = 0;i < count; i++) {
-        logs.push({
+        logs2.push({
           id: `${Date.now()}-${i}`,
           timestamp: new Date(Date.now() - i * 1000).toISOString(),
           level: "info",
@@ -468,7 +454,7 @@ var logtableTest = (root) => {
           msg: `[${i}] ${randomLogline()}`
         });
       }
-      return logs;
+      return logs2;
     },
     streamLogs: (query, onNewLog, onEnd) => {
       const intervalId = setInterval(() => {

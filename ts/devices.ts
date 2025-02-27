@@ -111,26 +111,51 @@ const createDeviceRow = (device: DeviceSetting): HTMLElement => {
 
 	return deviceRow
 }
+
+// <div style="display: flex; flex-direction: row" >
+// 			<div style="display: flex; flex-direction: column; margin-right: 1rem">
+// 				<div>
+// 					DeviceID
+// 				</div>
+// 				<div>
+// 					Company
+// 				</div>
+// 				<div>
+// 					Env
+// 				</div>
+// 			</div>
+// 			<div style="display: flex; flex-direction: column; margin-right: 1rem">
+// 				<div>
+// 					Filter level:
+// 					<select>
+// 						<option>trace</option>
+// 						<option>debug</option>
+// 						<option>info</option>
+// 						<option>warn</option>
+// 						<option>error</option>
+// 						<option>fatal</option>
+// 					</select>
+// 				</div>
+// 				<div>
+// 					Send logs:
+// 					<select>
+// 						<option>Yes</option>
+// 						<option>No</option>
+// 					</select>
+// 				</div>
+// 				<div>
+// 					Send Interval:
+// 					<input type="text" />
+// 				</div>
+// 			</div>
+// 		</div>
 export const devicesPage = async (root: HTMLElement) => {
 	root.innerHTML = `
 		<div class="page-header">
 			<h1 style="flex-grow: 1">Devices</h1>
 			<div id="devicesSummary">Loading summary...</div>
 		</div>
-		<div>
-			<div>
-				<input type="checkbox" /> a
-			</div>
-			<div>
-				<input type="checkbox" />
-			</div>
-			<div>
-				<input type="checkbox" />
-			</div>
-			<div>
-				<input type="checkbox" />
-			</div>
-		</div>
+		
 		<div id="devicesList">
 			<div class="logs-loading-indicator">Loading devices...</div>
 		</div>
