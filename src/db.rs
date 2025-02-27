@@ -326,39 +326,6 @@ impl DB {
         Ok(())
     }
 
-	pub async fn search_logs(&self, query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
-		let conn = self.conn.lock().await;
-		let end_date = query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(300));
-		let limit = query.limit.unwrap_or(200);
-		let mut stmt = conn.prepare("SELECT random, timestamp, level, msg, props FROM logs where timestamp < ? order by timestamp desc")?;
-		let mut rows = stmt.query([end_date])?;
-		let mut logs = Vec::new();
-		while let Some(row) = rows.next()? {
-			let mut log_entry = LogEntry {
-				random: row.get(0)?,
-				timestamp: row.get(1)?,
-				level: LogLevel::from_i64(row.get(2)?),
-				msg: row.get(3)?,
-				props: Vec::with_capacity(1024),
-				..Default::default()
-			};
-			let data = match row.get_ref(4)? {
-				rusqlite::types::ValueRef::Blob(data) => data,
-				_ => bail!("invalid data type for props"),
-			};
-			LogEntry::deserialize_props(&data, &mut log_entry.props);
-			match query.matches(&log_entry) {
-				Ok(true) => logs.push(log_entry),
-				Ok(false) => continue,
-				Err(e) => bail!(e),
-			}
-			if logs.len() >= limit {
-				break;
-			}
-		}
-		Ok(logs)
-	}
-
 	pub async fn new_segment(&self, args: NewSegmentArgs) -> anyhow::Result<u32> {
 		let mut conn = self.conn.lock().await;
 		let tx = conn.transaction()?;
