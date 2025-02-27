@@ -226,10 +226,10 @@ impl DB {
 				send_logs: row.get(1)?,
 				filter_level: LogLevel::from_i64(row.get(2)?),
 				send_interval: row.get(3)?,
-				logs_size: row.get(5)?,
-				logs_count: row.get(6)?,
-				created_at: row.get(7)?,
-				last_upload_at: row.get(8)?,
+				logs_size: row.get(4)?,
+				logs_count: row.get(5)?,
+				created_at: row.get(6)?,
+				last_upload_at: row.get(7)?,
 				props: Vec::new(),
 			})
 		} else {
