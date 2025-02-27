@@ -195,18 +195,17 @@ impl DB {
 	
 		let mut stmt = conn.prepare(
 			"INSERT INTO devices 
-			  (id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at, send_interval, metadata)
+			  (id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at, send_interval)
 			 VALUES 
 			  (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(id) DO UPDATE SET 
 			  id = id
-			 RETURNING id, send_logs, filter_level, send_interval, metadata, logs_size, logs_count, created_at, last_upload_at"
+			 RETURNING id, send_logs, filter_level, send_interval, logs_size, logs_count, created_at, last_upload_at"
 		)?;
 	
 		let default_send_logs = false;
 		let default_filter_level = LogLevel::Info.to_u8();
 		let default_send_interval = 60;
-		let default_metadata = "{}"; // Default JSON metadata as a string.
 		let default_logs_size = 0;
 		let default_logs_count = 0;
 	
@@ -219,7 +218,6 @@ impl DB {
 			now,
 			now,
 			default_send_interval,
-			default_metadata,
 		])?;
 	
 		if let Some(row) = rows.next()? {
