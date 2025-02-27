@@ -7,6 +7,7 @@ use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::WebSocketUpgrade;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::sse::Event;
 use axum::response::Html;
@@ -25,7 +26,7 @@ use db::MetaProp;
 use db::UpdateDevicesSettings;
 use futures::executor::block_on;
 use futures::Stream;
-use futures_util::StreamExt;
+use futures::StreamExt;
 use log::LevelFilter;
 use puppylog::*;
 use serde::Deserialize;
@@ -34,8 +35,10 @@ use serde_json::to_string;
 use serde_json::Value;
 use simple_logger::SimpleLogger;
 use tokio::io::AsyncReadExt;
+use tokio::sync::mpsc;
 use tokio::task::spawn_blocking;
 use tokio::time::Instant;
+use tokio_stream::wrappers::ReceiverStream;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::AllowMethods;
 use tower_http::cors::Any;
@@ -107,6 +110,7 @@ async fn main() {
 		.route("/api/settings/query", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/settings/query", get(get_settings_query)).with_state(ctx.clone())
 		.route("/api/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
+		.route("/api/v1/validate_query", get(validate_query))
 		.route("/api/v1/logs", get(get_logs)).layer(cors.clone())
 		.route("/api/v1/logs/stream", get(stream_logs)).layer(cors.clone())
 		.route("/api/v1/device/settings", post(update_devices_settings)).with_state(ctx.clone())
@@ -131,6 +135,31 @@ async fn main() {
 		listener,
 		app,
 	).await.unwrap();
+}
+
+async fn validate_query(
+	Query(params): Query<GetLogsQuery>
+) -> Result<(), BadRequestError> {
+	log::info!("validate_query {:?}", params);
+	match params.query {
+        Some(ref q) => {
+            let q = q.replace("\n", "");
+            let q = q.trim();
+            if q.is_empty() {
+				return Ok(());
+			}
+			log::info!("validating query {}", q);
+			if let Err(err) = parse_log_query(&q) {
+				log::error!("query {} is invalid: {}", q, err);
+				return Err(BadRequestError(err.to_string()));
+			}
+			log::info!("query {} is valid", q);
+		}
+        None => {
+			log::info!("query is empty");
+		},
+	};
+	Ok(())
 }
 
 async fn update_device_settings(
@@ -406,46 +435,71 @@ fn logentry_to_json(entry: &LogEntry) -> Value {
 
 async fn get_logs(
 	State(ctx): State<Arc<Context>>, 
-	Query(params): Query<GetLogsQuery>
-) -> Result<Json<Value>, BadRequestError> {
+    Query(params): Query<GetLogsQuery>,
+    headers: HeaderMap,
+) -> Result<Response, BadRequestError>  {
 	log::info!("get_logs {:?}", params);
 	let mut query = match params.query {
-		Some(ref query) => {
-			let query = query.replace("\n", "");
-			let query = query.trim();
-			if query.is_empty() {
+        Some(ref q) => {
+            let q = q.replace("\n", "");
+            let q = q.trim();
+            if q.is_empty() {
 				log::info!("query is empty");
 				QueryAst::default()
 			} else {
-				match parse_log_query(&query) {
+                match parse_log_query(&q) {
 					Ok(query) => query,
-					Err(err) => return Err(BadRequestError(err.to_string()))
+                    Err(err) => return Err(BadRequestError(err.to_string())),
 				}
 			}
 		}
-		None => QueryAst::default()
+        None => QueryAst::default(),
 	};
 	query.limit = params.count;
 	query.end_date = params.end_date;
-	let timer = Instant::now();
-	let logs = spawn_blocking(move || {
-		let end = query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
-		let count = query.limit.unwrap_or(200);
-		let mut logs = Vec::new();
-		block_on(ctx.find_logs(end, |entry| {
-			if check_expr(&query.root, &entry).unwrap() {
-				logs.push(logentry_to_json(entry));
-			}
-			if logs.len() >= count {
-				false
-			} else {
+
+    let (tx, rx) = mpsc::channel(100);
+    let producer_query = query.clone();
+    let ctx_clone = Arc::clone(&ctx);
+    spawn_blocking(move || {
+        let end = producer_query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
+        let count = producer_query.limit.unwrap_or(200);
+        let mut sent = 0;
+        block_on(ctx_clone.find_logs(end, |entry| {
+            if check_expr(&producer_query.root, &entry).unwrap() {
+                let log_json = logentry_to_json(entry);
+                if tx.blocking_send(log_json).is_err() {
+                    return false;
+                }
+                sent += 1;
+                if sent >= count {
+                    return false;
+                }
+            }
 				true
-			}
-		}));
-		logs
-	}).await.unwrap();
-	
-	Ok(Json(serde_json::to_value(&logs).unwrap()))
+        }));
+    });
+
+    let wants_stream = headers
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.contains("text/event-stream"))
+        .unwrap_or(false);
+
+    let res = if wants_stream {
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
+			.map(|log| {
+				let data = to_string(&log).unwrap();
+				Ok::<Event, std::convert::Infallible>(Event::default().data(data))
+			});
+        Sse::new(stream).into_response()
+    } else {
+        let logs: Vec<_> = ReceiverStream::new(rx)
+            .collect::<Vec<_>>()
+            .await;
+        Json(serde_json::to_value(&logs).unwrap()).into_response()
+    };
+	Ok(res)
 }
 
 async fn stream_logs(

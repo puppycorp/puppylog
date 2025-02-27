@@ -125,9 +125,24 @@ var devicesPage = async (root) => {
 			<h1 style="flex-grow: 1">Devices</h1>
 			<div id="devicesSummary">Loading summary...</div>
 		</div>
+		<div>
+			<div>
+				<input type="checkbox" /> a
+			</div>
+			<div>
+				<input type="checkbox" />
+			</div>
+			<div>
+				<input type="checkbox" />
+			</div>
+			<div>
+				<input type="checkbox" />
+			</div>
+		</div>
 		<div id="devicesList">
 			<div class="logs-loading-indicator">Loading devices...</div>
 		</div>
+
 	`;
   try {
     const res = await fetch("/api/v1/devices");
@@ -136,6 +151,7 @@ var devicesPage = async (root) => {
     if (summaryEl) {
       let totalLogsCount = 0, totalLogsSize = 0;
       let earliestTimestamp = Infinity, latestTimestamp = -Infinity;
+      let totalLogsPerSecond = 0;
       devices.forEach((device) => {
         totalLogsCount += device.logsCount;
         totalLogsSize += device.logsSize;
@@ -143,15 +159,16 @@ var devicesPage = async (root) => {
         const lastUploadTime = new Date(device.lastUploadAt).getTime();
         earliestTimestamp = Math.min(earliestTimestamp, createdAtTime);
         latestTimestamp = Math.max(latestTimestamp, lastUploadTime);
+        const logsPersecond = device.logsCount / ((lastUploadTime - createdAtTime) / 1000);
+        totalLogsPerSecond += logsPersecond;
       });
       const totalSeconds = (latestTimestamp - earliestTimestamp) / 1000;
-      const logsPerSecond = totalSeconds > 0 ? totalLogsCount / totalSeconds : 0;
       const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0;
       summaryEl.innerHTML = `
 				<div><strong>Total Logs Count:</strong> ${formatNumber(totalLogsCount)}</div>
 				<div><strong>Total Logs Size:</strong> ${formatBytes(totalLogsSize)}</div>
 				<div><strong>Average Log Size:</strong> ${formatBytes(averageLogSize)}</div>
-				<div><strong>Logs per Second:</strong> ${logsPerSecond.toFixed(2)}</div>
+				<div><strong>Logs per Second:</strong> ${totalLogsPerSecond.toFixed(2)}</div>
 			`;
     }
     const devicesList = document.getElementById("devicesList");
@@ -259,7 +276,6 @@ var navigate = (path) => {
 // ts/logs.ts
 var MAX_LOG_ENTRIES = 1e4;
 var MESSAGE_TRUNCATE_LENGTH = 700;
-var FETCH_DEBOUNCE_MS = 500;
 var OBSERVER_THRESHOLD = 0.1;
 var LOG_COLORS = {
   trace: "#6B7280",
@@ -302,118 +318,102 @@ var logsSearchPage = (args) => {
   settingsButton.onclick = () => navigate("/settings");
   const searchButton = document.createElement("button");
   searchButton.innerHTML = searchSvg;
-  let shouldStream = getQueryParam("stream") === "true";
-  const streamButton = document.createElement("button");
-  const setStreamButtonText = () => {
-    if (shouldStream)
-      streamButton.innerHTML = "stop";
-    else
-      streamButton.innerHTML = "stream";
-  };
-  setStreamButtonText();
-  optionsRightPanel.append(settingsButton, searchButton, streamButton);
+  optionsRightPanel.append(settingsButton, searchButton);
   const logsList = document.createElement("div");
   logsList.className = "logs-list";
   args.root.appendChild(logsList);
   const loadingIndicator = document.createElement("div");
+  loadingIndicator.style.height = "50px";
   args.root.appendChild(loadingIndicator);
-  const addLogs = (logs) => {
-    const newEntries = logs.filter((entry) => !logIds.has(entry.id));
-    newEntries.forEach((entry) => {
-      logIds.add(entry.id);
-      logEntries.push(entry);
-    });
-    logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-    if (logEntries.length > MAX_LOG_ENTRIES && args.root.scrollTop === 0) {
-      const removed = logEntries.splice(MAX_LOG_ENTRIES);
-      removed.forEach((r) => logIds.delete(r.id));
-    }
-    logsList.innerHTML = logEntries.map((entry) => `
-			<div class="list-row">
-				<div>
-					${formatTimestamp(entry.timestamp)} 
-					<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
-					${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
+  let debounce;
+  let pendingLogs = [];
+  const addLogs = (log) => {
+    pendingLogs.push(log);
+    if (debounce)
+      return;
+    debounce = setTimeout(() => {
+      const newEntries = pendingLogs.filter((entry) => !logIds.has(entry.id));
+      newEntries.forEach((entry) => {
+        logIds.add(entry.id);
+        logEntries.push(entry);
+      });
+      logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      if (logEntries.length > MAX_LOG_ENTRIES && args.root.scrollTop === 0) {
+        const removed = logEntries.splice(MAX_LOG_ENTRIES);
+        removed.forEach((r) => logIds.delete(r.id));
+      }
+      logsList.innerHTML = logEntries.map((entry) => `
+				<div class="list-row">
+					<div>
+						${formatTimestamp(entry.timestamp)} 
+						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
+						${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
+					</div>
+					<div class="logs-list-row-msg" title="${entry.msg}">
+						<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
+						<div class="msg-full">${escapeHTML(entry.msg)}</div>
+					</div>
 				</div>
-				<div class="logs-list-row-msg" title="${entry.msg}">
-					<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
-					<div class="msg-full">${escapeHTML(entry.msg)}</div>
-				</div>
-			</div>
-		`).join("");
-  };
-  let currentStream = null;
-  const startStream = (query) => {
-    const buffer = [];
-    let debounce;
-    currentStream = {
-      query,
-      close: args.streamLogs(query, (log) => {
-        buffer.push(log);
-        if (debounce)
-          return;
-        debounce = setTimeout(() => {
-          addLogs(buffer);
-          debounce = null;
-        }, 30);
-      }, () => {
-        currentStream = null;
-        if (!shouldStream)
-          return;
-        setTimeout(() => startStream(query), 1000);
-      })
-    };
-  };
-  streamButton.onclick = () => {
-    shouldStream = !shouldStream;
-    setStreamButtonText();
-    if (shouldStream)
-      setQueryParam("stream", "true");
-    else
-      removeQueryParam("stream");
-    if (shouldStream && !currentStream)
-      startStream(searchTextarea.value);
-    if (!shouldStream)
-      currentStream?.close();
+			`).join("");
+      pendingLogs = [];
+      debounce = null;
+    }, 100);
   };
   const clearLogs = () => {
     logEntries.length = 0;
     logIds.clear();
     logsList.innerHTML = "";
   };
+  let currentStream = null;
+  const loadingIndicatorVisible = () => {
+    const rect = loadingIndicator.getBoundingClientRect();
+    return rect.top < window.innerHeight && rect.bottom >= 0;
+  };
+  let streamRowsCount = 0;
+  let lastQuery = "";
+  let lastEndDate = null;
   const queryLogs = async (clear) => {
     const query = searchTextarea.value;
-    if (currentStream?.query !== query)
-      currentStream?.close();
-    if (!currentStream && shouldStream)
-      startStream(query);
+    if (query !== lastQuery) {
+      const error = await args.validateQuery(query);
+      if (error) {
+        removeQueryParam("query");
+        logsList.innerHTML = "";
+        loadingIndicator.innerHTML = `<div style="color: red">${error}</div>`;
+        return;
+      }
+    }
+    lastQuery = query;
+    if (query)
+      setQueryParam("query", query);
+    else
+      removeQueryParam("query");
     loadingIndicator.textContent = "Loading...";
     let endDate;
     if (logEntries.length > 0)
       endDate = logEntries[logEntries.length - 1].timestamp;
+    if (lastEndDate !== null && endDate === lastEndDate)
+      return;
+    lastEndDate = endDate;
     if (clear)
       clearLogs();
-    try {
-      const logs = await args.fetchMore({
-        count: 100,
-        query,
-        endDate
-      });
-      if (logs.length === 0) {
-        loadingIndicator.textContent = "No more rows";
-        moreRows = false;
+    if (currentStream)
+      currentStream();
+    currentStream = args.streamLogs({ query, count: 100, endDate }, (log) => {
+      streamRowsCount++;
+      addLogs(log);
+    }, () => {
+      currentStream = null;
+      loadingIndicator.textContent = "";
+      console.log("stream rows count", streamRowsCount);
+      if (streamRowsCount === 0) {
+        loadingIndicator.textContent = logEntries.length === 0 ? "No logs found" : "No more logs";
         return;
       }
-      moreRows = true;
-      setTimeout(() => {
-        moreRows = true;
-      }, FETCH_DEBOUNCE_MS);
-      addLogs(logs);
-      loadingIndicator.textContent = "";
-    } catch (err) {
-      loadingIndicator.textContent = err.message;
-      clearLogs();
-    }
+      streamRowsCount = 0;
+      if (loadingIndicatorVisible())
+        queryLogs();
+    });
   };
   searchTextarea.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && e.ctrlKey) {
@@ -423,25 +423,11 @@ var logsSearchPage = (args) => {
   });
   searchButton.addEventListener("click", () => queryLogs(true));
   const observer = new IntersectionObserver((entries) => {
-    if (!moreRows || !entries[0].isIntersecting)
+    if (!entries[0].isIntersecting)
       return;
-    moreRows = false;
     queryLogs();
-  }, {
-    threshold: OBSERVER_THRESHOLD
-  });
+  }, { threshold: OBSERVER_THRESHOLD });
   observer.observe(loadingIndicator);
-  let activeTimeout;
-  window.onmousemove = () => {
-    clearTimeout(activeTimeout);
-    activeTimeout = setTimeout(() => {
-      if (currentStream)
-        currentStream.close();
-      shouldStream = false;
-      setStreamButtonText();
-      removeQueryParam("stream");
-    }, 300000);
-  };
 };
 
 // ts/logtable-test.ts
@@ -512,11 +498,15 @@ var mainPage = (root) => {
   let isStreaming = getQueryParam("stream") === "true";
   logsSearchPage({
     root,
-    streamLogs: (query2, onNewLog, onEnd) => {
+    streamLogs: (args, onNewLog, onEnd) => {
       const streamQuery = new URLSearchParams;
-      if (query2)
-        streamQuery.append("query", query2);
-      const streamUrl = new URL("/api/logs/stream", window.location.origin);
+      if (args.query)
+        streamQuery.append("query", args.query);
+      if (args.count)
+        streamQuery.append("count", args.count.toString());
+      if (args.endDate)
+        streamQuery.append("endDate", args.endDate);
+      const streamUrl = new URL("/api/v1/logs", window.location.origin);
       streamUrl.search = streamQuery.toString();
       const eventSource = new EventSource(streamUrl);
       eventSource.onmessage = (event) => {
@@ -524,39 +514,17 @@ var mainPage = (root) => {
         onNewLog(data);
       };
       eventSource.onerror = (event) => {
+        console.log("eventSource.onerror", event);
         eventSource.close();
         onEnd();
       };
       return () => eventSource.close();
     },
-    fetchMore: async (args) => {
-      query = args.query;
-      if (query)
-        setQueryParam("query", query);
-      else
-        removeQueryParam("query");
-      const urlQuery = new URLSearchParams;
-      const offsetInMinutes = new Date().getTimezoneOffset();
-      const offsetInHours = -offsetInMinutes / 60;
-      urlQuery.append("timezone", offsetInHours.toString());
-      if (args.query)
-        urlQuery.append("query", args.query);
-      if (args.count)
-        urlQuery.append("count", args.count.toString());
-      if (args.endDate)
-        urlQuery.append("endDate", args.endDate);
-      const url = new URL("/api/logs", window.location.origin);
-      url.search = urlQuery.toString();
-      const res = await fetch(url.toString());
-      if (res.status === 400) {
-        const err = await res.json();
-        console.error("res.error", err);
-        throw new Error(err.error);
-      } else if (res.status !== 200) {
-        const text = await res.text();
-        throw new Error(text);
-      }
-      return res.json();
+    validateQuery: async (query2) => {
+      let res = await fetch(`/api/v1/validate_query?query=${encodeURIComponent(query2)}`);
+      if (res.status === 200)
+        return null;
+      return res.text();
     }
   });
   return root;

@@ -117,9 +117,24 @@ export const devicesPage = async (root: HTMLElement) => {
 			<h1 style="flex-grow: 1">Devices</h1>
 			<div id="devicesSummary">Loading summary...</div>
 		</div>
+		<div>
+			<div>
+				<input type="checkbox" /> a
+			</div>
+			<div>
+				<input type="checkbox" />
+			</div>
+			<div>
+				<input type="checkbox" />
+			</div>
+			<div>
+				<input type="checkbox" />
+			</div>
+		</div>
 		<div id="devicesList">
 			<div class="logs-loading-indicator">Loading devices...</div>
 		</div>
+
 	`
 	try {
 		const res = await fetch("/api/v1/devices")
@@ -128,6 +143,7 @@ export const devicesPage = async (root: HTMLElement) => {
 		if (summaryEl) {
 			let totalLogsCount = 0, totalLogsSize = 0
 			let earliestTimestamp = Infinity, latestTimestamp = -Infinity
+			let totalLogsPerSecond = 0
 			devices.forEach(device => {
 				totalLogsCount += device.logsCount
 				totalLogsSize += device.logsSize
@@ -135,15 +151,16 @@ export const devicesPage = async (root: HTMLElement) => {
 				const lastUploadTime = new Date(device.lastUploadAt).getTime()
 				earliestTimestamp = Math.min(earliestTimestamp, createdAtTime)
 				latestTimestamp = Math.max(latestTimestamp, lastUploadTime)
+				const logsPersecond = device.logsCount / ((lastUploadTime - createdAtTime) / 1000)
+				totalLogsPerSecond += logsPersecond
 			})
 			const totalSeconds = (latestTimestamp - earliestTimestamp) / 1000
-			const logsPerSecond = totalSeconds > 0 ? totalLogsCount / totalSeconds : 0
 			const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0
 			summaryEl.innerHTML = `
 				<div><strong>Total Logs Count:</strong> ${formatNumber(totalLogsCount)}</div>
 				<div><strong>Total Logs Size:</strong> ${formatBytes(totalLogsSize)}</div>
 				<div><strong>Average Log Size:</strong> ${formatBytes(averageLogSize)}</div>
-				<div><strong>Logs per Second:</strong> ${logsPerSecond.toFixed(2)}</div>
+				<div><strong>Logs per Second:</strong> ${totalLogsPerSecond.toFixed(2)}</div>
 			`
 		}
 		const devicesList = document.getElementById("devicesList")
