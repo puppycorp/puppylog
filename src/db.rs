@@ -197,7 +197,7 @@ impl DB {
 			"INSERT INTO devices 
 			  (id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at, send_interval)
 			 VALUES 
-			  (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			  (?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(id) DO UPDATE SET 
 			  id = id
 			 RETURNING id, send_logs, filter_level, send_interval, logs_size, logs_count, created_at, last_upload_at"
