@@ -152,7 +152,7 @@ export const devicesPage = async (root: HTMLElement) => {
 				earliestTimestamp = Math.min(earliestTimestamp, createdAtTime)
 				latestTimestamp = Math.max(latestTimestamp, lastUploadTime)
 				const logsPersecond = device.logsCount / ((lastUploadTime - createdAtTime) / 1000)
-				totalLogsPerSecond += logsPersecond
+				if (!isNaN(logsPersecond)) totalLogsPerSecond += logsPersecond
 			})
 			const totalSeconds = (latestTimestamp - earliestTimestamp) / 1000
 			const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0
