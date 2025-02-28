@@ -466,6 +466,9 @@ async fn get_logs(
         let count = producer_query.limit.unwrap_or(200);
         let mut sent = 0;
         block_on(ctx_clone.find_logs(end, |entry| {
+			if tx.is_closed() {
+				return false;
+			}
             if check_expr(&producer_query.root, &entry).unwrap() {
                 let log_json = logentry_to_json(entry);
                 if tx.blocking_send(log_json).is_err() {
@@ -476,7 +479,7 @@ async fn get_logs(
                     return false;
                 }
             }
-				true
+			true
         }));
     });
 
