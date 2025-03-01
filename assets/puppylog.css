@@ -22,7 +22,7 @@ body {
 }
 .logs-options-right-panel {
 	display: flex;
-	flex-direction: column;
+	flex-direction: row;
 	gap: 10px;
 	margin-left: auto;
 	align-items: flex-end;

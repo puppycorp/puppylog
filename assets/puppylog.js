@@ -179,6 +179,117 @@ var devicesPage = async (root) => {
   }
 };
 
+// ts/common.ts
+var showModal = (content) => {
+  const body = document.querySelector("body");
+  console.log("show modal", body);
+  const modalOverlay = document.createElement("div");
+  modalOverlay.style.position = "absolute";
+  modalOverlay.style.top = "0";
+  modalOverlay.style.left = "0";
+  modalOverlay.style.right = "0";
+  modalOverlay.style.bottom = "0";
+  modalOverlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
+  modalOverlay.style.justifyContent = "center";
+  modalOverlay.style.alignItems = "center";
+  modalOverlay.style.zIndex = "9999";
+  modalOverlay.onclick = (e) => {
+    modalOverlay.remove();
+  };
+  body?.appendChild(modalOverlay);
+  const modalContent = document.createElement("div");
+  modalContent.style.background = "#fff";
+  modalContent.style.padding = "16px";
+  modalContent.style.borderRadius = "4px";
+  modalContent.style.minWidth = "200px";
+  modalContent.appendChild(content);
+  const closeModalBtn = document.createElement("button");
+  closeModalBtn.textContent = "Close";
+  closeModalBtn.style.marginBottom = "8px";
+  closeModalBtn.addEventListener("click", () => {
+    modalOverlay.style.display = "none";
+  });
+  modalContent.appendChild(closeModalBtn);
+  modalOverlay.appendChild(modalContent);
+};
+var createQueryEditor = (query) => {
+  const editor = document.createElement("div");
+  editor.style.paddingLeft = "5px";
+  editor.contentEditable = "true";
+  return editor;
+};
+var createMultiSwitch = (options) => {
+  const container = document.createElement("div");
+  container.style.position = "relative";
+  container.style.display = "flex";
+  container.style.flexDirection = "row";
+  container.style.justifyContent = "space-between";
+  container.style.alignItems = "center";
+  container.style.border = "1px solid #ddd";
+  container.style.borderRadius = "4px";
+  container.style.overflow = "hidden";
+  container.style.fontFamily = "Arial, sans-serif";
+  const slider = document.createElement("div");
+  slider.style.position = "absolute";
+  slider.style.top = "0";
+  slider.style.left = "0";
+  slider.style.height = "100%";
+  slider.style.backgroundColor = "#007BFF";
+  slider.style.transition = "left 0.3s ease, width 0.3s ease";
+  container.appendChild(slider);
+  const buttons = [];
+  options.forEach((option) => {
+    const btn = document.createElement("button");
+    btn.textContent = option.label;
+    btn.style.flex = "1";
+    btn.style.padding = "8px";
+    btn.style.border = "none";
+    btn.style.background = "transparent";
+    btn.style.cursor = "pointer";
+    btn.style.transition = "color 0.3s ease";
+    btn.style.position = "relative";
+    btn.style.zIndex = "1";
+    btn.style.color = "#333";
+    btn.addEventListener("mouseenter", () => {
+      if (btn.style.color !== "white") {
+        btn.style.color = "#555";
+      }
+    });
+    btn.addEventListener("mouseleave", () => {
+      if (btn.style.color !== "white") {
+        btn.style.color = "#333";
+      }
+    });
+    btn.addEventListener("click", () => {
+      const btnRect = btn.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const left = btnRect.left - containerRect.left;
+      slider.style.left = left + "px";
+      slider.style.width = btnRect.width + "px";
+      buttons.forEach((button) => {
+        button.style.color = "#333";
+      });
+      btn.style.color = "white";
+      if (option.onClick) {
+        option.onClick();
+      }
+    });
+    container.appendChild(btn);
+    buttons.push(btn);
+  });
+  if (buttons.length > 0) {
+    requestAnimationFrame(() => {
+      const firstBtn = buttons[0];
+      const btnRect = firstBtn.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      slider.style.left = btnRect.left - containerRect.left + "px";
+      slider.style.width = btnRect.width + "px";
+      firstBtn.style.color = "white";
+    });
+  }
+  return container;
+};
+
 // ts/pattern-matcher.ts
 function patternMatcher(handlers) {
   const typedHandlers = handlers;
@@ -293,10 +404,22 @@ var logsSearchPage = (args) => {
   const logsOptions = document.createElement("div");
   logsOptions.className = "page-header";
   args.root.appendChild(logsOptions);
-  const searchTextarea = document.createElement("textarea");
-  searchTextarea.className = "logs-search-bar";
-  searchTextarea.placeholder = "Search logs (ctrl+enter to search)";
-  searchTextarea.value = getQueryParam("query") || "";
+  const m = createMultiSwitch([
+    {
+      label: "Logs"
+    },
+    {
+      label: "Metrics"
+    },
+    {
+      label: "Histogram"
+    }
+  ]);
+  m.style.textAlign = "center";
+  m.style.maxWidth = "200px";
+  args.root.appendChild(m);
+  const searchTextarea = createQueryEditor(getQueryParam("query") || "");
+  searchTextarea.style.flexGrow = "1";
   logsOptions.appendChild(searchTextarea);
   const optionsRightPanel = document.createElement("div");
   optionsRightPanel.className = "logs-options-right-panel";
@@ -306,7 +429,7 @@ var logsSearchPage = (args) => {
   settingsButton.onclick = () => navigate("/settings");
   const searchButton = document.createElement("button");
   searchButton.innerHTML = searchSvg;
-  optionsRightPanel.append(settingsButton, searchButton);
+  optionsRightPanel.append(searchButton);
   const logsList = document.createElement("div");
   logsList.className = "logs-list";
   args.root.appendChild(logsList);
@@ -426,8 +549,7 @@ function logline(length, linebreaks) {
   }
   for (let i = 0;i < linebreaks; i++) {
     const idx = Math.floor(Math.random() * (line.length + 1));
-    line = line.slice(0, idx) + `
-` + line.slice(idx);
+    line = line.slice(0, idx) + "\n" + line.slice(idx);
   }
   return line;
 }
@@ -441,10 +563,10 @@ var logtableTest = (root) => {
     root,
     fetchMore: async (args) => {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      const logs = [];
+      const logs2 = [];
       const count = args.count || 100;
       for (let i = 0;i < count; i++) {
-        logs.push({
+        logs2.push({
           id: `${Date.now()}-${i}`,
           timestamp: new Date(Date.now() - i * 1000).toISOString(),
           level: "info",
@@ -455,7 +577,7 @@ var logtableTest = (root) => {
           msg: `[${i}] ${randomLogline()}`
         });
       }
-      return logs;
+      return logs2;
     },
     streamLogs: (query, onNewLog, onEnd) => {
       const intervalId = setInterval(() => {
@@ -518,39 +640,6 @@ var mainPage = (root) => {
   return root;
 };
 
-// ts/common.ts
-var showModal = (content) => {
-  const body = document.querySelector("body");
-  const modalOverlay = document.createElement("div");
-  modalOverlay.style.position = "fixed";
-  modalOverlay.style.top = "0";
-  modalOverlay.style.left = "0";
-  modalOverlay.style.width = "100%";
-  modalOverlay.style.height = "100%";
-  modalOverlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
-  modalOverlay.style.display = "none";
-  modalOverlay.style.justifyContent = "center";
-  modalOverlay.style.alignItems = "center";
-  modalOverlay.style.zIndex = "9999";
-  body?.appendChild(modalOverlay);
-  const modalContent = document.createElement("div");
-  modalContent.style.background = "#fff";
-  modalContent.style.padding = "16px";
-  modalContent.style.borderRadius = "4px";
-  modalContent.style.minWidth = "200px";
-  const modalTitle = document.createElement("h3");
-  modalTitle.textContent = "Drag a Field";
-  modalContent.appendChild(modalTitle);
-  const closeModalBtn = document.createElement("button");
-  closeModalBtn.textContent = "Close";
-  closeModalBtn.style.marginBottom = "8px";
-  closeModalBtn.addEventListener("click", () => {
-    modalOverlay.style.display = "none";
-  });
-  modalContent.appendChild(closeModalBtn);
-  body?.appendChild(modalContent);
-};
-
 // ts/pivot.ts
 var PivotPage = (root) => {
   const fakeData = [
@@ -567,6 +656,8 @@ var PivotPage = (root) => {
   container.style.flexDirection = "column";
   container.style.gap = "16px";
   container.style.fontFamily = "Arial, sans-serif";
+  const editor = createQueryEditor("");
+  container.appendChild(editor);
   const configureButton = document.createElement("button");
   configureButton.textContent = "Configure Fields";
   configureButton.style.width = "150px";

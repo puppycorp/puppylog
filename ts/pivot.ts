@@ -1,6 +1,6 @@
-import { showModal } from "./common";
+import { createQueryEditor, createQueryEditor, showModal } from "./common";
 
-export const PivotPage = (root) => {
+export const PivotPage = (root: Element) => {
 	// 1) Fake log data
 	const fakeData = [
 		{ logLevel: 'Info', deviceId: 'Device1', message: 'Started process', timestamp: 1610000000000 },
@@ -17,9 +17,12 @@ export const PivotPage = (root) => {
 	// 3) Main container
 	const container = document.createElement('div');
 	container.style.display = 'flex';
-	container.style.flexDirection = 'column';
+	container.style.flexDirection = "column"
 	container.style.gap = '16px';
 	container.style.fontFamily = 'Arial, sans-serif';
+
+	const editor = createQueryEditor("")
+	container.appendChild(editor)
 
 	// ---------------------------------------------------------------------
 	// A) "Configure Fields" Button

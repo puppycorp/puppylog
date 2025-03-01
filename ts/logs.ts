@@ -1,3 +1,4 @@
+import { createMultiSwitch, createQueryEditor } from "./common"
 import { navigate } from "./router"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 
@@ -72,10 +73,27 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	logsOptions.className = "page-header"
 	args.root.appendChild(logsOptions)
 
-	const searchTextarea = document.createElement("textarea")
-	searchTextarea.className = "logs-search-bar"
-	searchTextarea.placeholder = "Search logs (ctrl+enter to search)"
-	searchTextarea.value = getQueryParam("query") || ""
+	const m = createMultiSwitch([
+		{
+			label: "Logs",
+ 		},
+		{
+			label: "Metrics"
+		},
+		{
+			label: "Histogram"
+		}
+	])
+	m.style.textAlign = "center"
+	m.style.maxWidth = "200px"
+	args.root.appendChild(m)
+
+	// const searchTextarea = document.createElement("textarea")
+	// searchTextarea.className = "logs-search-bar"
+	// searchTextarea.placeholder = "Search logs (ctrl+enter to search)"
+	// searchTextarea.value = getQueryParam("query") || ""
+	const searchTextarea = createQueryEditor(getQueryParam("query") || "")
+	searchTextarea.style.flexGrow = "1"
 	logsOptions.appendChild(searchTextarea)
 
 	const optionsRightPanel = document.createElement("div")
@@ -89,7 +107,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const searchButton = document.createElement("button")
 	searchButton.innerHTML = searchSvg
 
-	optionsRightPanel.append(settingsButton, searchButton)
+	optionsRightPanel.append(searchButton)
 	const logsList = document.createElement("div")
 	logsList.className = "logs-list"
 	args.root.appendChild(logsList)
