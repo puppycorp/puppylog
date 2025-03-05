@@ -1,3 +1,4 @@
+import { showModal } from "./common"
 import { navigate } from "./router"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 
@@ -121,10 +122,18 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 					</div>
 					<div class="logs-list-row-msg" title="${entry.msg}">
 						<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
-						<div class="msg-full">${escapeHTML(entry.msg)}</div>
 					</div>
 				</div>
 			`).join('')
+			document.querySelectorAll(".logs-list-row-msg").forEach((el, key) => {
+				el.addEventListener("click", () => {
+					console.log("click", key)
+					const div = document.createElement("div")
+					const entry = logEntries[key]
+					div.innerHTML = escapeHTML(entry.msg)
+					showModal(div, "Log Message")
+				})
+			})
 			pendingLogs = []
 			debounce = null
 		}, 100)

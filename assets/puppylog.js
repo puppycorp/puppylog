@@ -179,6 +179,46 @@ var devicesPage = async (root) => {
   }
 };
 
+// ts/common.ts
+var showModal = (content, title) => {
+  const body = document.querySelector("body");
+  const modalOverlay = document.createElement("div");
+  modalOverlay.style.position = "fixed";
+  modalOverlay.style.top = "0";
+  modalOverlay.style.left = "0";
+  modalOverlay.style.width = "100%";
+  modalOverlay.style.height = "100%";
+  modalOverlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
+  modalOverlay.style.display = "flex";
+  modalOverlay.style.justifyContent = "center";
+  modalOverlay.style.alignItems = "center";
+  modalOverlay.style.zIndex = "9999";
+  body?.appendChild(modalOverlay);
+  const modalContent = document.createElement("div");
+  modalContent.style.background = "#fff";
+  modalContent.style.padding = "16px";
+  modalContent.style.borderRadius = "4px";
+  modalContent.style.width = "auto";
+  modalContent.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+  const modalTitle = document.createElement("h3");
+  modalTitle.textContent = title;
+  modalContent.appendChild(modalTitle);
+  modalContent.appendChild(content);
+  const closeModalBtn = document.createElement("button");
+  closeModalBtn.textContent = "Close";
+  closeModalBtn.style.marginTop = "8px";
+  closeModalBtn.addEventListener("click", () => {
+    modalOverlay.remove();
+  });
+  modalContent.appendChild(closeModalBtn);
+  modalOverlay.addEventListener("click", () => {
+    modalOverlay.remove();
+  });
+  modalOverlay.appendChild(modalContent);
+};
+
 // ts/pattern-matcher.ts
 function patternMatcher(handlers) {
   const typedHandlers = handlers;
@@ -339,10 +379,18 @@ var logsSearchPage = (args) => {
 					</div>
 					<div class="logs-list-row-msg" title="${entry.msg}">
 						<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
-						<div class="msg-full">${escapeHTML(entry.msg)}</div>
 					</div>
 				</div>
 			`).join("");
+      document.querySelectorAll(".logs-list-row-msg").forEach((el, key) => {
+        el.addEventListener("click", () => {
+          console.log("click", key);
+          const div = document.createElement("div");
+          const entry = logEntries[key];
+          div.innerHTML = escapeHTML(entry.msg);
+          showModal(div, "Log Message");
+        });
+      });
       pendingLogs = [];
       debounce = null;
     }, 100);
@@ -516,39 +564,6 @@ var mainPage = (root) => {
     }
   });
   return root;
-};
-
-// ts/common.ts
-var showModal = (content) => {
-  const body = document.querySelector("body");
-  const modalOverlay = document.createElement("div");
-  modalOverlay.style.position = "fixed";
-  modalOverlay.style.top = "0";
-  modalOverlay.style.left = "0";
-  modalOverlay.style.width = "100%";
-  modalOverlay.style.height = "100%";
-  modalOverlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
-  modalOverlay.style.display = "none";
-  modalOverlay.style.justifyContent = "center";
-  modalOverlay.style.alignItems = "center";
-  modalOverlay.style.zIndex = "9999";
-  body?.appendChild(modalOverlay);
-  const modalContent = document.createElement("div");
-  modalContent.style.background = "#fff";
-  modalContent.style.padding = "16px";
-  modalContent.style.borderRadius = "4px";
-  modalContent.style.minWidth = "200px";
-  const modalTitle = document.createElement("h3");
-  modalTitle.textContent = "Drag a Field";
-  modalContent.appendChild(modalTitle);
-  const closeModalBtn = document.createElement("button");
-  closeModalBtn.textContent = "Close";
-  closeModalBtn.style.marginBottom = "8px";
-  closeModalBtn.addEventListener("click", () => {
-    modalOverlay.style.display = "none";
-  });
-  modalContent.appendChild(closeModalBtn);
-  body?.appendChild(modalContent);
 };
 
 // ts/pivot.ts
