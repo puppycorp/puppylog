@@ -121,16 +121,16 @@ var createDeviceRow = (device) => {
 };
 var devicesPage = async (root) => {
   root.innerHTML = `
-		<div class="page-header">
-			<h1 style="flex-grow: 1">Devices</h1>
-			<div id="devicesSummary">Loading summary...</div>
-		</div>
-		
-		<div id="devicesList">
-			<div class="logs-loading-indicator">Loading devices...</div>
-		</div>
+\t\t<div class="page-header">
+\t\t\t<h1 style="flex-grow: 1">Devices</h1>
+\t\t\t<div id="devicesSummary">Loading summary...</div>
+\t\t</div>
+\t\t
+\t\t<div id="devicesList">
+\t\t\t<div class="logs-loading-indicator">Loading devices...</div>
+\t\t</div>
 
-	`;
+\t`;
   try {
     const res = await fetch("/api/v1/devices");
     const devices = await res.json();
@@ -153,11 +153,11 @@ var devicesPage = async (root) => {
       const totalSeconds = (latestTimestamp - earliestTimestamp) / 1000;
       const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0;
       summaryEl.innerHTML = `
-				<div><strong>Total Logs Count:</strong> ${formatNumber(totalLogsCount)}</div>
-				<div><strong>Total Logs Size:</strong> ${formatBytes(totalLogsSize)}</div>
-				<div><strong>Average Log Size:</strong> ${formatBytes(averageLogSize)}</div>
-				<div><strong>Logs per Second:</strong> ${totalLogsPerSecond.toFixed(2)}</div>
-			`;
+\t\t\t\t<div><strong>Total Logs Count:</strong> ${formatNumber(totalLogsCount)}</div>
+\t\t\t\t<div><strong>Total Logs Size:</strong> ${formatBytes(totalLogsSize)}</div>
+\t\t\t\t<div><strong>Average Log Size:</strong> ${formatBytes(averageLogSize)}</div>
+\t\t\t\t<div><strong>Logs per Second:</strong> ${totalLogsPerSecond.toFixed(2)}</div>
+\t\t\t`;
     }
     const devicesList = document.getElementById("devicesList");
     if (!devicesList)
@@ -199,6 +199,9 @@ var showModal = (content, title) => {
   modalContent.style.padding = "16px";
   modalContent.style.borderRadius = "4px";
   modalContent.style.width = "auto";
+  modalContent.style.maxWidth = "500px";
+  modalContent.style.wordWrap = "break-word";
+  modalContent.style.wordBreak = "break-all";
   modalContent.addEventListener("click", (e) => {
     e.stopPropagation();
   });
@@ -371,17 +374,17 @@ var logsSearchPage = (args) => {
         removed.forEach((r) => logIds.delete(r.id));
       }
       logsList.innerHTML = logEntries.map((entry) => `
-				<div class="list-row">
-					<div>
-						${formatTimestamp(entry.timestamp)} 
-						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
-						${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
-					</div>
-					<div class="logs-list-row-msg" title="${entry.msg}">
-						<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
-					</div>
-				</div>
-			`).join("");
+\t\t\t\t<div class="list-row">
+\t\t\t\t\t<div>
+\t\t\t\t\t\t${formatTimestamp(entry.timestamp)} 
+\t\t\t\t\t\t<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
+\t\t\t\t\t\t${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
+\t\t\t\t\t</div>
+\t\t\t\t\t<div class="logs-list-row-msg" title="${entry.msg}">
+\t\t\t\t\t\t<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
+\t\t\t\t\t</div>
+\t\t\t\t</div>
+\t\t\t`).join("");
       document.querySelectorAll(".logs-list-row-msg").forEach((el, key) => {
         el.addEventListener("click", () => {
           console.log("click", key);
@@ -727,30 +730,30 @@ var segmentsPage = async (root) => {
   const totalLogsCount = res.reduce((sum, seg) => sum + seg.logsCount, 0);
   const compressRatio = totalCompressedSize / totalOriginalSize * 100;
   root.innerHTML = `
-		<div class="page-header">
-			<h1 style="flex-grow: 1">Segments</h1>
-			<div class="summary">
-				<div><strong>Total segments:</strong> ${formatNumber(totalSegments)}</div>
-				<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
-				<div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
-				<div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
-				<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
-			</div>
-		</div>
-		<div>
-			${res.map((segment) => `
-				<div class="list-row">
-					<div class="table-cell"><strong>Segment ID:</strong> ${formatNumber(segment.id)}</div>
-					<div class="table-cell"><strong>First timestamp:</strong> ${segment.firstTimestamp}</div>
-					<div class="table-cell"><strong>Last timestamp:</strong> ${segment.lastTimestamp}</div>
-					<div class="table-cell"><strong>Original size:</strong> ${formatBytes(segment.originalSize)}</div>
-					<div class="table-cell"><strong>Compressed size:</strong> ${formatBytes(segment.compressedSize)}</div>
-					<div class="table-cell"><strong>Logs count:</strong> ${formatNumber(segment.logsCount)}</div>
-					<div class="table-cell"><strong>Compression ratio:</strong> ${(segment.compressedSize / segment.originalSize * 100).toFixed(2)}%</div>
-				</div>
-			`).join("")}
-		</div>
-	`;
+\t\t<div class="page-header">
+\t\t\t<h1 style="flex-grow: 1">Segments</h1>
+\t\t\t<div class="summary">
+\t\t\t\t<div><strong>Total segments:</strong> ${formatNumber(totalSegments)}</div>
+\t\t\t\t<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
+\t\t\t\t<div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
+\t\t\t\t<div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
+\t\t\t\t<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
+\t\t\t</div>
+\t\t</div>
+\t\t<div>
+\t\t\t${res.map((segment) => `
+\t\t\t\t<div class="list-row">
+\t\t\t\t\t<div class="table-cell"><strong>Segment ID:</strong> ${formatNumber(segment.id)}</div>
+\t\t\t\t\t<div class="table-cell"><strong>First timestamp:</strong> ${segment.firstTimestamp}</div>
+\t\t\t\t\t<div class="table-cell"><strong>Last timestamp:</strong> ${segment.lastTimestamp}</div>
+\t\t\t\t\t<div class="table-cell"><strong>Original size:</strong> ${formatBytes(segment.originalSize)}</div>
+\t\t\t\t\t<div class="table-cell"><strong>Compressed size:</strong> ${formatBytes(segment.compressedSize)}</div>
+\t\t\t\t\t<div class="table-cell"><strong>Logs count:</strong> ${formatNumber(segment.logsCount)}</div>
+\t\t\t\t\t<div class="table-cell"><strong>Compression ratio:</strong> ${(segment.compressedSize / segment.originalSize * 100).toFixed(2)}%</div>
+\t\t\t\t</div>
+\t\t\t`).join("")}
+\t\t</div>
+\t`;
 };
 
 // ts/settings.ts
