@@ -199,7 +199,7 @@ var showModal = (content, title) => {
   modalContent.style.padding = "16px";
   modalContent.style.borderRadius = "4px";
   modalContent.style.width = "auto";
-  modalContent.style.maxWidth = "900px";
+  modalContent.style.maxWidth = "calc(100vw - 32px)";
   modalContent.style.wordWrap = "break-word";
   modalContent.style.wordBreak = "break-all";
   modalContent.addEventListener("click", (e) => {
