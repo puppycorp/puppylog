@@ -263,9 +263,15 @@ var formatLogMsg = (msg) => {
       if (jsonDepth === 0) {
         let trimmed = backbuffer.trim();
         if (trimmed.startsWith("{")) {
-          const pre = document.createElement("pre");
-          pre.textContent = JSON.stringify(JSON.parse(backbuffer), null, 2);
-          container.appendChild(pre);
+          try {
+            const pre = document.createElement("pre");
+            pre.textContent = JSON.stringify(JSON.parse(backbuffer), null, 2);
+            container.appendChild(pre);
+          } catch (e) {
+            const span = document.createElement("span");
+            span.textContent = backbuffer;
+            container.appendChild(span);
+          }
         } else if (trimmed.startsWith("<")) {
           try {
             const parser = new DOMParser;
@@ -295,7 +301,7 @@ var formatLogMsg = (msg) => {
       continue;
     }
     backbuffer += char;
-    if (jsonDepth === 0 && backbuffer.trim().startsWith("<") && char === ">") {
+    if (jsonDepth === 0 && backbuffer.trim().startsWith("<") && char == ">") {
       try {
         const parser = new DOMParser;
         const xmlDoc = parser.parseFromString(backbuffer, "application/xml");
@@ -312,9 +318,15 @@ var formatLogMsg = (msg) => {
   if (backbuffer) {
     let trimmed = backbuffer.trim();
     if (trimmed.startsWith("{")) {
-      const pre = document.createElement("pre");
-      pre.textContent = JSON.stringify(JSON.parse(backbuffer), null, 2);
-      container.appendChild(pre);
+      try {
+        const pre = document.createElement("pre");
+        pre.textContent = JSON.stringify(JSON.parse(backbuffer), null, 2);
+        container.appendChild(pre);
+      } catch (e) {
+        const span = document.createElement("span");
+        span.textContent = backbuffer;
+        container.appendChild(span);
+      }
     } else if (trimmed.startsWith("<")) {
       try {
         const parser = new DOMParser;
