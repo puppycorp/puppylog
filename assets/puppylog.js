@@ -121,16 +121,16 @@ var createDeviceRow = (device) => {
 };
 var devicesPage = async (root) => {
   root.innerHTML = `
-\t\t<div class="page-header">
-\t\t\t<h1 style="flex-grow: 1">Devices</h1>
-\t\t\t<div id="devicesSummary">Loading summary...</div>
-\t\t</div>
-\t\t
-\t\t<div id="devicesList">
-\t\t\t<div class="logs-loading-indicator">Loading devices...</div>
-\t\t</div>
+		<div class="page-header">
+			<h1 style="flex-grow: 1">Devices</h1>
+			<div id="devicesSummary">Loading summary...</div>
+		</div>
+		
+		<div id="devicesList">
+			<div class="logs-loading-indicator">Loading devices...</div>
+		</div>
 
-\t`;
+	`;
   try {
     const res = await fetch("/api/v1/devices");
     const devices = await res.json();
@@ -153,11 +153,11 @@ var devicesPage = async (root) => {
       const totalSeconds = (latestTimestamp - earliestTimestamp) / 1000;
       const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0;
       summaryEl.innerHTML = `
-\t\t\t\t<div><strong>Total Logs Count:</strong> ${formatNumber(totalLogsCount)}</div>
-\t\t\t\t<div><strong>Total Logs Size:</strong> ${formatBytes(totalLogsSize)}</div>
-\t\t\t\t<div><strong>Average Log Size:</strong> ${formatBytes(averageLogSize)}</div>
-\t\t\t\t<div><strong>Logs per Second:</strong> ${totalLogsPerSecond.toFixed(2)}</div>
-\t\t\t`;
+				<div><strong>Total Logs Count:</strong> ${formatNumber(totalLogsCount)}</div>
+				<div><strong>Total Logs Size:</strong> ${formatBytes(totalLogsSize)}</div>
+				<div><strong>Average Log Size:</strong> ${formatBytes(averageLogSize)}</div>
+				<div><strong>Logs per Second:</strong> ${totalLogsPerSecond.toFixed(2)}</div>
+			`;
     }
     const devicesList = document.getElementById("devicesList");
     if (!devicesList)
@@ -199,7 +199,7 @@ var showModal = (content, title) => {
   modalContent.style.padding = "16px";
   modalContent.style.borderRadius = "4px";
   modalContent.style.width = "auto";
-  modalContent.style.maxWidth = "500px";
+  modalContent.style.maxWidth = "900px";
   modalContent.style.wordWrap = "break-word";
   modalContent.style.wordBreak = "break-all";
   modalContent.addEventListener("click", (e) => {
@@ -208,18 +208,162 @@ var showModal = (content, title) => {
   const modalTitle = document.createElement("h3");
   modalTitle.textContent = title;
   modalContent.appendChild(modalTitle);
-  modalContent.appendChild(content);
+  const modalBody = document.createElement("div");
+  modalBody.style.overflowY = "auto";
+  modalBody.style.maxHeight = "calc(90vh - 100px)";
+  modalBody.appendChild(content);
+  modalContent.appendChild(modalBody);
+  const buttonContainer = document.createElement("div");
+  buttonContainer.style.display = "flex";
+  buttonContainer.style.justifyContent = "space-between";
+  buttonContainer.style.marginTop = "8px";
+  const copyBtn = document.createElement("button");
+  copyBtn.textContent = "Copy";
+  copyBtn.addEventListener("click", () => {
+    navigator.clipboard.writeText(content.textContent || "").then(() => {
+      console.log("Content copied to clipboard.");
+    }, (err) => {
+      console.error("Failed to copy text: ", err);
+    });
+  });
+  buttonContainer.appendChild(copyBtn);
   const closeModalBtn = document.createElement("button");
   closeModalBtn.textContent = "Close";
-  closeModalBtn.style.marginTop = "8px";
   closeModalBtn.addEventListener("click", () => {
     modalOverlay.remove();
   });
-  modalContent.appendChild(closeModalBtn);
+  buttonContainer.appendChild(closeModalBtn);
+  modalContent.appendChild(buttonContainer);
   modalOverlay.addEventListener("click", () => {
     modalOverlay.remove();
   });
   modalOverlay.appendChild(modalContent);
+};
+
+// ts/logmsg.ts
+var formatLogMsg = (msg) => {
+  const container = document.createElement("div");
+  let jsonDepth = 0;
+  let backbuffer = "";
+  for (const char of msg) {
+    if (char === "{") {
+      jsonDepth++;
+      if (jsonDepth === 1 && backbuffer) {
+        const span = document.createElement("span");
+        span.textContent = backbuffer;
+        container.appendChild(span);
+        backbuffer = "";
+      }
+      backbuffer += char;
+      continue;
+    }
+    if (char === "}") {
+      jsonDepth--;
+      backbuffer += char;
+      if (jsonDepth === 0) {
+        let trimmed = backbuffer.trim();
+        if (trimmed.startsWith("{")) {
+          const pre = document.createElement("pre");
+          pre.textContent = JSON.stringify(JSON.parse(backbuffer), null, 2);
+          container.appendChild(pre);
+        } else if (trimmed.startsWith("<")) {
+          try {
+            const parser = new DOMParser;
+            const xmlDoc = parser.parseFromString(backbuffer, "application/xml");
+            if (!xmlDoc.getElementsByTagName("parsererror").length) {
+              const pre = document.createElement("pre");
+              pre.textContent = formatXml(backbuffer);
+              container.appendChild(pre);
+            } else {
+              const span = document.createElement("span");
+              span.textContent = backbuffer;
+              container.appendChild(span);
+            }
+          } catch (e) {
+            const span = document.createElement("span");
+            span.textContent = backbuffer;
+            container.appendChild(span);
+          }
+        } else {
+          const span = document.createElement("span");
+          span.textContent = backbuffer;
+          container.appendChild(span);
+        }
+        backbuffer = "";
+        continue;
+      }
+      continue;
+    }
+    backbuffer += char;
+    if (jsonDepth === 0 && backbuffer.trim().startsWith("<") && char === ">") {
+      try {
+        const parser = new DOMParser;
+        const xmlDoc = parser.parseFromString(backbuffer, "application/xml");
+        if (!xmlDoc.getElementsByTagName("parsererror").length) {
+          const pre = document.createElement("pre");
+          pre.textContent = formatXml(backbuffer);
+          container.appendChild(pre);
+          backbuffer = "";
+          continue;
+        }
+      } catch (e) {}
+    }
+  }
+  if (backbuffer) {
+    let trimmed = backbuffer.trim();
+    if (trimmed.startsWith("{")) {
+      const pre = document.createElement("pre");
+      pre.textContent = JSON.stringify(JSON.parse(backbuffer), null, 2);
+      container.appendChild(pre);
+    } else if (trimmed.startsWith("<")) {
+      try {
+        const parser = new DOMParser;
+        const xmlDoc = parser.parseFromString(backbuffer, "application/xml");
+        if (!xmlDoc.getElementsByTagName("parsererror").length) {
+          const pre = document.createElement("pre");
+          pre.textContent = formatXml(backbuffer);
+          container.appendChild(pre);
+        } else {
+          const span = document.createElement("span");
+          span.textContent = backbuffer;
+          container.appendChild(span);
+        }
+      } catch (e) {
+        const span = document.createElement("span");
+        span.textContent = backbuffer;
+        container.appendChild(span);
+      }
+    } else {
+      const span = document.createElement("span");
+      span.textContent = backbuffer;
+      container.appendChild(span);
+    }
+  }
+  return container;
+};
+var formatXml = (xml) => {
+  let formatted = "";
+  xml = xml.replace(/(>)(<)(\/*)/g, `$1
+$2$3`);
+  let pad = 0;
+  xml.split(`
+`).forEach((node) => {
+    let indent = 0;
+    if (node.match(/.+<\/\w[^>]*>$/)) {
+      indent = 0;
+    } else if (node.match(/^<\/\w/)) {
+      if (pad !== 0)
+        pad--;
+    } else if (node.match(/^<\w([^>]*[^\/])?>.*$/)) {
+      indent = 1;
+    } else {
+      indent = 0;
+    }
+    formatted += "  ".repeat(pad) + node + `
+`;
+    pad += indent;
+  });
+  return formatted;
 };
 
 // ts/pattern-matcher.ts
@@ -374,24 +518,21 @@ var logsSearchPage = (args) => {
         removed.forEach((r) => logIds.delete(r.id));
       }
       logsList.innerHTML = logEntries.map((entry) => `
-\t\t\t\t<div class="list-row">
-\t\t\t\t\t<div>
-\t\t\t\t\t\t${formatTimestamp(entry.timestamp)} 
-\t\t\t\t\t\t<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
-\t\t\t\t\t\t${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
-\t\t\t\t\t</div>
-\t\t\t\t\t<div class="logs-list-row-msg" title="${entry.msg}">
-\t\t\t\t\t\t<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
-\t\t\t\t\t</div>
-\t\t\t\t</div>
-\t\t\t`).join("");
+				<div class="list-row">
+					<div>
+						${formatTimestamp(entry.timestamp)} 
+						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
+						${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
+					</div>
+					<div class="logs-list-row-msg" title="${entry.msg}">
+						<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
+					</div>
+				</div>
+			`).join("");
       document.querySelectorAll(".logs-list-row-msg").forEach((el, key) => {
         el.addEventListener("click", () => {
-          console.log("click", key);
-          const div = document.createElement("div");
           const entry = logEntries[key];
-          div.innerHTML = escapeHTML(entry.msg);
-          showModal(div, "Log Message");
+          showModal(formatLogMsg(entry.msg), "Log Message");
         });
       });
       pendingLogs = [];
@@ -482,50 +623,102 @@ function logline(length, linebreaks) {
   }
   return line;
 }
-function randomLogline() {
-  const length = Math.floor(Math.random() * 100);
+function randomLogline(len) {
   const linebreaks = Math.floor(Math.random() * 10);
-  return logline(length, linebreaks);
+  return logline(len, linebreaks);
 }
+var createRandomJson = (totalPropsCount, maxDepth = 5) => {
+  const root = {};
+  let createdCount = 0;
+  const queue = [];
+  queue.push({ obj: root, depth: 0 });
+  while (queue.length > 0 && createdCount < totalPropsCount) {
+    const { obj, depth } = queue.shift();
+    const remaining = totalPropsCount - createdCount;
+    const numProps = Math.floor(Math.random() * Math.min(remaining, 10)) + 1;
+    for (let i = 0;i < numProps && createdCount < totalPropsCount; i++) {
+      const key = `key${createdCount}`;
+      if (depth < maxDepth && Math.random() > 0.5) {
+        const nestedObj = {};
+        obj[key] = nestedObj;
+        createdCount++;
+        queue.push({ obj: nestedObj, depth: depth + 1 });
+      } else {
+        obj[key] = `value${createdCount}`;
+        createdCount++;
+      }
+    }
+  }
+  return root;
+};
+var createRandomXml = (totalNodesCount, maxDepth = 5) => {
+  const root = { tag: "root", children: [] };
+  let createdCount = 0;
+  const queue = [{ node: root, depth: 0 }];
+  while (queue.length > 0 && createdCount < totalNodesCount) {
+    const { node, depth } = queue.shift();
+    const remaining = totalNodesCount - createdCount;
+    const numChildren = Math.floor(Math.random() * Math.min(remaining, 10)) + 1;
+    node.children = node.children || [];
+    for (let i = 0;i < numChildren && createdCount < totalNodesCount; i++) {
+      const tagName = `element${createdCount}`;
+      if (depth < maxDepth && Math.random() > 0.5) {
+        const childNode = { tag: tagName, children: [] };
+        node.children.push(childNode);
+        createdCount++;
+        queue.push({ node: childNode, depth: depth + 1 });
+      } else {
+        const childNode = { tag: tagName, text: `value${createdCount}` };
+        node.children.push(childNode);
+        createdCount++;
+      }
+    }
+  }
+  const nodeToXml = (node) => {
+    if (node.children && node.children.length > 0) {
+      const childrenXml = node.children.map((child) => nodeToXml(child)).join("");
+      return `<${node.tag}>${childrenXml}</${node.tag}>`;
+    } else if (node.text !== undefined) {
+      return `<${node.tag}>${node.text}</${node.tag}>`;
+    } else {
+      return `<${node.tag}/>`;
+    }
+  };
+  return nodeToXml(root);
+};
 var logtableTest = (root) => {
   logsSearchPage({
     root,
-    fetchMore: async (args) => {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const logs = [];
-      const count = args.count || 100;
-      for (let i = 0;i < count; i++) {
-        logs.push({
-          id: `${Date.now()}-${i}`,
-          timestamp: new Date(Date.now() - i * 1000).toISOString(),
-          level: "info",
-          props: [
-            { key: "key", value: "value" },
-            { key: "key2", value: "value2" }
-          ],
-          msg: `[${i}] ${randomLogline()}`
-        });
-      }
-      return logs;
+    streamLogs: (args, onNewLog, onEnd) => {
+      onNewLog({
+        id: `${Date.now()}-text`,
+        timestamp: new Date().toISOString(),
+        level: "debug",
+        props: [],
+        msg: `Streamed log: ${randomLogline(1e5)}`
+      });
+      const randomPropsCount = Math.floor(Math.random() * 50) + 1;
+      const randomPropsObject = createRandomJson(700);
+      onNewLog({
+        id: `${Date.now()}-json`,
+        timestamp: new Date().toISOString(),
+        level: "debug",
+        props: [],
+        msg: `JSON ${JSON.stringify(randomPropsObject)}`
+      });
+      const randomXml = createRandomXml(1000);
+      onNewLog({
+        id: `${Date.now()}-xml`,
+        timestamp: new Date().toISOString(),
+        level: "debug",
+        props: [],
+        msg: `XML ${randomXml}`
+      });
+      onEnd();
+      return () => {};
     },
-    streamLogs: (query, onNewLog, onEnd) => {
-      const intervalId = setInterval(() => {
-        onNewLog({
-          id: `${Date.now()}-stream`,
-          timestamp: new Date().toISOString(),
-          level: "debug",
-          props: [{ key: "stream", value: "true" }],
-          msg: `Streamed log: ${randomLogline()}`
-        });
-      }, 2000);
-      const timeoutId = setTimeout(() => {
-        clearInterval(intervalId);
-        onEnd();
-      }, 1e4);
-      return () => {
-        clearInterval(intervalId);
-        clearTimeout(timeoutId);
-      };
+    validateQuery: async (query) => {
+      return null;
     }
   });
   return root;
@@ -730,30 +923,30 @@ var segmentsPage = async (root) => {
   const totalLogsCount = res.reduce((sum, seg) => sum + seg.logsCount, 0);
   const compressRatio = totalCompressedSize / totalOriginalSize * 100;
   root.innerHTML = `
-\t\t<div class="page-header">
-\t\t\t<h1 style="flex-grow: 1">Segments</h1>
-\t\t\t<div class="summary">
-\t\t\t\t<div><strong>Total segments:</strong> ${formatNumber(totalSegments)}</div>
-\t\t\t\t<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
-\t\t\t\t<div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
-\t\t\t\t<div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
-\t\t\t\t<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
-\t\t\t</div>
-\t\t</div>
-\t\t<div>
-\t\t\t${res.map((segment) => `
-\t\t\t\t<div class="list-row">
-\t\t\t\t\t<div class="table-cell"><strong>Segment ID:</strong> ${formatNumber(segment.id)}</div>
-\t\t\t\t\t<div class="table-cell"><strong>First timestamp:</strong> ${segment.firstTimestamp}</div>
-\t\t\t\t\t<div class="table-cell"><strong>Last timestamp:</strong> ${segment.lastTimestamp}</div>
-\t\t\t\t\t<div class="table-cell"><strong>Original size:</strong> ${formatBytes(segment.originalSize)}</div>
-\t\t\t\t\t<div class="table-cell"><strong>Compressed size:</strong> ${formatBytes(segment.compressedSize)}</div>
-\t\t\t\t\t<div class="table-cell"><strong>Logs count:</strong> ${formatNumber(segment.logsCount)}</div>
-\t\t\t\t\t<div class="table-cell"><strong>Compression ratio:</strong> ${(segment.compressedSize / segment.originalSize * 100).toFixed(2)}%</div>
-\t\t\t\t</div>
-\t\t\t`).join("")}
-\t\t</div>
-\t`;
+		<div class="page-header">
+			<h1 style="flex-grow: 1">Segments</h1>
+			<div class="summary">
+				<div><strong>Total segments:</strong> ${formatNumber(totalSegments)}</div>
+				<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
+				<div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
+				<div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
+				<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
+			</div>
+		</div>
+		<div>
+			${res.map((segment) => `
+				<div class="list-row">
+					<div class="table-cell"><strong>Segment ID:</strong> ${formatNumber(segment.id)}</div>
+					<div class="table-cell"><strong>First timestamp:</strong> ${segment.firstTimestamp}</div>
+					<div class="table-cell"><strong>Last timestamp:</strong> ${segment.lastTimestamp}</div>
+					<div class="table-cell"><strong>Original size:</strong> ${formatBytes(segment.originalSize)}</div>
+					<div class="table-cell"><strong>Compressed size:</strong> ${formatBytes(segment.compressedSize)}</div>
+					<div class="table-cell"><strong>Logs count:</strong> ${formatNumber(segment.logsCount)}</div>
+					<div class="table-cell"><strong>Compression ratio:</strong> ${(segment.compressedSize / segment.originalSize * 100).toFixed(2)}%</div>
+				</div>
+			`).join("")}
+		</div>
+	`;
 };
 
 // ts/settings.ts

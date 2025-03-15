@@ -19,7 +19,7 @@ export const showModal = (content: HTMLElement, title: string) => {
 	modalContent.style.padding = "16px"
 	modalContent.style.borderRadius = "4px"
 	modalContent.style.width = "auto"
-	modalContent.style.maxWidth = "500px"
+	modalContent.style.maxWidth = "900px"
 	modalContent.style.wordWrap = "break-word"
 	modalContent.style.wordBreak = "break-all"
 
@@ -31,15 +31,39 @@ export const showModal = (content: HTMLElement, title: string) => {
 	modalTitle.textContent = title
 	modalContent.appendChild(modalTitle)
 
-	modalContent.appendChild(content)
+	const modalBody = document.createElement("div")
+	modalBody.style.overflowY = "auto"
+	modalBody.style.maxHeight = "calc(90vh - 100px)"
+	modalBody.appendChild(content)
+	modalContent.appendChild(modalBody)
+
+	const buttonContainer = document.createElement("div")
+	buttonContainer.style.display = "flex"
+	buttonContainer.style.justifyContent = "space-between"
+	buttonContainer.style.marginTop = "8px"
+
+	const copyBtn = document.createElement("button")
+	copyBtn.textContent = "Copy"
+	copyBtn.addEventListener("click", () => {
+		navigator.clipboard.writeText(content.textContent || "").then(
+			() => {
+				console.log("Content copied to clipboard.")
+			},
+			(err) => {
+				console.error("Failed to copy text: ", err)
+			}
+		)
+	})
+	buttonContainer.appendChild(copyBtn)
 
 	const closeModalBtn = document.createElement("button")
 	closeModalBtn.textContent = "Close"
-	closeModalBtn.style.marginTop = "8px"
 	closeModalBtn.addEventListener("click", () => {
 		modalOverlay.remove()
 	})
-	modalContent.appendChild(closeModalBtn)
+	buttonContainer.appendChild(closeModalBtn)
+
+	modalContent.appendChild(buttonContainer)
 
 	modalOverlay.addEventListener("click", () => {
 		modalOverlay.remove()

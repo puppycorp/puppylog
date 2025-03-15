@@ -1,4 +1,5 @@
 import { showModal } from "./common"
+import { formatLogMsg } from "./logmsg"
 import { navigate } from "./router"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 
@@ -127,11 +128,8 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			`).join('')
 			document.querySelectorAll(".logs-list-row-msg").forEach((el, key) => {
 				el.addEventListener("click", () => {
-					console.log("click", key)
-					const div = document.createElement("div")
 					const entry = logEntries[key]
-					div.innerHTML = escapeHTML(entry.msg)
-					showModal(div, "Log Message")
+					showModal(formatLogMsg(entry.msg), "Log Message")
 				})
 			})
 			pendingLogs = []

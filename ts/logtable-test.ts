@@ -1,9 +1,5 @@
 import { LogEntry, logsSearchPage } from "./logs"
 
-/**
- * Utility function that generates a string of random uppercase letters.
- * Optionally inserts a given number of line breaks at random positions.
- */
 function logline(length: number, linebreaks: number): string {
 	let line = ""
 	for (let i = 0; i < length; i++) {
@@ -16,66 +12,116 @@ function logline(length: number, linebreaks: number): string {
 	return line
 }
 
-/**
- * Utility that randomly generates a log line.
- */
-function randomLogline(): string {
-	const length = Math.floor(Math.random() * 100)
+function randomLogline(len: number): string {
 	const linebreaks = Math.floor(Math.random() * 10)
-	return logline(length, linebreaks)
+	return logline(len, linebreaks)
 }
 
-/**
- * This function sets up the logs UI in test mode.
- * It provides a simulated `fetchMore` function that returns fake logs
- * and a simulated `streamLogs` that pushes new logs on an interval.
- */
+const createRandomJson = (totalPropsCount: number, maxDepth: number = 5): any => {
+	const root: Record<string, any> = {};
+	let createdCount = 0;
+	const queue: Array<{ obj: Record<string, any>, depth: number }> = [];
+	queue.push({ obj: root, depth: 0 });
+
+	while (queue.length > 0 && createdCount < totalPropsCount) {
+		const { obj, depth } = queue.shift()!;
+		const remaining = totalPropsCount - createdCount;
+		// Limit the number of properties added at this level to a maximum of 10 or the remaining count
+		const numProps = Math.floor(Math.random() * Math.min(remaining, 10)) + 1;
+
+		for (let i = 0; i < numProps && createdCount < totalPropsCount; i++) {
+			const key = `key${createdCount}`;
+			if (depth < maxDepth && Math.random() > 0.5) {
+				const nestedObj: Record<string, any> = {};
+				obj[key] = nestedObj;
+				createdCount++;
+				queue.push({ obj: nestedObj, depth: depth + 1 });
+			} else {
+				obj[key] = `value${createdCount}`;
+				createdCount++;
+			}
+		}
+	}
+
+	return root;
+}
+
+interface XmlNode {
+	tag: string
+	children?: XmlNode[]
+	text?: string
+}
+
+const createRandomXml = (totalNodesCount: number, maxDepth: number = 5): string => {
+	const root: XmlNode = { tag: 'root', children: [] }
+	let createdCount = 0
+	const queue: Array<{ node: XmlNode, depth: number }> = [{ node: root, depth: 0 }]
+	while (queue.length > 0 && createdCount < totalNodesCount) {
+		const { node, depth } = queue.shift()!
+		const remaining = totalNodesCount - createdCount
+		const numChildren = Math.floor(Math.random() * Math.min(remaining, 10)) + 1
+		node.children = node.children || []
+		for (let i = 0; i < numChildren && createdCount < totalNodesCount; i++) {
+			const tagName = `element${createdCount}`
+			if (depth < maxDepth && Math.random() > 0.5) {
+				const childNode: XmlNode = { tag: tagName, children: [] }
+				node.children.push(childNode)
+				createdCount++
+				queue.push({ node: childNode, depth: depth + 1 })
+			} else {
+				const childNode: XmlNode = { tag: tagName, text: `value${createdCount}` }
+				node.children.push(childNode)
+				createdCount++
+			}
+		}
+	}
+	const nodeToXml = (node: XmlNode): string => {
+		if (node.children && node.children.length > 0) {
+			const childrenXml = node.children.map(child => nodeToXml(child)).join('')
+			return `<${node.tag}>${childrenXml}</${node.tag}>`
+		} else if (node.text !== undefined) {
+			return `<${node.tag}>${node.text}</${node.tag}>`
+		} else {
+			return `<${node.tag}/>`
+		}
+	}
+	return nodeToXml(root)
+}
+
 export const logtableTest = (root: HTMLElement): HTMLElement => {
 	logsSearchPage({
 		root,
-		fetchMore: async (args) => {
-			// simulate network delay
-			await new Promise((resolve) => setTimeout(resolve, 500));
-			const logs: Array<LogEntry> = [];
-			const count = args.count || 100;
-			for (let i = 0; i < count; i++) {
-				logs.push({
-					id: `${Date.now()}-${i}`,
-					timestamp: new Date(Date.now() - i * 1000).toISOString(),
-					level: "info",
-					props: [
-						{ key: "key", value: "value" },
-						{ key: "key2", value: "value2" }
-					],
-					msg: `[${i}] ${randomLogline()}`
-				});
-			}
-			return logs;
+		streamLogs: (args, onNewLog, onEnd) => {
+			onNewLog({
+				id: `${Date.now()}-text`,
+				timestamp: new Date().toISOString(),
+				level: "debug",
+				props: [],
+				msg: `Streamed log: ${randomLogline(100_000)}`
+			})
+			const randomPropsCount = Math.floor(Math.random() * 50) + 1
+			const randomPropsObject = createRandomJson(700)
+			onNewLog({
+				id: `${Date.now()}-json`,
+				timestamp: new Date().toISOString(),
+				level: "debug",
+				props: [],
+				msg: `JSON ${JSON.stringify(randomPropsObject)}`
+			})
+			const randomXml = createRandomXml(1000)
+			onNewLog({
+				id: `${Date.now()}-xml`,
+				timestamp: new Date().toISOString(),
+				level: "debug",
+				props: [],
+				msg: `XML ${randomXml}`
+			})
+			onEnd()
+			return () => {}
 		},
-		streamLogs: (
-			query: string,
-			onNewLog: (log: LogEntry) => void,
-			onEnd: () => void
-		) => {
-			const intervalId = setInterval(() => {
-				onNewLog({
-					id: `${Date.now()}-stream`,
-					timestamp: new Date().toISOString(),
-					level: "debug",
-					props: [{ key: "stream", value: "true" }],
-					msg: `Streamed log: ${randomLogline()}`
-				});
-			}, 2000);
-			const timeoutId = setTimeout(() => {
-				clearInterval(intervalId);
-				onEnd();
-			}, 10000);
-			return () => {
-				clearInterval(intervalId);
-				clearTimeout(timeoutId);
-			};
+		validateQuery: async (query) => {
+			return null
 		}
-	});
-	return root;
+	})
+	return root
 };
-
