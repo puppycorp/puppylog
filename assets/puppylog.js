@@ -536,7 +536,7 @@ var logsSearchPage = (args) => {
 						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
 						${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
 					</div>
-					<div class="logs-list-row-msg" title="${entry.msg}">
+					<div class="logs-list-row-msg">
 						<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
 					</div>
 				</div>
