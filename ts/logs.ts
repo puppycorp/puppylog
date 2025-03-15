@@ -126,7 +126,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 					</div>
 				</div>
 			`).join('')
-			document.querySelectorAll(".logs-list-row-msg").forEach((el, key) => {
+			document.querySelectorAll(".list-row").forEach((el, key) => {
 				el.addEventListener("click", () => {
 					const entry = logEntries[key]
 					showModal(formatLogMsg(entry.msg), "Log Message")

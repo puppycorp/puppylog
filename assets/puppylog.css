@@ -164,6 +164,7 @@ body {
 	padding: 8px;
 	background-color: #fff;
 	transition: box-shadow 0.2s ease;
+	cursor: pointer;
 }
 .list-row:hover {
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -172,7 +173,6 @@ body {
 	position: relative;
 	display: inline-block;
 	max-width: 100%;
-	cursor: pointer;
 }
 .msg-summary {
 	overflow: hidden;
