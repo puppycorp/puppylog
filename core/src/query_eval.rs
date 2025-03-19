@@ -1,3 +1,7 @@
+use chrono::Datelike;
+use chrono::Timelike;
+
+use crate::FieldAccess;
 use crate::LogEntry;
 use crate::LogLevel;
 use crate::query_parsing::Condition;
@@ -83,6 +87,33 @@ fn does_field_match(field: &FieldType, value: &Value, operator: &Operator, logli
     }
 }
 
+fn check_field_access(field_access: &FieldAccess, right: &Expr, op: &Operator, logline: &LogEntry) -> Result<bool, String> {
+	match field_access.expr.as_ref() {
+		Expr::Value(Value::String(obj)) => {
+			match obj.as_str() {
+				"timestamp" => {
+					let num = match right {
+						Expr::Value(Value::Number(num)) => *num as i32,
+						_ => return Err("Invalid value for timestamp field".to_string())
+					};
+
+					match field_access.field.as_str() {
+						"year" => Ok(magic_cmp(logline.timestamp.year(), num, op)),
+						"month" => Ok(magic_cmp(logline.timestamp.month(), num as u32, op)),
+						"day" => Ok(magic_cmp(logline.timestamp.day(), num as u32, op)),
+						"hour" => Ok(magic_cmp(logline.timestamp.hour(), num as u32, op)),
+						"minute" => Ok(magic_cmp(logline.timestamp.minute(), num as u32, op)),
+						"second" => Ok(magic_cmp(logline.timestamp.second(), num as u32, op)),
+						_ => Err(format!("Field not found: {}", field_access.field))
+					}
+				},
+				_ => Err(format!("does not have fields: {}", obj))
+			}
+		},
+		_ => Err(format!("unsupported field access: {:?}", field_access))
+	}
+}
+
 fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String> {
     fn match_field(field: &str, val: &Value, op: &Operator, logline: &LogEntry) -> Result<bool, String> {
         match find_field(field, logline) {
@@ -95,6 +126,34 @@ fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String>
         (Expr::Value(val), Expr::Value(Value::String(right)), op) => match_field(right, val, op, logline),
         (Expr::Value(Value::String(left)), Expr::Empty, Operator::Exists) => Ok(find_field(left, logline).is_some()),
         (Expr::Value(Value::String(left)), Expr::Empty, Operator::NotExists) => Ok(find_field(left, logline).is_none()), 
+		// (Expr::FieldAccess(FieldAccess { expr, field }), right, op) => {
+		// 	match expr.as_ref() {
+		// 		Expr::Value(Value::String(obj)) => {
+		// 			match obj.as_str() {
+		// 				"timestamp" => {
+		// 					let num = match right {
+		// 						Expr::Value(Value::Number(num)) => *num as i32,
+		// 						_ => return Err("Invalid value for timestamp field".to_string())
+		// 					};
+
+		// 					match field.as_str() {
+		// 						"year" => Ok(magic_cmp(logline.timestamp.year(), num, op)),
+		// 						"month" => Ok(magic_cmp(logline.timestamp.month(), num as u32, op)),
+		// 						"day" => Ok(magic_cmp(logline.timestamp.day(), num as u32, op)),
+		// 						"hour" => Ok(magic_cmp(logline.timestamp.hour(), num as u32, op)),
+		// 						"minute" => Ok(magic_cmp(logline.timestamp.minute(), num as u32, op)),
+		// 						"second" => Ok(magic_cmp(logline.timestamp.second(), num as u32, op)),
+		// 						_ => Err(format!("Field not found: {}", field))
+		// 					}
+		// 				},
+		// 				_ => Err(format!("does not have fields: {}", obj))
+		// 			}
+		// 		},
+		// 		_ => Err(format!("Field not found: {}", field))
+		// 	}
+		// },
+		(Expr::FieldAccess(field), right, op) => check_field_access(field, right, op, logline),
+        (left, Expr::FieldAccess(field), op) => check_field_access(field, left, op, logline),
         _ => panic!("Nothing makes sense anymore {:?} logline: {:?}", cond, logline)
     }
 }
@@ -117,8 +176,10 @@ pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-	use chrono::Utc;
-	use crate::Prop;
+	use chrono::DateTime;
+use chrono::Utc;
+	use crate::FieldAccess;
+use crate::Prop;
 	use super::*;
 
 	#[test]
@@ -453,5 +514,70 @@ mod tests {
 			right: Box::new(Expr::Empty)
 		});
 		assert!(!check_expr(&expr, &logline).unwrap());
+	}
+
+	#[test]
+	fn test_timestamp_fields() {
+		let logline = LogEntry {
+			timestamp: DateTime::from_utc(chrono::NaiveDate::from_ymd_opt(2024, 5, 15).unwrap().and_hms_opt(0, 0, 0).unwrap(), Utc),
+			level: LogLevel::Info,
+			props: vec![Prop { key: "key".to_string(), value: "value".to_string() }],
+			msg: "Hello, world!".to_string(),
+			..Default::default()
+		};
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::FieldAccess(FieldAccess {
+				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+				field: "year".to_string()
+			})),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::Number(2024)))
+		});
+		assert!(check_expr(&expr, &logline).unwrap());
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::FieldAccess(FieldAccess {
+				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+				field: "month".to_string()
+			})),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::Number(5)))
+		});
+		assert!(check_expr(&expr, &logline).unwrap());
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::FieldAccess(FieldAccess {
+				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+				field: "day".to_string()
+			})),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::Number(15)))
+		});
+		assert!(check_expr(&expr, &logline).unwrap());
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::FieldAccess(FieldAccess {
+				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+				field: "hour".to_string()
+			})),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::Number(0)))
+		});
+		assert!(check_expr(&expr, &logline).unwrap());
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::FieldAccess(FieldAccess {
+				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+				field: "minute".to_string()
+			})),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::Number(0)))
+		});
+		assert!(check_expr(&expr, &logline).unwrap());
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::FieldAccess(FieldAccess {
+				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+				field: "second".to_string()
+			})),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::Number(0)))
+		});
+		assert!(check_expr(&expr, &logline).unwrap());
 	}
 }
