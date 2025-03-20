@@ -247,7 +247,7 @@ export const devicesPage = async (root: HTMLElement) => {
 			totalLogsCount,
 			totalLogsSize,
 			averageLogSize,
-			totalLogsPerSecond: totalLogsPerSecond / devices.length
+			totalLogsPerSecond: totalLogsPerSecond
 		})
 
 		const renderList = (devices: DeviceSetting[]) => {

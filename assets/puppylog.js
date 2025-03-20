@@ -274,7 +274,7 @@ var devicesPage = async (root) => {
       totalLogsCount,
       totalLogsSize,
       averageLogSize,
-      totalLogsPerSecond: totalLogsPerSecond / devices.length
+      totalLogsPerSecond
     });
     const renderList = (devices2) => {
       devicesList.clear();
