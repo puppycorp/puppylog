@@ -121,6 +121,66 @@ class TextInput extends UiComponent {
   }
 }
 
+class MultiCheckboxSelect extends UiComponent {
+  checkboxes = [];
+  checkboxContainer;
+  constructor(args) {
+    super(document.createElement("div"));
+    this.root.style.display = "flex";
+    this.root.style.flexDirection = "column";
+    const isExpanded = args.expanded !== undefined ? args.expanded : false;
+    const header = document.createElement("div");
+    header.style.display = "flex";
+    header.style.alignItems = "center";
+    header.style.cursor = "pointer";
+    const toggleIcon = document.createElement("span");
+    toggleIcon.textContent = isExpanded ? "▾" : "▸";
+    toggleIcon.style.marginRight = "5px";
+    if (args.label) {
+      const labelEl = document.createElement("label");
+      labelEl.textContent = args.label;
+      header.appendChild(toggleIcon);
+      header.appendChild(labelEl);
+    } else {
+      header.appendChild(toggleIcon);
+    }
+    this.root.appendChild(header);
+    this.checkboxContainer = document.createElement("div");
+    this.checkboxContainer.style.display = isExpanded ? "flex" : "none";
+    this.checkboxContainer.style.flexDirection = "column";
+    this.root.appendChild(this.checkboxContainer);
+    for (const option of args.options) {
+      const container = document.createElement("div");
+      container.style.display = "flex";
+      container.style.alignItems = "center";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = option.value;
+      checkbox.checked = option.checked || false;
+      const optionLabel = document.createElement("span");
+      optionLabel.textContent = option.text;
+      optionLabel.style.marginLeft = "5px";
+      container.appendChild(checkbox);
+      container.appendChild(optionLabel);
+      this.checkboxContainer.appendChild(container);
+      this.checkboxes.push(checkbox);
+    }
+    header.onclick = () => {
+      const isVisible = this.checkboxContainer.style.display !== "none";
+      this.checkboxContainer.style.display = isVisible ? "none" : "flex";
+      toggleIcon.textContent = isVisible ? "▸" : "▾";
+    };
+  }
+  get values() {
+    return this.checkboxes.filter((chk) => chk.checked).map((chk) => chk.value);
+  }
+  set onChange(callback) {
+    this.checkboxes.forEach((checkbox) => {
+      checkbox.onchange = callback;
+    });
+  }
+}
+
 // ts/common.ts
 var showModal = (args) => {
   const body = document.querySelector("body");
@@ -403,10 +463,17 @@ var devicesPage = async (root) => {
   });
   const bulkEditButton = document.createElement("button");
   bulkEditButton.textContent = "Bulk Edit";
+  const filterLevelMultiSelect = new MultiCheckboxSelect({
+    label: "Filter level",
+    options: levels.map((level) => ({ text: level, value: level }))
+  });
+  const propsFiltters = new HList;
   const searchOptions = new HList;
   searchOptions.root.style.margin = "10px";
   searchOptions.root.style.gap = "10px";
   searchOptions.add(sendLogsSearchOption);
+  searchOptions.add(filterLevelMultiSelect);
+  searchOptions.add(propsFiltters);
   searchOptions.root.appendChild(bulkEditButton);
   const devicesList = new DevicesList;
   page.add(header, searchOptions, devicesList);
@@ -427,7 +494,6 @@ var devicesPage = async (root) => {
       if (!isNaN(logsPersecond))
         totalLogsPerSecond += logsPersecond;
     });
-    const totalSeconds = (latestTimestamp - earliestTimestamp) / 1000;
     const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0;
     summary.setSummary({
       totalDevicesCount: devices.length,
@@ -448,6 +514,48 @@ var devicesPage = async (root) => {
     };
     renderList(devices);
     let filteredDevices = devices;
+    let filterLevel = [];
+    let sendLogsFilter = undefined;
+    let filtterProps = new Map;
+    const filterDevices = () => {
+      filteredDevices = devices.filter((device) => {
+        if (sendLogsFilter !== undefined && device.sendLogs !== sendLogsFilter)
+          return false;
+        if (filterLevel.length > 0 && !filterLevel.includes(device.filterLevel))
+          return false;
+        for (const [key, values] of filtterProps) {
+          if (!device.props.some((prop) => prop.key === key && values.includes(prop.value)))
+            return false;
+        }
+        return true;
+      });
+      renderList(filteredDevices);
+    };
+    const uniquePropKeys = Array.from(new Set(devices.flatMap((device) => device.props.map((prop) => prop.key))));
+    for (const key of uniquePropKeys) {
+      const uniqueValues = Array.from(new Set(devices.flatMap((device) => device.props.filter((prop) => prop.key === key).map((prop) => prop.value))));
+      const options = uniqueValues.map((value) => ({ text: value, value }));
+      const multiSelect = new MultiCheckboxSelect({
+        label: key,
+        options
+      });
+      multiSelect.onChange = () => {
+        if (multiSelect.values.length === 0)
+          filtterProps.delete(key);
+        else
+          filtterProps.set(key, multiSelect.values);
+        filterDevices();
+      };
+      propsFiltters.add(multiSelect);
+    }
+    filterLevelMultiSelect.onChange = () => {
+      filterLevel = filterLevelMultiSelect.values;
+      filterDevices();
+    };
+    sendLogsSearchOption.onChange = async (value) => {
+      sendLogsFilter = value === "all" ? undefined : value === "true";
+      filterDevices();
+    };
     bulkEditButton.onclick = () => {
       const first = filteredDevices[0];
       if (!first)
@@ -472,16 +580,16 @@ var devicesPage = async (root) => {
       });
       const saveButton = new Button({ text: "Save" });
       saveButton.onClick = async () => {
-        const filterLevel = bulkEditFilterLevel.value;
+        const filterLevel2 = bulkEditFilterLevel.value;
         const sendLogs = sendLogsSelect.value === "true";
         await bulkEdit({
           deviceIds: filteredDevices.map((p) => p.id),
-          filterLevel,
+          filterLevel: filterLevel2,
           sendInterval: parseInt(sendIntervalInput.value),
           sendLogs
         });
         for (const device of filteredDevices) {
-          device.filterLevel = filterLevel;
+          device.filterLevel = filterLevel2;
           device.sendLogs = sendLogs;
           device.sendInterval = parseInt(sendIntervalInput.value);
         }
@@ -497,12 +605,6 @@ var devicesPage = async (root) => {
         }).add(bulkEditFilterLevel, sendLogsSelect, sendIntervalInput, new Label({ text: "Devices: " }), new Label({ text: filteredDevices.map((p) => p.id).join(", ") })).root,
         footer: [saveButton]
       });
-    };
-    sendLogsSearchOption.onChange = async (value) => {
-      filteredDevices = devices.filter((device) => {
-        return device.sendLogs === (value === "true") || value === "all";
-      });
-      renderList(filteredDevices);
     };
   } catch (error) {
     console.error("Error fetching devices:", error);

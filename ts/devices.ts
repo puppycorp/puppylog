@@ -1,5 +1,5 @@
 import { showModal } from "./common"
-import { Button, Container, HList, Label, Select, SelectGroup, TextInput, UiComponent, vlist, VList } from "./ui"
+import { Button, Container, HList, Label, MultiCheckboxSelect, Select, SelectGroup, TextInput, UiComponent, vlist, VList } from "./ui"
 import { formatBytes, formatNumber } from "./utility"
 
 const saveDeviceSettings = async (device: DeviceSetting) => {
@@ -241,14 +241,6 @@ class Header extends UiComponent<HTMLDivElement> {
 	}
 }
 
-class SearchOptions extends UiComponent<HTMLDivElement> {
-	constructor() {
-		super(document.createElement("div"))
-		this.root.style.display = "flex"
-		this.root.style.flexDirection = "row"
-	}
-}
-
 export const devicesPage = async (root: HTMLElement) => {
 	const page = new Container(root)
 	const summary = new Summary()
@@ -277,10 +269,19 @@ export const devicesPage = async (root: HTMLElement) => {
 	const bulkEditButton = document.createElement("button")
 	bulkEditButton.textContent = "Bulk Edit"
 
+	const filterLevelMultiSelect = new MultiCheckboxSelect({
+		label: "Filter level",
+		options: levels.map(level => ({ text: level, value: level }))
+	})
+
+	const propsFiltters = new HList()
+
 	const searchOptions = new HList()
 	searchOptions.root.style.margin = "10px"
 	searchOptions.root.style.gap = "10px"
 	searchOptions.add(sendLogsSearchOption)
+	searchOptions.add(filterLevelMultiSelect)
+	searchOptions.add(propsFiltters)
 	searchOptions.root.appendChild(bulkEditButton)
 	const devicesList = new DevicesList()
 	page.add(header, searchOptions, devicesList)
@@ -291,6 +292,7 @@ export const devicesPage = async (root: HTMLElement) => {
 		let totalLogsCount = 0, totalLogsSize = 0
 		let earliestTimestamp = Infinity, latestTimestamp = -Infinity
 		let totalLogsPerSecond = 0
+
 		devices.forEach(device => {
 			totalLogsCount += device.logsCount
 			totalLogsSize += device.logsSize
@@ -301,7 +303,6 @@ export const devicesPage = async (root: HTMLElement) => {
 			const logsPersecond = device.logsCount / ((lastUploadTime - createdAtTime) / 1000)
 			if (!isNaN(logsPersecond)) totalLogsPerSecond += logsPersecond
 		})
-		const totalSeconds = (latestTimestamp - earliestTimestamp) / 1000
 		const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0
 		summary.setSummary({
 			totalDevicesCount: devices.length,
@@ -324,6 +325,47 @@ export const devicesPage = async (root: HTMLElement) => {
 
 		renderList(devices)
 		let filteredDevices = devices
+		let filterLevel: string[] = []
+		let sendLogsFilter: boolean | undefined = undefined
+		let filtterProps = new Map<string, string[]>()
+
+		const filterDevices = () => {
+			filteredDevices = devices.filter(device => {
+				if (sendLogsFilter !== undefined && device.sendLogs !== sendLogsFilter) return false
+				if (filterLevel.length > 0 && !filterLevel.includes(device.filterLevel)) return false
+				for (const [key, values] of filtterProps) {
+					if (!device.props.some(prop => prop.key === key && values.includes(prop.value))) return false
+				}
+				return true
+			})
+			renderList(filteredDevices)
+		}
+
+		const uniquePropKeys = Array.from(new Set(devices.flatMap(device => device.props.map(prop => prop.key))))
+		for (const key of uniquePropKeys) {
+			const uniqueValues = Array.from(
+				new Set(devices.flatMap(device => device.props.filter(prop => prop.key === key).map(prop => prop.value)))
+			)
+			const options = uniqueValues.map(value => ({ text: value, value }))
+			const multiSelect = new MultiCheckboxSelect({
+				label: key,
+				options
+			})
+			multiSelect.onChange = () => {
+				if (multiSelect.values.length === 0) filtterProps.delete(key)
+				else filtterProps.set(key, multiSelect.values)
+				filterDevices()
+			}
+			propsFiltters.add(multiSelect)
+		}
+		filterLevelMultiSelect.onChange = () => {
+			filterLevel = filterLevelMultiSelect.values
+			filterDevices()
+		}
+		sendLogsSearchOption.onChange = async (value) => {
+			sendLogsFilter = value === "all" ? undefined : value === "true"
+			filterDevices()
+		}
 
 		bulkEditButton.onclick = () => {
 			const first = filteredDevices[0]
@@ -381,13 +423,6 @@ export const devicesPage = async (root: HTMLElement) => {
 				).root,
 				footer: [saveButton]
 			})
-		}
-
-		sendLogsSearchOption.onChange = async (value) => {
-			filteredDevices = devices.filter(device => {
-				return device.sendLogs === (value === "true") || (value === "all")	
-			})
-			renderList(filteredDevices)
 		}
 	} catch (error) {
 		console.error("Error fetching devices:", error)

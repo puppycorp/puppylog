@@ -1,4 +1,3 @@
-
 export class UiComponent<T> {
 	public readonly root: T
 
@@ -89,7 +88,7 @@ export class Select extends UiComponent<HTMLSelectElement> {
 			optionEl.textContent = option.text
 			this.root.appendChild(optionEl)
 		})
-		this.root.value = args.value || "";
+		this.root.value = args.value || ""
 	}
 
 	public get value(): string {
@@ -104,10 +103,10 @@ export class Select extends UiComponent<HTMLSelectElement> {
 export class SelectGroup extends UiComponent<HTMLDivElement> {
 	private select: Select
 
-	constructor(args: { 
+	constructor(args: {
 		label: string
 		value: string
-		options: SelectOption[] 
+		options: SelectOption[]
 	}) {
 		super(document.createElement("div"))
 		this.root.style.display = "flex"
@@ -115,9 +114,9 @@ export class SelectGroup extends UiComponent<HTMLDivElement> {
 		const labelEl = document.createElement("label")
 		labelEl.textContent = args.label
 		this.root.appendChild(labelEl)
-		this.select = new Select({ 
+		this.select = new Select({
 			value: args.value,
-			options: args.options 
+			options: args.options
 		})
 		this.root.appendChild(this.select.root)
 	}
@@ -158,5 +157,91 @@ export class TextInput extends UiComponent<HTMLDivElement> {
 
 	public get value(): string {
 		return this.input.value
+	}
+}
+
+export class MultiCheckboxSelect extends UiComponent<HTMLDivElement> {
+	private checkboxes: HTMLInputElement[] = []
+	private checkboxContainer: HTMLDivElement
+
+	constructor(args: {
+		label?: string
+		options: { value: string, text: string, checked?: boolean }[]
+		expanded?: boolean
+	}) {
+		super(document.createElement("div"))
+		this.root.style.display = "flex"
+		this.root.style.flexDirection = "column"
+
+		// Determine initial expanded state (default to false if not provided)
+		const isExpanded = args.expanded !== undefined ? args.expanded : false
+
+		// Create a header element that will act as a toggle
+		const header = document.createElement("div")
+		header.style.display = "flex"
+		header.style.alignItems = "center"
+		header.style.cursor = "pointer"
+
+		// Create a toggle icon
+		const toggleIcon = document.createElement("span")
+		toggleIcon.textContent = isExpanded ? "▾" : "▸"
+		toggleIcon.style.marginRight = "5px"
+
+		// If a label is provided, add it to the header
+		if (args.label) {
+			const labelEl = document.createElement("label")
+			labelEl.textContent = args.label
+			header.appendChild(toggleIcon)
+			header.appendChild(labelEl)
+		} else {
+			header.appendChild(toggleIcon)
+		}
+
+		this.root.appendChild(header)
+
+		// Create a container for the checkboxes
+		this.checkboxContainer = document.createElement("div")
+		this.checkboxContainer.style.display = isExpanded ? "flex" : "none"
+		this.checkboxContainer.style.flexDirection = "column"
+		this.root.appendChild(this.checkboxContainer)
+
+		// Add each option as a checkbox inside the container
+		for (const option of args.options) {
+			const container = document.createElement("div")
+			container.style.display = "flex"
+			container.style.alignItems = "center"
+
+			const checkbox = document.createElement("input")
+			checkbox.type = "checkbox"
+			checkbox.value = option.value
+			checkbox.checked = option.checked || false
+
+			const optionLabel = document.createElement("span")
+			optionLabel.textContent = option.text
+			optionLabel.style.marginLeft = "5px"
+
+			container.appendChild(checkbox)
+			container.appendChild(optionLabel)
+			this.checkboxContainer.appendChild(container)
+
+			this.checkboxes.push(checkbox)
+		}
+
+		// Setup toggle functionality: collapse/expand the checkbox container
+		header.onclick = () => {
+			const isVisible = this.checkboxContainer.style.display !== "none"
+			this.checkboxContainer.style.display = isVisible ? "none" : "flex"
+			toggleIcon.textContent = isVisible ? "▸" : "▾"
+		}
+	}
+
+	public get values(): string[] {
+		return this.checkboxes.filter(chk => chk.checked).map(chk => chk.value)
+	}
+
+	public set onChange(callback: () => void) {
+		this.checkboxes.forEach(checkbox => {
+			checkbox.onchange = callback
+		})
 	}
 }
