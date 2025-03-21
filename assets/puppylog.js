@@ -468,6 +468,7 @@ var devicesPage = async (root) => {
     options: levels.map((level) => ({ text: level, value: level }))
   });
   const propsFiltters = new HList;
+  propsFiltters.root.style.gap = "10px";
   const searchOptions = new HList;
   searchOptions.root.style.margin = "10px";
   searchOptions.root.style.gap = "10px";
