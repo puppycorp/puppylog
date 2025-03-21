@@ -14,6 +14,49 @@ class Container extends UiComponent {
     this.root.append(...components.map((c) => c.root));
   }
 }
+
+class VList extends UiComponent {
+  constructor(args) {
+    super(document.createElement("div"));
+    this.root.style.display = "flex";
+    this.root.style.flexDirection = "column";
+    if (args?.style)
+      Object.assign(this.root.style, args.style);
+  }
+  add(...components) {
+    this.root.append(...components.map((c) => c.root));
+    return this;
+  }
+}
+
+class HList extends UiComponent {
+  constructor() {
+    super(document.createElement("div"));
+    this.root.style.display = "flex";
+    this.root.style.flexDirection = "row";
+  }
+  add(...components) {
+    this.root.append(...components.map((c) => c instanceof HTMLElement ? c : c.root));
+  }
+}
+
+class Button extends UiComponent {
+  constructor(args) {
+    super(document.createElement("button"));
+    this.root.textContent = args.text;
+  }
+  set onClick(callback) {
+    this.root.onclick = callback;
+  }
+}
+
+class Label extends UiComponent {
+  constructor(args) {
+    super(document.createElement("label"));
+    this.root.textContent = args.text;
+  }
+}
+
 class Select extends UiComponent {
   constructor(args) {
     super(document.createElement("select"));
@@ -23,6 +66,7 @@ class Select extends UiComponent {
       optionEl.textContent = option.text;
       this.root.appendChild(optionEl);
     });
+    this.root.value = args.value || "";
   }
   get value() {
     return this.root.value;
@@ -41,7 +85,10 @@ class SelectGroup extends UiComponent {
     const labelEl = document.createElement("label");
     labelEl.textContent = args.label;
     this.root.appendChild(labelEl);
-    this.select = new Select({ options: args.options });
+    this.select = new Select({
+      value: args.value,
+      options: args.options
+    });
     this.root.appendChild(this.select.root);
   }
   get value() {
@@ -51,6 +98,76 @@ class SelectGroup extends UiComponent {
     this.select.onChange = callback;
   }
 }
+
+class TextInput extends UiComponent {
+  input;
+  constructor(args) {
+    super(document.createElement("div"));
+    this.root.style.display = "flex";
+    this.root.style.flexDirection = "column";
+    if (args.label) {
+      const labelEl = document.createElement("label");
+      labelEl.textContent = args.label;
+      this.root.appendChild(labelEl);
+    }
+    this.input = document.createElement("input");
+    this.input.type = "text";
+    this.input.placeholder = args.placeholder || "";
+    this.input.value = args.value || "";
+    this.root.appendChild(this.input);
+  }
+  get value() {
+    return this.input.value;
+  }
+}
+
+// ts/common.ts
+var showModal = (args) => {
+  const body = document.querySelector("body");
+  const modalOverlay = document.createElement("div");
+  modalOverlay.style.position = "fixed";
+  modalOverlay.style.top = "0";
+  modalOverlay.style.left = "0";
+  modalOverlay.style.width = "100%";
+  modalOverlay.style.height = "100%";
+  modalOverlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
+  modalOverlay.style.display = "flex";
+  modalOverlay.style.justifyContent = "center";
+  modalOverlay.style.alignItems = "center";
+  modalOverlay.style.zIndex = "9999";
+  body?.appendChild(modalOverlay);
+  const modalContent = document.createElement("div");
+  modalContent.style.background = "#fff";
+  modalContent.style.padding = "16px";
+  modalContent.style.borderRadius = "4px";
+  modalContent.style.width = "auto";
+  modalContent.style.maxWidth = "calc(100vw - 32px)";
+  modalContent.style.wordWrap = "break-word";
+  modalContent.style.wordBreak = "break-all";
+  if (args.minWidth)
+    modalContent.style.minWidth = `${args.minWidth}px`;
+  modalContent.addEventListener("click", (e) => {
+    e.stopPropagation();
+  });
+  const modalTitle = document.createElement("h3");
+  modalTitle.textContent = args.title;
+  modalContent.appendChild(modalTitle);
+  const modalBody = document.createElement("div");
+  modalBody.style.overflowY = "auto";
+  modalBody.style.maxHeight = "calc(90vh - 100px)";
+  modalBody.appendChild(args.content);
+  modalContent.appendChild(modalBody);
+  const buttonContainer = document.createElement("div");
+  buttonContainer.style.display = "flex";
+  buttonContainer.style.justifyContent = "space-between";
+  buttonContainer.style.marginTop = "8px";
+  buttonContainer.append(...args.footer.map((f) => f.root));
+  modalContent.appendChild(buttonContainer);
+  modalOverlay.addEventListener("click", () => {
+    modalOverlay.remove();
+  });
+  modalOverlay.appendChild(modalContent);
+};
 
 // ts/utility.ts
 var setQueryParam = (field, value) => {
@@ -97,6 +214,13 @@ var saveDeviceSettings = async (device) => {
     })
   });
 };
+var bulkEdit = async (args) => {
+  await fetch(`/api/v1/device/bulkedit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args)
+  });
+};
 var levels = ["trace", "debug", "info", "warn", "error", "fatal"];
 
 class DeviceRow extends UiComponent {
@@ -127,6 +251,10 @@ class DeviceRow extends UiComponent {
     select.value = device.filterLevel;
     filterLevelCell.appendChild(select);
     this.root.appendChild(filterLevelCell);
+    const sendIntervalCell = document.createElement("div");
+    sendIntervalCell.className = "table-cell";
+    sendIntervalCell.innerHTML = `<strong>Send interval:</strong> ${device.sendInterval} seconds`;
+    this.root.appendChild(sendIntervalCell);
     const lastUploadCell = document.createElement("div");
     lastUploadCell.className = "table-cell";
     lastUploadCell.innerHTML = `<strong>Last upload:</strong> ${new Date(device.lastUploadAt).toLocaleString()}`;
@@ -183,7 +311,12 @@ class DevicesList {
   root;
   constructor() {
     this.root = document.createElement("div");
-    this.root.classList.add("logs-list");
+    this.root.style.display = "flex";
+    this.root.style.flexDirection = "row";
+    this.root.style.flexWrap = "wrap";
+    this.root.style.gap = "5px";
+    this.root.style.overflowX = "auto";
+    this.root.style.padding = "16px";
     this.root.innerHTML = `<div class="logs-loading-indicator">Loading devices...</div>`;
   }
   add(device) {
@@ -233,7 +366,8 @@ var devicesPage = async (root) => {
     rightSide: summary
   });
   const sendLogsSearchOption = new SelectGroup({
-    label: "Send logs",
+    label: "Sending logs",
+    value: "all",
     options: [
       {
         text: "All",
@@ -249,8 +383,15 @@ var devicesPage = async (root) => {
       }
     ]
   });
+  const bulkEditButton = document.createElement("button");
+  bulkEditButton.textContent = "Bulk Edit";
+  const searchOptions = new HList;
+  searchOptions.root.style.margin = "10px";
+  searchOptions.root.style.gap = "10px";
+  searchOptions.add(sendLogsSearchOption);
+  searchOptions.root.appendChild(bulkEditButton);
   const devicesList = new DevicesList;
-  page.add(header, sendLogsSearchOption, devicesList);
+  page.add(header, searchOptions, devicesList);
   try {
     const res = await fetch("/api/v1/devices");
     const devices = await res.json();
@@ -287,8 +428,59 @@ var devicesPage = async (root) => {
       }
     };
     renderList(devices);
+    let filteredDevices = devices;
+    bulkEditButton.onclick = () => {
+      const first = filteredDevices[0];
+      if (!first)
+        return;
+      const bulkEditFilterLevel = new SelectGroup({
+        label: "Filter level",
+        value: first.filterLevel,
+        options: levels.map((level) => ({ text: level, value: level }))
+      });
+      const sendLogsSelect = new SelectGroup({
+        label: "Send logs",
+        value: first.sendLogs ? "true" : "false",
+        options: [
+          { text: "Yes", value: "true" },
+          { text: "No", value: "false" }
+        ]
+      });
+      const sendIntervalInput = new TextInput({
+        label: "Send interval",
+        placeholder: "Enter interval",
+        value: first.sendInterval.toString()
+      });
+      const saveButton = new Button({ text: "Save" });
+      saveButton.onClick = async () => {
+        const filterLevel = bulkEditFilterLevel.value;
+        const sendLogs = sendLogsSelect.value === "true";
+        await bulkEdit({
+          deviceIds: filteredDevices.map((p) => p.id),
+          filterLevel,
+          sendInterval: parseInt(sendIntervalInput.value),
+          sendLogs
+        });
+        for (const device of filteredDevices) {
+          device.filterLevel = filterLevel;
+          device.sendLogs = sendLogs;
+          device.sendInterval = parseInt(sendIntervalInput.value);
+        }
+        renderList(filteredDevices);
+      };
+      showModal({
+        title: "Bulk Edit",
+        minWidth: 300,
+        content: new VList({
+          style: {
+            gap: "10px"
+          }
+        }).add(bulkEditFilterLevel, sendLogsSelect, sendIntervalInput, new Label({ text: "Devices: " }), new Label({ text: filteredDevices.map((p) => p.id).join(", ") })).root,
+        footer: [saveButton]
+      });
+    };
     sendLogsSearchOption.onChange = async (value) => {
-      const filteredDevices = devices.filter((device) => {
+      filteredDevices = devices.filter((device) => {
         return device.sendLogs === (value === "true") || value === "all";
       });
       renderList(filteredDevices);
@@ -300,67 +492,6 @@ var devicesPage = async (root) => {
       devicesList2.innerHTML = `<p>Error fetching devices. Please try again later.</p>`;
     }
   }
-};
-
-// ts/common.ts
-var showModal = (content, title) => {
-  const body = document.querySelector("body");
-  const modalOverlay = document.createElement("div");
-  modalOverlay.style.position = "fixed";
-  modalOverlay.style.top = "0";
-  modalOverlay.style.left = "0";
-  modalOverlay.style.width = "100%";
-  modalOverlay.style.height = "100%";
-  modalOverlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
-  modalOverlay.style.display = "flex";
-  modalOverlay.style.justifyContent = "center";
-  modalOverlay.style.alignItems = "center";
-  modalOverlay.style.zIndex = "9999";
-  body?.appendChild(modalOverlay);
-  const modalContent = document.createElement("div");
-  modalContent.style.background = "#fff";
-  modalContent.style.padding = "16px";
-  modalContent.style.borderRadius = "4px";
-  modalContent.style.width = "auto";
-  modalContent.style.maxWidth = "calc(100vw - 32px)";
-  modalContent.style.wordWrap = "break-word";
-  modalContent.style.wordBreak = "break-all";
-  modalContent.addEventListener("click", (e) => {
-    e.stopPropagation();
-  });
-  const modalTitle = document.createElement("h3");
-  modalTitle.textContent = title;
-  modalContent.appendChild(modalTitle);
-  const modalBody = document.createElement("div");
-  modalBody.style.overflowY = "auto";
-  modalBody.style.maxHeight = "calc(90vh - 100px)";
-  modalBody.appendChild(content);
-  modalContent.appendChild(modalBody);
-  const buttonContainer = document.createElement("div");
-  buttonContainer.style.display = "flex";
-  buttonContainer.style.justifyContent = "space-between";
-  buttonContainer.style.marginTop = "8px";
-  const copyBtn = document.createElement("button");
-  copyBtn.textContent = "Copy";
-  copyBtn.addEventListener("click", () => {
-    navigator.clipboard.writeText(content.textContent || "").then(() => {
-      console.log("Content copied to clipboard.");
-    }, (err) => {
-      console.error("Failed to copy text: ", err);
-    });
-  });
-  buttonContainer.appendChild(copyBtn);
-  const closeModalBtn = document.createElement("button");
-  closeModalBtn.textContent = "Close";
-  closeModalBtn.addEventListener("click", () => {
-    modalOverlay.remove();
-  });
-  buttonContainer.appendChild(closeModalBtn);
-  modalContent.appendChild(buttonContainer);
-  modalOverlay.addEventListener("click", () => {
-    modalOverlay.remove();
-  });
-  modalOverlay.appendChild(modalContent);
 };
 
 // ts/logmsg.ts
@@ -667,7 +798,16 @@ var logsSearchPage = (args) => {
       document.querySelectorAll(".list-row").forEach((el, key) => {
         el.addEventListener("click", () => {
           const entry = logEntries[key];
-          showModal(formatLogMsg(entry.msg), "Log Message");
+          const copyButton = new Button({ text: "Copy" });
+          copyButton.onClick = () => navigator.clipboard.writeText(entry.msg);
+          const closeButton = new Button({ text: "Close" });
+          showModal({
+            title: "Log Message",
+            content: formatLogMsg(entry.msg),
+            footer: [
+              copyButton
+            ]
+          });
         });
       });
       pendingLogs = [];

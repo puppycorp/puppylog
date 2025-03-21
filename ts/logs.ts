@@ -1,6 +1,7 @@
 import { showModal } from "./common"
 import { formatLogMsg } from "./logmsg"
 import { navigate } from "./router"
+import { Button } from "./ui"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
@@ -129,7 +130,16 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			document.querySelectorAll(".list-row").forEach((el, key) => {
 				el.addEventListener("click", () => {
 					const entry = logEntries[key]
-					showModal(formatLogMsg(entry.msg), "Log Message")
+					const copyButton = new Button({ text: "Copy" })
+					copyButton.onClick = () => navigator.clipboard.writeText(entry.msg)
+					const closeButton = new Button({ text: "Close" })
+					showModal({
+						title: "Log Message",
+						content: formatLogMsg(entry.msg),
+						footer: [
+							copyButton
+						]
+					})
 				})
 			})
 			pendingLogs = []

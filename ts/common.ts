@@ -1,4 +1,19 @@
-export const showModal = (content: HTMLElement, title: string) => {
+import { UiComponent } from "./ui"
+
+export class Modal extends UiComponent<HTMLDivElement> {
+	constructor() {
+		super(document.createElement("div"))
+		this.root.className = "modal"
+	}
+}
+
+
+export const showModal = (args: {
+	title: string
+	minWidth?: number,
+	content: HTMLElement
+	footer: UiComponent<HTMLElement>[]
+}) => {
 	const body = document.querySelector("body")
 
 	const modalOverlay = document.createElement("div")
@@ -22,46 +37,29 @@ export const showModal = (content: HTMLElement, title: string) => {
 	modalContent.style.maxWidth = "calc(100vw - 32px)"
 	modalContent.style.wordWrap = "break-word"
 	modalContent.style.wordBreak = "break-all"
+	if (args.minWidth) modalContent.style.minWidth = `${args.minWidth}px`
 
 	modalContent.addEventListener("click", (e) => {
 		e.stopPropagation()
 	})
 
 	const modalTitle = document.createElement("h3")
-	modalTitle.textContent = title
+	modalTitle.textContent = args.title
 	modalContent.appendChild(modalTitle)
 
 	const modalBody = document.createElement("div")
 	modalBody.style.overflowY = "auto"
 	modalBody.style.maxHeight = "calc(90vh - 100px)"
-	modalBody.appendChild(content)
+	modalBody.appendChild(args.content)
 	modalContent.appendChild(modalBody)
+
+	// modalContent.append(...args.footer.map(f => f.root))
 
 	const buttonContainer = document.createElement("div")
 	buttonContainer.style.display = "flex"
 	buttonContainer.style.justifyContent = "space-between"
 	buttonContainer.style.marginTop = "8px"
-
-	const copyBtn = document.createElement("button")
-	copyBtn.textContent = "Copy"
-	copyBtn.addEventListener("click", () => {
-		navigator.clipboard.writeText(content.textContent || "").then(
-			() => {
-				console.log("Content copied to clipboard.")
-			},
-			(err) => {
-				console.error("Failed to copy text: ", err)
-			}
-		)
-	})
-	buttonContainer.appendChild(copyBtn)
-
-	const closeModalBtn = document.createElement("button")
-	closeModalBtn.textContent = "Close"
-	closeModalBtn.addEventListener("click", () => {
-		modalOverlay.remove()
-	})
-	buttonContainer.appendChild(closeModalBtn)
+	buttonContainer.append(...args.footer.map(f => f.root))
 
 	modalContent.appendChild(buttonContainer)
 

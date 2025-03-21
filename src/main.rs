@@ -23,6 +23,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use config::log_path;
 use db::MetaProp;
+use db::UpdateDeviceSettings;
 use db::UpdateDevicesSettings;
 use futures::executor::block_on;
 use futures::Stream;
@@ -71,13 +72,6 @@ struct GetLogsQuery {
 	pub end_date: Option<DateTime<Utc>>,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct UpdateDeviceSettings {
-	pub send_logs: bool,
-	pub filter_level: LogLevel
-}
-
 
 #[tokio::main]
 async fn main() {
@@ -122,11 +116,12 @@ async fn main() {
 			.layer(RequestDecompressionLayer::new().gzip(true).zstd(true))
 			.with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/metadata", post(update_device_metadata)).with_state(ctx.clone())
+		.route("/api/v1/device/{deviceId}/settings", post(update_device_settings)).with_state(ctx.clone())
+		.route("/api/v1/device/bulkedit", post(bulk_edit)).with_state(ctx.clone())
 		.route("/api/v1/settings", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/settings", get(get_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/devices", get(get_devices)).with_state(ctx.clone())
 		.route("/api/v1/segments", get(get_segments)).with_state(ctx.clone())
-		.route("/api/v1/device/{deviceId}/settings", post(update_device_settings)).with_state(ctx.clone())
 		.fallback(get(root));
 
 	// run our app with hyper, listening globally on port 3000
@@ -135,6 +130,30 @@ async fn main() {
 		listener,
 		app,
 	).await.unwrap();
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct BulkEdit {
+	pub filter_level: LogLevel,
+	pub send_logs: bool,
+	pub send_interval: u32,
+	pub device_ids: Vec<String>,
+}
+
+async fn bulk_edit(
+	State(ctx): State<Arc<Context>>,
+	body: Json<BulkEdit>
+) -> &'static str {
+	log::info!("bulk_edit: {:?}", body);
+	for device_id in body.device_ids.iter() {
+		ctx.db.update_device_settings(device_id, &UpdateDeviceSettings {
+			filter_level: body.filter_level,
+			send_logs: body.send_logs,
+			send_interval: body.send_interval,
+		}).await;
+	}
+	"ok"
 }
 
 async fn validate_query(

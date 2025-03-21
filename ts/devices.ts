@@ -1,4 +1,5 @@
-import { Container, Select, SelectGroup, UiComponent } from "./ui"
+import { showModal } from "./common"
+import { Button, Container, HList, Label, Select, SelectGroup, TextInput, UiComponent, vlist, VList } from "./ui"
 import { formatBytes, formatNumber } from "./utility"
 
 const saveDeviceSettings = async (device: DeviceSetting) => {
@@ -11,12 +12,27 @@ const saveDeviceSettings = async (device: DeviceSetting) => {
 		}),
 	})
 }
+
+const bulkEdit = async (args: {
+	deviceIds: string[]
+	sendLogs: boolean
+	filterLevel: string
+	sendInterval: number
+}) => {
+	await fetch(`/api/v1/device/bulkedit`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(args),
+	})
+}
+
 type DeviceSetting = {
 	id: string
 	sendLogs: boolean
 	filterLevel: string
 	logsSize: number
 	logsCount: number
+	sendInterval: number
 	createdAt: string
 	lastUploadAt: string
 	updated?: boolean
@@ -58,6 +74,11 @@ export class DeviceRow extends UiComponent<HTMLDivElement> {
 		select.value = device.filterLevel
 		filterLevelCell.appendChild(select)
 		this.root.appendChild(filterLevelCell)
+
+		const sendIntervalCell = document.createElement("div")
+		sendIntervalCell.className = "table-cell"
+		sendIntervalCell.innerHTML = `<strong>Send interval:</strong> ${device.sendInterval} seconds`
+		this.root.appendChild(sendIntervalCell)
 
 		// Last upload cell
 		const lastUploadCell = document.createElement("div")
@@ -134,7 +155,12 @@ class DevicesList implements UiComponent<HTMLDivElement> {
 
 	constructor() {
 		this.root = document.createElement("div")
-		this.root.classList.add("logs-list")
+		this.root.style.display = "flex"
+		this.root.style.flexDirection = "row"
+		this.root.style.flexWrap = "wrap"
+		this.root.style.gap = "5px"
+		this.root.style.overflowX = "auto"
+		this.root.style.padding = "16px"
 		this.root.innerHTML = `<div class="logs-loading-indicator">Loading devices...</div>`
 	}
 
@@ -205,7 +231,8 @@ export const devicesPage = async (root: HTMLElement) => {
 		rightSide: summary
 	})
 	const sendLogsSearchOption = new SelectGroup({
-		label: "Send logs",
+		label: "Sending logs",
+		value: "all",
 		options: [
 			{
 				text: "All",
@@ -221,9 +248,16 @@ export const devicesPage = async (root: HTMLElement) => {
 			}
 		]
 	})
-	// const content = new Container(document.createElement("div"))
+	const bulkEditButton = document.createElement("button")
+	bulkEditButton.textContent = "Bulk Edit"
+
+	const searchOptions = new HList()
+	searchOptions.root.style.margin = "10px"
+	searchOptions.root.style.gap = "10px"
+	searchOptions.add(sendLogsSearchOption)
+	searchOptions.root.appendChild(bulkEditButton)
 	const devicesList = new DevicesList()
-	page.add(header, sendLogsSearchOption, devicesList)
+	page.add(header, searchOptions, devicesList)
 
 	try {
 		const res = await fetch("/api/v1/devices")
@@ -262,23 +296,72 @@ export const devicesPage = async (root: HTMLElement) => {
 		}
 
 		renderList(devices)
+		let filteredDevices = devices
+
+		bulkEditButton.onclick = () => {
+			const first = filteredDevices[0]
+			if (!first) return
+			const bulkEditFilterLevel = new SelectGroup({
+				label: "Filter level",
+				value: first.filterLevel,
+				options: levels.map(level => ({ text: level, value: level }))
+			})
+			const sendLogsSelect = new SelectGroup({
+				label: "Send logs",
+				value: first.sendLogs ? "true" : "false",
+				options: [
+					{ text: "Yes", value: "true" },
+					{ text: "No", value: "false" }
+				]
+			})
+			const sendIntervalInput = new TextInput({ 
+				label: "Send interval", 
+				placeholder: "Enter interval",
+				value: first.sendInterval.toString()
+			})
+
+			const saveButton = new Button({ text: "Save" })
+			saveButton.onClick = async () => {
+				const filterLevel = bulkEditFilterLevel.value
+				const sendLogs = sendLogsSelect.value === "true"
+				await bulkEdit({
+					deviceIds: filteredDevices.map(p => p.id),
+					filterLevel,
+					sendInterval: parseInt(sendIntervalInput.value),
+					sendLogs
+				})
+				for (const device of filteredDevices) {
+					device.filterLevel = filterLevel
+					device.sendLogs = sendLogs
+					device.sendInterval = parseInt(sendIntervalInput.value)
+				}
+				renderList(filteredDevices)
+			}
+
+			showModal({
+				title: "Bulk Edit",
+				minWidth: 300,
+				content: new VList({
+					style: {
+						gap: "10px"
+					}
+				}).add(
+					bulkEditFilterLevel,
+					sendLogsSelect,
+					sendIntervalInput,
+					new Label({ text: "Devices: " }),
+					new Label({ text: filteredDevices.map(p => p.id).join(", ") }),
+				).root,
+				footer: [saveButton]
+			})
+		}
+
 		sendLogsSearchOption.onChange = async (value) => {
-			const filteredDevices = devices.filter(device => {
+			filteredDevices = devices.filter(device => {
 				return device.sendLogs === (value === "true") || (value === "all")	
 			})
 			renderList(filteredDevices)
 		}
-
-		// const devicesList = document.getElementById("devicesList")
-		// if (!devicesList) return
-		// devicesList.innerHTML = ""
-		
-		// 	devices.forEach(device => {
-		// 		devicesList.appendChild(new DeviceRow(device).root)
-		// 	})
-		// } else {
-			
-		// }
 	} catch (error) {
 		console.error("Error fetching devices:", error)
 		const devicesList = document.getElementById("devicesList")
@@ -287,56 +370,3 @@ export const devicesPage = async (root: HTMLElement) => {
 		}
 	}
 }
-
-// root.innerHTML = `
-// <div class="page-header">
-// 	<h1 style="flex-grow: 1">Devices</h1>
-// 	<div id="devicesSummary">Loading summary...</div>
-// </div>
-// <div>
-// 	<div style="display: flex; flex-direction: row"> 
-// 		<div style="display: flex; flex-direction: column; margin-right: 1rem">
-// 			<div>
-// 				Search options
-// 			</div>
-// 			<div>
-// 				Send logs
-// 			</div>
-// 			<select>
-// 				<option>Yes</option>
-// 				<option>No</option>
-// 			</select>
-// 		</div>
-// 		<div style="display: flex; flex-direction: column; margin-right: 1rem">
-// 			<div>
-// 				Filter level:
-// 				<select>
-// 					<option>trace</option>
-// 					<option>debug</option>
-// 					<option>info</option>
-// 					<option>warn</option>
-// 					<option>error</option>
-// 					<option>fatal</option>
-// 				</select>
-// 			</div>
-// 			<div>
-// 				Send logs:
-// 				<select>
-// 					<option>Yes</option>
-// 					<option>No</option>
-// 				</select>
-// 			</div>
-// 			<div>
-// 				Send Interval:
-// 				<input type="text" />
-// 			</div>
-// 			<button>Save</button>
-// 		</div>
-// 	</div>
-
-// </div>
-// <div id="devicesList">
-// 	<div class="logs-loading-indicator">Loading devices...</div>
-// </div>
-
-// `

@@ -153,8 +153,7 @@ body {
 }
 .logs-list {
 	display: flex;
-	flex-direction: row;
-	flex-wrap: wrap;
+	flex-direction: column;
 	gap: 5px;
 	overflow-x: auto;
 	padding: 16px;

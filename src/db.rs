@@ -14,7 +14,6 @@ use tokio::sync::Mutex;
 
 use crate::config::db_path;
 use crate::segment::SegmentMeta;
-use crate::UpdateDeviceSettings;
 
 struct Migration {
     id: u32,
@@ -106,6 +105,14 @@ pub struct UpdateDevicesSettings {
 	pub send_logs: bool,
 	pub send_interval: u32,
 	pub level: LogLevel
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateDeviceSettings {
+	pub send_logs: bool,
+	pub filter_level: LogLevel,
+	pub send_interval: u32,
 }
 
 fn load_device_metadata_locked(conn: &Connection, device_id: &str) -> anyhow::Result<Vec<MetaProp>> {
@@ -240,16 +247,18 @@ impl DB {
 	pub async fn update_device_settings(&self, device_id: &str, payload: &UpdateDeviceSettings) {
 		let conn = &mut self.conn.lock().await;
 		let mut stmt = conn.prepare(
-			"INSERT INTO devices (id, send_logs, filter_level)
-			VALUES (?1, ?2, ?3)
+			"INSERT INTO devices (id, send_logs, filter_level, send_interval)
+			VALUES (?1, ?2, ?3, ?4)
 			ON CONFLICT(id) DO UPDATE SET
 				send_logs = ?2,
-				filter_level = ?3"
+				filter_level = ?3,
+				send_interval = ?4"
 		).unwrap();
 		stmt.execute(&[
 			&device_id as &dyn ToSql,
 			&payload.send_logs as &dyn ToSql,
 			&payload.filter_level.to_u8() as &dyn ToSql,
+			&payload.send_interval as &dyn ToSql,
 		]).unwrap();
 	}
 
