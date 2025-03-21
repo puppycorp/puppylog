@@ -184,12 +184,14 @@ class Summary extends UiComponent<HTMLDivElement> {
 	}
 
 	public setSummary(args: {
+		totalDevicesCount: number
 		totalLogsCount: number
 		totalLogsSize: number
 		averageLogSize: number
 		totalLogsPerSecond: number
 	}) {
 		this.root.innerHTML = `
+			<div><strong>Total Devices Count:</strong> ${formatNumber(args.totalDevicesCount)}</div>
 			<div><strong>Total Logs Count:</strong> ${formatNumber(args.totalLogsCount)}</div>
 			<div><strong>Total Logs Size:</strong> ${formatBytes(args.totalLogsSize)}</div>
 			<div><strong>Average Log Size:</strong> ${formatBytes(args.averageLogSize)}</div>
@@ -278,6 +280,7 @@ export const devicesPage = async (root: HTMLElement) => {
 		const totalSeconds = (latestTimestamp - earliestTimestamp) / 1000
 		const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0
 		summary.setSummary({
+			totalDevicesCount: devices.length,
 			totalLogsCount,
 			totalLogsSize,
 			averageLogSize,

@@ -337,6 +337,7 @@ class Summary extends UiComponent {
   }
   setSummary(args) {
     this.root.innerHTML = `
+			<div><strong>Total Devices Count:</strong> ${formatNumber(args.totalDevicesCount)}</div>
 			<div><strong>Total Logs Count:</strong> ${formatNumber(args.totalLogsCount)}</div>
 			<div><strong>Total Logs Size:</strong> ${formatBytes(args.totalLogsSize)}</div>
 			<div><strong>Average Log Size:</strong> ${formatBytes(args.averageLogSize)}</div>
@@ -412,6 +413,7 @@ var devicesPage = async (root) => {
     const totalSeconds = (latestTimestamp - earliestTimestamp) / 1000;
     const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0;
     summary.setSummary({
+      totalDevicesCount: devices.length,
       totalLogsCount,
       totalLogsSize,
       averageLogSize,
