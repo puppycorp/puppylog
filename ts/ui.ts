@@ -173,21 +173,17 @@ export class MultiCheckboxSelect extends UiComponent<HTMLDivElement> {
 		this.root.style.display = "flex"
 		this.root.style.flexDirection = "column"
 
-		// Determine initial expanded state (default to false if not provided)
 		const isExpanded = args.expanded !== undefined ? args.expanded : false
 
-		// Create a header element that will act as a toggle
 		const header = document.createElement("div")
 		header.style.display = "flex"
 		header.style.alignItems = "center"
 		header.style.cursor = "pointer"
 
-		// Create a toggle icon
 		const toggleIcon = document.createElement("span")
 		toggleIcon.textContent = isExpanded ? "▾" : "▸"
 		toggleIcon.style.marginRight = "5px"
 
-		// If a label is provided, add it to the header
 		if (args.label) {
 			const labelEl = document.createElement("label")
 			labelEl.textContent = args.label
@@ -199,13 +195,13 @@ export class MultiCheckboxSelect extends UiComponent<HTMLDivElement> {
 
 		this.root.appendChild(header)
 
-		// Create a container for the checkboxes
 		this.checkboxContainer = document.createElement("div")
 		this.checkboxContainer.style.display = isExpanded ? "flex" : "none"
 		this.checkboxContainer.style.flexDirection = "column"
+		this.checkboxContainer.style.maxHeight = "200px"
+		this.checkboxContainer.style.overflowY = "auto"
 		this.root.appendChild(this.checkboxContainer)
 
-		// Add each option as a checkbox inside the container
 		for (const option of args.options) {
 			const container = document.createElement("div")
 			container.style.display = "flex"
@@ -227,7 +223,6 @@ export class MultiCheckboxSelect extends UiComponent<HTMLDivElement> {
 			this.checkboxes.push(checkbox)
 		}
 
-		// Setup toggle functionality: collapse/expand the checkbox container
 		header.onclick = () => {
 			const isVisible = this.checkboxContainer.style.display !== "none"
 			this.checkboxContainer.style.display = isVisible ? "none" : "flex"

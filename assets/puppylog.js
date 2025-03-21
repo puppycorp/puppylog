@@ -148,6 +148,8 @@ class MultiCheckboxSelect extends UiComponent {
     this.checkboxContainer = document.createElement("div");
     this.checkboxContainer.style.display = isExpanded ? "flex" : "none";
     this.checkboxContainer.style.flexDirection = "column";
+    this.checkboxContainer.style.maxHeight = "200px";
+    this.checkboxContainer.style.overflowY = "auto";
     this.root.appendChild(this.checkboxContainer);
     for (const option of args.options) {
       const container = document.createElement("div");
