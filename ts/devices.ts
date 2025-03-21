@@ -26,6 +26,11 @@ const bulkEdit = async (args: {
 	})
 }
 
+type Prop = {
+	key: string
+	value: string
+}
+
 type DeviceSetting = {
 	id: string
 	sendLogs: boolean
@@ -36,6 +41,7 @@ type DeviceSetting = {
 	createdAt: string
 	lastUploadAt: string
 	updated?: boolean
+	props: Prop[]
 }
 const levels = ["trace", "debug", "info", "warn", "error", "fatal"]
 
@@ -120,6 +126,24 @@ export class DeviceRow extends UiComponent<HTMLDivElement> {
 		sendLogsCell.className = "table-cell"
 		sendLogsCell.innerHTML = `<strong>Send logs:</strong> ${device.sendLogs ? "Yes" : "No"}`
 		this.root.appendChild(sendLogsCell)
+
+		const propsContainer = document.createElement("div")
+		propsContainer.className = "table-cell"
+		const propsTitle = document.createElement("strong")
+		propsTitle.textContent = "Props:"
+		propsContainer.appendChild(propsTitle)
+		if (device.props.length === 0) {
+			const noPropsRow = document.createElement("div")
+			noPropsRow.textContent = "No properties"
+			propsContainer.appendChild(noPropsRow)
+		} else {
+			device.props.forEach(prop => {
+				const propRow = document.createElement("div")
+				propRow.textContent = `${prop.key} = ${prop.value}`
+				propsContainer.appendChild(propRow)
+			})
+		}
+		this.root.appendChild(propsContainer)
 
 		// Save button
 		const deviceSaveButton = document.createElement("button")
