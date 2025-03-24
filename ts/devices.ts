@@ -6,10 +6,7 @@ const saveDeviceSettings = async (device: DeviceSetting) => {
 	await fetch(`/api/v1/device/${device.id}/settings`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			sendLogs: device.sendLogs,
-			filterLevel: device.filterLevel,
-		}),
+		body: JSON.stringify(device),
 	})
 }
 
