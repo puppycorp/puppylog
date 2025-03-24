@@ -5,6 +5,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use puppylog::LogEntry;
 use puppylog::LogLevel;
+use puppylog::Prop;
 use puppylog::QueryAst;
 use rusqlite::Connection;
 use rusqlite::ToSql;
@@ -61,6 +62,19 @@ const MIGRATIONS: &[Migration] = &[
             );
         "#
     },
+	Migration {
+		id: 20250321,
+		name: "segment_props",
+		sql: r#"
+			CREATE TABLE segment_props (
+				segment_id INTEGER NOT NULL,
+				key TEXT NOT NULL,
+				value TEXT NOT NULL,
+				PRIMARY KEY (segment_id, key, value),
+				FOREIGN KEY (segment_id) REFERENCES log_segments(id)
+			);
+		"#
+	}
 ];
 
 pub fn open_db() -> Connection {
@@ -375,6 +389,19 @@ impl DB {
 			});
 		}
 		Ok(metas)
+	}
+
+	pub async fn upsert_segment_props(&self, segment: u32, props: impl Iterator<Item = &Prop>) -> anyhow::Result<()> {
+		let mut conn = self.conn.lock().await;
+		let tx = conn.transaction()?;
+		{
+			let mut ins_stmt = tx.prepare("INSERT OR IGNORE INTO segment_props (segment_id, key, value) VALUES (?1, ?2, ?3)")?;
+			for prop in props {
+				ins_stmt.execute(rusqlite::params![segment, prop.key, prop.value])?;
+			}
+		}
+		tx.commit()?;
+		Ok(())
 	}
 }
 

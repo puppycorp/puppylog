@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Cursor;
 use std::io::Write;
@@ -89,6 +90,13 @@ impl Context {
 				original_size,
 				compressed_size
 			}).await.unwrap();
+			let mut unique_props = HashSet::new();
+			for log in &current.buffer {
+				for prop in &log.props {
+					unique_props.insert(prop.clone());
+				}
+			}
+			self.db.upsert_segment_props(segment_id, unique_props.iter()).await.unwrap();
 			let path = log_path().join(format!("{}.log", segment_id));
 			let mut file = File::create(&path).unwrap();
 			file.write_all(&buff).unwrap();

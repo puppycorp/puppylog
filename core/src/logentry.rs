@@ -113,7 +113,7 @@ pub enum LogentryDeserializerError {
 	NotEnoughData
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
 pub struct Prop {
 	pub key: String,
 	pub value: String
