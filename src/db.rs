@@ -85,7 +85,7 @@ pub struct Device {
     pub id: String,
     pub send_logs: bool,
     pub filter_level: LogLevel,
-    pub send_interval: i32,
+    pub send_interval: u32,
     pub logs_size: usize,
     pub logs_count: usize,
     pub created_at: DateTime<Utc>,

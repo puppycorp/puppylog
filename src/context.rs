@@ -1,6 +1,8 @@
 use std::fs::File;
 use std::io::Cursor;
 use std::io::Write;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use chrono::DateTime;
 use chrono::Utc;
 use puppylog::LogEntry;
@@ -18,6 +20,7 @@ use crate::db::NewSegmentArgs;
 use crate::db::DB;
 use crate::segment::LogSegment;
 use crate::settings::Settings;
+use crate::upload_guard::UploadGuard;
 use crate::wal::load_logs_from_wal;
 use crate::wal::Wal;
 use crate::subscribe_worker::Subscriber;
@@ -31,7 +34,8 @@ pub struct Context {
 	pub event_tx: broadcast::Sender<PuppylogEvent>,
 	pub db: DB,
 	pub current: Mutex<LogSegment>,
-	pub wal: Wal
+	pub wal: Wal,
+	pub upload_queue: AtomicUsize
 }
 
 impl Context {
@@ -52,7 +56,8 @@ impl Context {
 			event_tx,
 			db,
 			current: Mutex::new(LogSegment::with_logs(logs)),
-			wal
+			wal,
+			upload_queue: AtomicUsize::new(0)
 		}
 	}
 
@@ -120,6 +125,14 @@ impl Context {
 				}
 			}
 		}
+	}
+
+	pub fn allowed_to_upload(&self) -> bool {
+		self.upload_queue.load(Ordering::SeqCst) < 10
+	}
+
+	pub fn upload_guard(&self) -> Result<UploadGuard<'_>, &str> {
+		UploadGuard::new(&self.upload_queue, 10)
 	}
 }
 

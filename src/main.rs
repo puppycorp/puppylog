@@ -30,7 +30,9 @@ use futures::Stream;
 use futures::StreamExt;
 use log::LevelFilter;
 use puppylog::*;
+use rand::Rng;
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::json;
 use serde_json::to_string;
 use serde_json::Value;
@@ -57,6 +59,7 @@ mod settings;
 mod db;
 mod segment;
 mod wal;
+mod upload_guard;
 
 #[derive(Deserialize, Debug)]
 enum SortDir {
@@ -205,8 +208,23 @@ async fn upload_device_logs(
 	State(ctx): State<Arc<Context>>,
 	Path(device_id): Path<String>,
 	body: Body
-) {
+) -> impl IntoResponse {
 	log::info!("upload_device_logs device_id: {}", device_id);
+
+	let _guard = match ctx.upload_guard() {
+		Ok(guard) => guard,
+		Err(err) => {
+			let retry_after = rand::rng().random_range(10..=120);
+			log::error!("Failed to acquire upload guard: {}", err);
+			let mut response = (StatusCode::SERVICE_UNAVAILABLE, "Upload limit reached").into_response();
+			response.headers_mut().insert(
+				axum::http::header::RETRY_AFTER,
+				retry_after.to_string().parse().unwrap()
+			);
+			return response;
+		}
+	};
+
 	let upload_timer = Instant::now();
 	let mut stream: BodyDataStream = body.into_data_stream();
 	let mut chunk_reader = LogEntryChunkParser::new();
@@ -221,7 +239,7 @@ async fn upload_device_logs(
 			}
 			Err(e) => {
 				log::error!("Error receiving chunk: {}", e);
-				return;
+				return (StatusCode::OK, "ok").into_response();
 			}
 		}
 	}
@@ -232,6 +250,7 @@ async fn upload_device_logs(
 	}
 	ctx.save_logs(&chunk_reader.log_entries).await;
 	log::info!("saved {} logs in {:?}", i, timer.elapsed());
+	(StatusCode::OK, "ok").into_response()
 }
 
 async fn update_devices_settings(
@@ -243,17 +262,40 @@ async fn update_devices_settings(
 	"ok"
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceStatus {
+	pub level: LogLevel,
+	pub send_logs: bool,
+	pub send_interval: u32,
+	/// In how many seconds the device should poll next
+	pub next_poll: Option<u32>,
+}
+
 async fn get_device_status(
 	State(ctx): State<Arc<Context>>, 
 	Path(device_id): Path<String>
 ) -> Json<Value> {
 	log::info!("get_device_status device_id: {}", device_id);
 	let device = ctx.db.get_or_create_device(&device_id).await.unwrap();
-	Json(json!({
-		"level": device.filter_level.to_string(),
-		"sendLogs": device.send_logs,
-		"sendInterval": device.send_interval,
-	}))
+	
+	let mut resp = DeviceStatus {
+		level: device.filter_level,
+		send_logs: device.send_logs,
+		send_interval: device.send_interval,
+		next_poll: None,
+	};
+
+	let allowed_to_send = ctx.allowed_to_upload();
+	if !allowed_to_send {
+		resp.send_logs = false;
+		resp.next_poll = Some(rand::rng().random_range(10..=120));
+	}
+
+	let next_poll_interval = allowed_to_send.then(|| 30);
+	resp.next_poll = next_poll_interval;
+
+	Json(serde_json::to_value(resp).unwrap())
 }
 
 async fn update_device_metadata(

@@ -1,10 +1,10 @@
-use chrono::{NaiveDate, TimeZone};
+use chrono::NaiveDate;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use log::Level;
 use puppylog::{DrainParser, LogEntry, LogLevel, Prop, PuppylogBuilder};
 use rand::{distributions::Alphanumeric, prelude::*};
-use reqwest::{self, Client, RequestBuilder};
+use reqwest::{self, Client};
 use std::collections::HashMap;
 use std::error::Error;
 use std::thread::sleep;
@@ -12,6 +12,7 @@ use std::time::Duration;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::io::Write;
+use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 
 // Constants from the Python version
 const LOG_LEVELS: &[LogLevel] = &[LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error];
@@ -220,13 +221,22 @@ struct UpdateMetadataArgs {
 	props_path: String,
 }
 
+#[derive(Parser)]
+struct UploadLogsArgs {
+	#[arg(long)]
+	address: String,
+	#[arg(long)]
+	count: u32,
+	#[arg(long)]
+	pararell: Option<u32>,
+	#[arg(long)]
+	auth: Option<String>,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Upload log data
-    Upload {
-        /// Server address
-        address: String,
-    },
+    Upload(UploadLogsArgs),
 	StreamLogs(StreamLogsArgs),
     Tokenize {
         #[command(subcommand)]
@@ -349,7 +359,56 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 			logger.close();
 		},
-        Commands::Upload { address } => todo!(),
+		Commands::Upload(args) => {
+			let success_count = Arc::new(AtomicUsize::new(0));
+			let fail_count = Arc::new(AtomicUsize::new(0));
+			let mut handles = Vec::new();
+			
+			for i in 0..args.pararell.unwrap_or(1) {
+				let addr = args.address.clone();
+				let auth = args.auth.clone();
+				let count = args.count;
+				let success_count = Arc::clone(&success_count);
+				let fail_count = Arc::clone(&fail_count);
+				
+				let handle = tokio::spawn(async move {
+					let mut buffer = Vec::new();
+					let mut start = Utc::now();
+					
+					for _ in 0..count {
+						let log = random_log_entry(start);
+						log.serialize(&mut buffer).unwrap();
+						start += Duration::from_millis(100);
+					}
+				
+					let client = reqwest::Client::new();
+					let response = client
+						.post(&addr)
+						.header("Authorization", auth.unwrap_or_default())
+						.body(buffer)
+						.send()
+						.await
+						.unwrap();
+		
+					if !response.status().is_success() {
+						eprintln!("[{}] Upload failed: {}", i, response.status());
+						fail_count.fetch_add(1, Ordering::SeqCst);
+					} else {
+						success_count.fetch_add(1, Ordering::SeqCst);
+					}
+				});
+				handles.push(handle);
+			}
+			
+			for handle in handles {
+				if let Err(err) = handle.await {
+					eprintln!("Error awaiting handle: {}", err);
+				}
+			}
+			
+			println!("Success count: {}", success_count.load(Ordering::SeqCst));
+			println!("Fail count: {}", fail_count.load(Ordering::SeqCst));
+		},
         Commands::Tokenize { subcommand } => {
             match subcommand {
                 TokenizeSubcommands::Drain { src, output } => {
