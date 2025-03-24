@@ -164,10 +164,10 @@ async fn validate_query(
 ) -> Result<(), BadRequestError> {
 	log::info!("validate_query {:?}", params);
 	match params.query {
-        Some(ref q) => {
-            let q = q.replace("\n", "");
-            let q = q.trim();
-            if q.is_empty() {
+		Some(ref q) => {
+			let q = q.replace("\n", "");
+			let q = q.trim();
+			if q.is_empty() {
 				return Ok(());
 			}
 			log::info!("validating query {}", q);
@@ -177,7 +177,7 @@ async fn validate_query(
 			}
 			log::info!("query {} is valid", q);
 		}
-        None => {
+		None => {
 			log::info!("query is empty");
 		},
 	};
@@ -313,7 +313,7 @@ async fn device_ws_handler(
 	State(ctx): State<Arc<Context>>,
 	Path(device_id): Path<String>
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, device_id, ctx))
+	ws.on_upgrade(|socket| handle_socket(socket, device_id, ctx))
 }
 
 async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Context>) {
@@ -441,7 +441,7 @@ async fn favicon() -> Result<Response, StatusCode> {
 	Ok((
 		StatusCode::OK,
 		[(axum::http::header::CONTENT_TYPE, "image/x-icon")],
-        FAVICON,
+		FAVICON,
 	).into_response())
 }
 
@@ -496,73 +496,73 @@ fn logentry_to_json(entry: &LogEntry) -> Value {
 
 async fn get_logs(
 	State(ctx): State<Arc<Context>>, 
-    Query(params): Query<GetLogsQuery>,
-    headers: HeaderMap,
+	Query(params): Query<GetLogsQuery>,
+	headers: HeaderMap,
 ) -> Result<Response, BadRequestError>  {
 	log::info!("get_logs {:?}", params);
 	let mut query = match params.query {
-        Some(ref q) => {
-            let q = q.replace("\n", "");
-            let q = q.trim();
-            if q.is_empty() {
+		Some(ref q) => {
+			let q = q.replace("\n", "");
+			let q = q.trim();
+			if q.is_empty() {
 				log::info!("query is empty");
 				QueryAst::default()
 			} else {
-                match parse_log_query(&q) {
+				match parse_log_query(&q) {
 					Ok(query) => query,
-                    Err(err) => return Err(BadRequestError(err.to_string())),
+					Err(err) => return Err(BadRequestError(err.to_string())),
 				}
 			}
 		}
-        None => QueryAst::default(),
+		None => QueryAst::default(),
 	};
 	query.limit = params.count;
 	query.end_date = params.end_date;
 
-    let (tx, rx) = mpsc::channel(100);
-    let producer_query = query.clone();
-    let ctx_clone = Arc::clone(&ctx);
-    spawn_blocking(move || {
-        let end = producer_query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
-        let count = producer_query.limit.unwrap_or(200);
-        let mut sent = 0;
-        block_on(ctx_clone.find_logs(end, |entry| {
+	let (tx, rx) = mpsc::channel(100);
+	let producer_query = query.clone();
+	let ctx_clone = Arc::clone(&ctx);
+	spawn_blocking(move || {
+		let end = producer_query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
+		let count = producer_query.limit.unwrap_or(200);
+		let mut sent = 0;
+		block_on(ctx_clone.find_logs(end, |entry| {
 			if tx.is_closed() {
 				return false;
 			}
-            if check_expr(&producer_query.root, &entry).unwrap() {
-                let log_json = logentry_to_json(entry);
-                if tx.blocking_send(log_json).is_err() {
-                    return false;
-                }
-                sent += 1;
-                if sent >= count {
-                    return false;
-                }
-            }
+			if check_expr(&producer_query.root, &entry).unwrap() {
+				let log_json = logentry_to_json(entry);
+				if tx.blocking_send(log_json).is_err() {
+					return false;
+				}
+				sent += 1;
+				if sent >= count {
+					return false;
+				}
+			}
 			true
-        }));
-    });
+		}));
+	});
 
-    let wants_stream = headers
-        .get("accept")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.contains("text/event-stream"))
-        .unwrap_or(false);
+	let wants_stream = headers
+		.get("accept")
+		.and_then(|v| v.to_str().ok())
+		.map(|s| s.contains("text/event-stream"))
+		.unwrap_or(false);
 
-    let res = if wants_stream {
-        let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
+	let res = if wants_stream {
+		let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
 			.map(|log| {
 				let data = to_string(&log).unwrap();
 				Ok::<Event, std::convert::Infallible>(Event::default().data(data))
 			});
-        Sse::new(stream).into_response()
-    } else {
-        let logs: Vec<_> = ReceiverStream::new(rx)
-            .collect::<Vec<_>>()
-            .await;
-        Json(serde_json::to_value(&logs).unwrap()).into_response()
-    };
+		Sse::new(stream).into_response()
+	} else {
+		let logs: Vec<_> = ReceiverStream::new(rx)
+			.collect::<Vec<_>>()
+			.await;
+		Json(serde_json::to_value(&logs).unwrap()).into_response()
+	};
 	Ok(res)
 }
 
