@@ -125,6 +125,8 @@ async fn main() {
 		.route("/api/v1/settings", get(get_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/devices", get(get_devices)).with_state(ctx.clone())
 		.route("/api/v1/segments", get(get_segments)).with_state(ctx.clone())
+		.route("/api/v1/segment/{segmentId}", get(get_segment)).with_state(ctx.clone())
+		.route("/api/v1/segment/{segmentId}/props", get(get_segment_props)).with_state(ctx.clone())
 		.fallback(get(root));
 
 	// run our app with hyper, listening globally on port 3000
@@ -135,7 +137,23 @@ async fn main() {
 	).await.unwrap();
 }
 
-#[derive(Deserialize, Debug)]
+async fn get_segment(
+	State(ctx): State<Arc<Context>>,
+	Path(segment_id): Path<u32>
+) -> Json<Value> {
+	let segment = ctx.db.fetch_segment(segment_id).await.unwrap();
+	Json(serde_json::to_value(&segment).unwrap())
+}
+
+async fn get_segment_props(
+	State(ctx): State<Arc<Context>>,
+	Path(segment_id): Path<u32>
+) -> Json<Value> {
+	let props = ctx.db.fetch_segment_props(segment_id).await.unwrap();
+	Json(serde_json::to_value(&props).unwrap())
+}
+
+#[derive(Deserialize, Debug)] 
 #[serde(rename_all = "camelCase")]
 struct BulkEdit {
 	pub filter_level: LogLevel,

@@ -3,7 +3,7 @@ import { logtableTest } from "./logtable-test";
 import { mainPage } from "./main-page";
 import { PivotPage } from "./pivot";
 import { routes } from "./router";
-import { segmentsPage } from "./segment-page";
+import { segmentPage, segmentsPage } from "./segment-page";
 import { settingsPage } from "./settings";
 
 window.onload = () => {
@@ -16,6 +16,7 @@ window.onload = () => {
 		"/settings": () => settingsPage(body),
 		"/devices": () => devicesPage(body),
 		"/segments": () => segmentsPage(body),
+		"/segment/:segmentId": (params: any) => segmentPage(body, params.segmentId),
 		"/pivot": () => PivotPage(body),
 		"/*": () => mainPage(body)
 	})

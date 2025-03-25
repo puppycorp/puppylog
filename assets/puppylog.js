@@ -264,6 +264,10 @@ var formatNumber = (num, decimals = 2) => {
   const i = Math.floor(Math.log(Math.abs(num)) / Math.log(k));
   return parseFloat((num / Math.pow(k, i)).toFixed(dm)) + sizes[i];
 };
+var formatTimestamp = (timestamp) => {
+  const d = new Date(timestamp);
+  return d.toLocaleString();
+};
 
 // ts/devices.ts
 var saveDeviceSettings = async (device) => {
@@ -785,8 +789,8 @@ function patternMatcher(handlers) {
   };
 }
 function matchRoute(pattern, path) {
-  const patternParts = pattern.split("/");
-  const pathParts = path.split("/");
+  const patternParts = pattern.split("/").filter((segment) => segment.length > 0);
+  const pathParts = path.split("/").filter((segment) => segment.length > 0);
   if (pattern === "/*")
     return {};
   if (patternParts.length !== pathParts.length) {
@@ -800,15 +804,15 @@ function matchRoute(pattern, path) {
   for (let i = 0;i < patternParts.length; i++) {
     const patternPart = patternParts[i];
     const pathPart = pathParts[i];
-    if (patternPart === "*")
+    if (patternPart === "*") {
       return params;
+    }
     if (patternPart.startsWith(":")) {
       const paramName = patternPart.slice(1);
       params[paramName] = pathPart;
-      continue;
-    }
-    if (patternPart !== pathPart)
+    } else if (patternPart !== pathPart) {
       return null;
+    }
   }
   return params;
 }
@@ -849,7 +853,7 @@ var LOG_COLORS = {
 };
 var settingsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings w-5 h-5"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
 var searchSvg = `<svg xmlns="http://www.w3.org/2000/svg"  viewBox="0 0 50 50" width="20px" height="20px"><path d="M 21 3 C 11.601563 3 4 10.601563 4 20 C 4 29.398438 11.601563 37 21 37 C 24.355469 37 27.460938 36.015625 30.09375 34.34375 L 42.375 46.625 L 46.625 42.375 L 34.5 30.28125 C 36.679688 27.421875 38 23.878906 38 20 C 38 10.601563 30.398438 3 21 3 Z M 21 7 C 28.199219 7 34 12.800781 34 20 C 34 27.199219 28.199219 33 21 33 C 13.800781 33 8 27.199219 8 20 C 8 12.800781 13.800781 7 21 7 Z"/></svg>`;
-var formatTimestamp = (ts) => {
+var formatTimestamp2 = (ts) => {
   const date = new Date(ts);
   return date.toLocaleString();
 };
@@ -907,7 +911,7 @@ var logsSearchPage = (args) => {
       logsList.innerHTML = logEntries.map((entry) => `
 				<div class="list-row">
 					<div>
-						${formatTimestamp(entry.timestamp)} 
+						${formatTimestamp2(entry.timestamp)} 
 						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
 						${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
 					</div>
@@ -1329,16 +1333,45 @@ var segmentsPage = async (root) => {
 				<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
 			</div>
 		</div>
-		<div>
+		<div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px">
 			${res.map((segment) => `
 				<div class="list-row">
-					<div class="table-cell"><strong>Segment ID:</strong> ${formatNumber(segment.id)}</div>
+					<div class="table-cell"><strong>Segment ID:</strong> <a href="/segment/${segment.id}">${formatNumber(segment.id)}</a></div>
 					<div class="table-cell"><strong>First timestamp:</strong> ${segment.firstTimestamp}</div>
 					<div class="table-cell"><strong>Last timestamp:</strong> ${segment.lastTimestamp}</div>
 					<div class="table-cell"><strong>Original size:</strong> ${formatBytes(segment.originalSize)}</div>
 					<div class="table-cell"><strong>Compressed size:</strong> ${formatBytes(segment.compressedSize)}</div>
 					<div class="table-cell"><strong>Logs count:</strong> ${formatNumber(segment.logsCount)}</div>
 					<div class="table-cell"><strong>Compression ratio:</strong> ${(segment.compressedSize / segment.originalSize * 100).toFixed(2)}%</div>
+				</div>
+			`).join("")}
+		</div>
+	`;
+};
+var segmentPage = async (root, segmentId) => {
+  const segment = await fetch(`/api/v1/segment/${segmentId}`).then((res) => res.json());
+  const props = await fetch(`/api/v1/segment/${segmentId}/props`).then((res) => res.json());
+  const totalOriginalSize = segment.originalSize;
+  const totalCompressedSize = segment.compressedSize;
+  const totalLogsCount = segment.logsCount;
+  const compressRatio = totalCompressedSize / totalOriginalSize * 100;
+  root.innerHTML = `
+		<div class="page-header">
+			<h1 style="flex-grow: 1">Segment ${segmentId}</h1>
+			<div class="summary">
+				<div><strong>First timestamp:</strong> ${formatTimestamp(segment.firstTimestamp)}</div>
+				<div><strong>Last timestamp:</strong> ${formatTimestamp(segment.lastTimestamp)}</div>
+				<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
+				<div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
+				<div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
+				<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
+			</div>
+		</div>
+		<div>
+			${props.map((prop) => `
+				<div class="list-row">
+					<div class="table-cell"><strong>Key:</strong> ${prop.key}</div>
+					<div class="table-cell"><strong>Value:</strong> ${prop.value}</div>
 				</div>
 			`).join("")}
 		</div>
@@ -1417,6 +1450,7 @@ window.onload = () => {
     "/settings": () => settingsPage(body),
     "/devices": () => devicesPage(body),
     "/segments": () => segmentsPage(body),
+    "/segment/:segmentId": (params) => segmentPage(body, params.segmentId),
     "/pivot": () => PivotPage(body),
     "/*": () => mainPage(body)
   });

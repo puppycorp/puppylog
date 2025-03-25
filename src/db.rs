@@ -1,12 +1,9 @@
 use std::fs::create_dir_all;
-
-use anyhow::bail;
 use chrono::DateTime;
 use chrono::Utc;
 use puppylog::LogEntry;
 use puppylog::LogLevel;
 use puppylog::Prop;
-use puppylog::QueryAst;
 use rusqlite::Connection;
 use rusqlite::ToSql;
 use serde::Deserialize;
@@ -391,6 +388,28 @@ impl DB {
 		Ok(metas)
 	}
 
+	pub async fn fetch_segment(&self, segment: u32) -> anyhow::Result<SegmentMeta> {
+		let conn = self.conn.lock().await;
+		let segment = conn.query_row("select first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at from log_segments where id = ?1", [segment], |row| {
+			let first_timestamp: DateTime<Utc> = row.get(0)?;
+			let last_timestamp: DateTime<Utc> = row.get(1)?;
+			let original_size: usize = row.get(2)?;
+			let compressed_size: usize = row.get(3)?;
+			let logs_count: u64 = row.get(4)?;
+			let created_at: DateTime<Utc> = row.get(5)?;
+			Ok(SegmentMeta {
+				id: segment,
+				first_timestamp,
+				last_timestamp,
+				original_size,
+				compressed_size,
+				logs_count,
+				created_at,
+			})
+		})?;
+		Ok(segment)
+	}
+
 	pub async fn upsert_segment_props(&self, segment: u32, props: impl Iterator<Item = &Prop>) -> anyhow::Result<()> {
 		let mut conn = self.conn.lock().await;
 		let tx = conn.transaction()?;
@@ -402,6 +421,20 @@ impl DB {
 		}
 		tx.commit()?;
 		Ok(())
+	}
+
+	pub async fn fetch_segment_props(&self, segment: u32) -> anyhow::Result<Vec<Prop>> {
+		let conn = self.conn.lock().await;
+		let mut stmt = conn.prepare("SELECT key, value FROM segment_props WHERE segment_id = ?1")?;
+		let mut rows = stmt.query([segment])?;
+		let mut props = Vec::new();
+		while let Some(row) = rows.next()? {
+			props.push(Prop {
+				key: row.get(0)?,
+				value: row.get(1)?,
+			});
+		}
+		Ok(props)
 	}
 }
 

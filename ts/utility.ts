@@ -29,3 +29,7 @@ export const formatNumber = (num: number, decimals: number = 2): string => {
 	const i = Math.floor(Math.log(Math.abs(num)) / Math.log(k))
 	return parseFloat((num / Math.pow(k, i)).toFixed(dm)) + sizes[i]
 }
+export const formatTimestamp = (timestamp: string | number): string => {
+	const d = new Date(timestamp)
+	return d.toLocaleString()
+}
