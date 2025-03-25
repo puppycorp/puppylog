@@ -1336,7 +1336,7 @@ var segmentsPage = async (root) => {
 		<div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px">
 			${res.map((segment) => `
 				<div class="list-row">
-					<div class="table-cell"><strong>Segment ID:</strong> <a href="/segment/${segment.id}">${formatNumber(segment.id)}</a></div>
+					<div class="table-cell"><strong>Segment ID:</strong> <a href="/segment/${segment.id}">${segment.id}</a></div>
 					<div class="table-cell"><strong>First timestamp:</strong> ${segment.firstTimestamp}</div>
 					<div class="table-cell"><strong>Last timestamp:</strong> ${segment.lastTimestamp}</div>
 					<div class="table-cell"><strong>Original size:</strong> ${formatBytes(segment.originalSize)}</div>
