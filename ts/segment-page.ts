@@ -63,7 +63,7 @@ export const segmentPage = async (root: HTMLElement, segmentId: number) => {
 				<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
 			</div>
 		</div>
-		<div>
+		<div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px">
 			${props.map(prop => `
 				<div class="list-row">
 					<div class="table-cell"><strong>Key:</strong> ${prop.key}</div>
