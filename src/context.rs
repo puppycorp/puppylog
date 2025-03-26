@@ -119,7 +119,7 @@ impl Context {
 			}
 		}
 		log::info!("looking from archive");
-		let segments = self.db.find_segments(end).await.unwrap();
+		let segments = self.db.find_segments(end, 10_000).await.unwrap();
 		for segment in segments {
 			let path = log_path().join(format!("{}.log", segment.id));
 			log::info!("loading segment from disk: {}", path.display());

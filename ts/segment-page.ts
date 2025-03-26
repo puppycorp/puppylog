@@ -1,4 +1,5 @@
 import { Prop } from "./logs"
+import { Collapsible, Container, Header, InfiniteScroll, KeyValueTable, WrapList } from "./ui"
 import { formatBytes, formatNumber, formatTimestamp } from "./utility"
 type Segment = {
 	id: number
@@ -8,38 +9,63 @@ type Segment = {
 	compressedSize: number
 	logsCount: number
 }
-export const segmentsPage = async (root: HTMLElement) => {
-	const res = await fetch("/api/v1/segments").then(res => res.json()) as Segment[]
-	const totalSegments = res.length
-	const totalOriginalSize = res.reduce((sum, seg) => sum + seg.originalSize, 0)
-	const totalCompressedSize = res.reduce((sum, seg) => sum + seg.compressedSize, 0)
-	const totalLogsCount = res.reduce((sum, seg) => sum + seg.logsCount, 0)
-	const compressRatio = totalCompressedSize / totalOriginalSize * 100
-	root.innerHTML = `
-		<div class="page-header">
-			<h1 style="flex-grow: 1">Segments</h1>
-			<div class="summary">
-				<div><strong>Total segments:</strong> ${formatNumber(totalSegments)}</div>
-				<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
-				<div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
-				<div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
-				<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
-			</div>
-		</div>
-		<div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px">
-			${res.map(segment => `
-				<div class="list-row">
-					<div class="table-cell"><strong>Segment ID:</strong> <a href="/segment/${segment.id}">${segment.id}</a></div>
-					<div class="table-cell"><strong>First timestamp:</strong> ${segment.firstTimestamp}</div>
-					<div class="table-cell"><strong>Last timestamp:</strong> ${segment.lastTimestamp}</div>
-					<div class="table-cell"><strong>Original size:</strong> ${formatBytes(segment.originalSize)}</div>
-					<div class="table-cell"><strong>Compressed size:</strong> ${formatBytes(segment.compressedSize)}</div>
-					<div class="table-cell"><strong>Logs count:</strong> ${formatNumber(segment.logsCount)}</div>
-					<div class="table-cell"><strong>Compression ratio:</strong> ${((segment.compressedSize / segment.originalSize) * 100).toFixed(2)}%</div>
-				</div>
-			`).join("")}
-		</div>
-	`
+
+type SegementsMetadata = {
+	segmentCount: number
+	originalSize: number
+	compressedSize: number
+	logsCount: number
+}
+
+const fetchSegments = async (end: Date) => {
+	const url = new URL("/api/segments", window.location.origin)
+	url.searchParams.set("end", end.toISOString())
+	const res = await fetch(url.toString()).then(res => res.json()) as Segment[]
+	return res
+}
+
+export const segmentsPage = async (root: Container) => {
+	const segementsMetadata = await fetch("/api/segment/metadata").then(res => res.json()) as SegementsMetadata
+	const compressionRatio = segementsMetadata.compressedSize / segementsMetadata.originalSize * 100
+	const averageCompressedLogSize = segementsMetadata.compressedSize / segementsMetadata.logsCount
+	const averageOriginalLogSize = segementsMetadata.originalSize / segementsMetadata.logsCount
+	const metadata = new KeyValueTable([
+		{ key: "Total segments", value: formatNumber(segementsMetadata.segmentCount) },
+		{ key: "Total original size", value: formatBytes(segementsMetadata.originalSize) },
+		{ key: "Total compressed size", value: formatBytes(segementsMetadata.compressedSize) },
+		{ key: "Total logs count", value: formatNumber(segementsMetadata.logsCount) },
+		{ key: "Compression ratio", value: compressionRatio.toFixed(2) + "%" },
+		{ key: "Average compressed log size", value: formatBytes(averageCompressedLogSize) },
+		{ key: "Average original log size", value: formatBytes(averageOriginalLogSize) },
+	])
+	metadata.root.style.whiteSpace = "nowrap"
+	const metadataCollapsible = new Collapsible({ buttonText: "Metadata", content: metadata })
+	const header = new Header({ title: "Segments", rightSide: metadataCollapsible });
+	root.add(header)
+
+	const segmentList = new WrapList()
+	const infiniteScroll = new InfiniteScroll({
+		container: segmentList
+	})
+	root.add(infiniteScroll)
+	let endDate = new Date()
+	infiniteScroll.onLoadMore = async () => {
+		console.log("loadMore")
+		const segments = await fetchSegments(endDate)
+		endDate = new Date(segments[segments.length - 1].lastTimestamp)
+		for (const segment of segments) {
+			const table = new KeyValueTable([
+				{ key: "Segment ID", value: segment.id.toString(), href: `/segment/${segment.id}` },
+				{ key: "First timestamp", value: formatTimestamp(segment.firstTimestamp) },
+				{ key: "Last timestamp", value: formatTimestamp(segment.lastTimestamp) },
+				{ key: "Original size", value: formatBytes(segment.originalSize) },
+				{ key: "Compressed size", value: formatBytes(segment.compressedSize) },
+				{ key: "Logs count", value: formatNumber(segment.logsCount) },
+				{ key: "Compression ratio", value: ((segment.compressedSize / segment.originalSize) * 100).toFixed(2) + "%" },
+			])
+			segmentList.add(table)
+		}
+	}
 }
 
 

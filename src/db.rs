@@ -126,6 +126,15 @@ pub struct UpdateDeviceSettings {
 	pub send_interval: u32,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentsMetadata {
+	pub segment_count: u32,
+	pub original_size: u64,
+	pub compressed_size: u64,
+	pub logs_count: u64,
+}
+
 fn load_device_metadata_locked(conn: &Connection, device_id: &str) -> anyhow::Result<Vec<MetaProp>> {
 	let mut stmt = conn.prepare(r#"SELECT key, value FROM device_props WHERE device_id = ?1 ORDER BY key"#)?;
 	let mut rows = stmt.query([device_id])?;
@@ -365,14 +374,14 @@ impl DB {
 		Ok(new_id as u32)
 	}
 
-	pub async fn find_segments(&self, date: DateTime<Utc>) -> anyhow::Result<Vec<SegmentMeta>> {
+	pub async fn find_segments(&self, date: DateTime<Utc>, count: usize) -> anyhow::Result<Vec<SegmentMeta>> {
 		let conn = self.conn.lock().await;
 		let mut stmt = conn.prepare(r#"
 			SELECT id, first_timestamp, last_timestamp, 
 				original_size, compressed_size, logs_count, created_at
-				FROM log_segments where first_timestamp < ? order by last_timestamp desc
+				FROM log_segments where last_timestamp < ? order by last_timestamp desc LIMIT ?
 		"#)?;
-		let mut rows = stmt.query([date])?;
+		let mut rows = stmt.query(rusqlite::params![date, count])?;
 		let mut metas = Vec::new();
 		while let Some(row) = rows.next()? {
 			metas.push(SegmentMeta {
@@ -408,6 +417,19 @@ impl DB {
 			})
 		})?;
 		Ok(segment)
+	}
+
+	pub async fn fetch_segments_metadata(&self) -> anyhow::Result<SegmentsMetadata> {
+		let conn = self.conn.lock().await;
+		let mut stmt = conn.prepare("SELECT COUNT(*), SUM(original_size), SUM(compressed_size), SUM(logs_count) FROM log_segments")?;
+		let mut rows = stmt.query([])?;
+		let row = rows.next()?.unwrap();
+		Ok(SegmentsMetadata {
+			segment_count: row.get(0)?,
+			original_size: row.get(1)?,
+			compressed_size: row.get(2)?,
+			logs_count: row.get(3)?,
+		})
 	}
 
 	pub async fn upsert_segment_props(&self, segment: u32, props: impl Iterator<Item = &Prop>) -> anyhow::Result<()> {

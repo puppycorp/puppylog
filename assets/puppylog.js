@@ -183,6 +183,156 @@ class MultiCheckboxSelect extends UiComponent {
   }
 }
 
+class InfiniteScroll extends UiComponent {
+  isLoading;
+  onLoadMoreCallback;
+  sentinel;
+  observer;
+  constructor(args) {
+    super(document.createElement("div"));
+    this.root.style.minHeight = "100px";
+    this.root.appendChild(args.container.root);
+    this.isLoading = false;
+    this.onLoadMoreCallback = null;
+    this.sentinel = document.createElement("div");
+    this.sentinel.style.height = "1px";
+    this.sentinel.style.marginTop = "1px";
+    this.root.appendChild(this.sentinel);
+    const observerRoot = args.container.root;
+    const options = {
+      threshold: 0.1
+    };
+    this.observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!this.isLoading && entry.isIntersecting) {
+          this.loadMore();
+        }
+      });
+    }, options);
+    this.observer.observe(this.sentinel);
+  }
+  async loadMore() {
+    this.isLoading = true;
+    if (this.onLoadMoreCallback) {
+      await this.onLoadMoreCallback();
+    }
+    this.isLoading = false;
+  }
+  set onLoadMore(callback) {
+    this.onLoadMoreCallback = callback;
+  }
+}
+
+class Header extends UiComponent {
+  constructor(args) {
+    super(document.createElement("div"));
+    this.root.className = "page-header";
+    const title = document.createElement("h1");
+    title.textContent = args.title;
+    title.style.flexGrow = "1";
+    this.root.appendChild(title);
+    if (args.rightSide) {
+      this.root.append(args.rightSide.root);
+    }
+  }
+}
+
+class WrapList {
+  root;
+  constructor() {
+    this.root = document.createElement("div");
+    this.root.style.display = "flex";
+    this.root.style.flexDirection = "row";
+    this.root.style.flexWrap = "wrap";
+    this.root.style.gap = "5px";
+    this.root.style.overflowX = "auto";
+    this.root.style.padding = "16px";
+  }
+  add(device) {
+    this.root.appendChild(device.root);
+  }
+  set status(message) {
+    this.root.innerHTML = `<p>${message}</p>`;
+  }
+  clear() {
+    this.root.innerHTML = "";
+  }
+}
+
+class KeyValueTable extends VList {
+  constructor(items) {
+    super();
+    this.root.className = "list-row";
+    for (const item of items) {
+      const container = document.createElement("div");
+      container.className = "table-cell";
+      container.style.fontWeight = "bold";
+      this.root.appendChild(container);
+      const key = document.createElement("strong");
+      key.textContent = item.key;
+      container.appendChild(key);
+      container.appendChild(document.createTextNode(`: ${item.value}`));
+    }
+  }
+}
+
+class Collapsible extends UiComponent {
+  expandButton;
+  content;
+  contentContainer;
+  isOpen;
+  constructor(args) {
+    super(document.createElement("div"));
+    this.root.style.position = "relative";
+    this.expandButton = document.createElement("button");
+    this.expandButton.textContent = args.buttonText;
+    this.expandButton.style.cursor = "pointer";
+    this.root.appendChild(this.expandButton);
+    this.content = args.content;
+    this.contentContainer = document.createElement("div");
+    this.contentContainer.style.position = "absolute";
+    this.contentContainer.style.top = "0";
+    this.contentContainer.style.left = "100%";
+    this.contentContainer.style.zIndex = "1000";
+    this.contentContainer.style.display = "none";
+    this.contentContainer.appendChild(this.content.root);
+    this.root.appendChild(this.contentContainer);
+    this.isOpen = false;
+    this.expandButton.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggle();
+    });
+    document.addEventListener("click", this.handleDocumentClick.bind(this));
+  }
+  toggle() {
+    if (this.isOpen) {
+      this.hide();
+    } else {
+      this.show();
+    }
+  }
+  show() {
+    this.isOpen = true;
+    this.contentContainer.style.display = "block";
+    this.contentContainer.style.left = "100%";
+    this.contentContainer.style.right = "auto";
+    const rect = this.contentContainer.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      this.contentContainer.style.left = "auto";
+      this.contentContainer.style.right = "100%";
+    }
+  }
+  hide() {
+    this.isOpen = false;
+    this.contentContainer.style.display = "none";
+  }
+  handleDocumentClick(e) {
+    if (!this.root.contains(e.target)) {
+      this.hide();
+    }
+  }
+}
+
 // ts/common.ts
 var showModal = (args) => {
   const body = document.querySelector("body");
@@ -423,20 +573,6 @@ class Summary extends UiComponent {
 			<div><strong>Average Log Size:</strong> ${formatBytes(args.averageLogSize)}</div>
 			<div><strong>Logs per Second:</strong> ${args.totalLogsPerSecond.toFixed(2)}</div>
 		`;
-  }
-}
-
-class Header extends UiComponent {
-  constructor(args) {
-    super(document.createElement("div"));
-    this.root.className = "page-header";
-    const title = document.createElement("h1");
-    title.textContent = args.title;
-    title.style.flexGrow = "1";
-    this.root.appendChild(title);
-    if (args.rightSide) {
-      this.root.append(args.rightSide.root);
-    }
   }
 }
 var devicesPage = async (root) => {
@@ -1315,38 +1451,53 @@ var PivotPage = (root) => {
 };
 
 // ts/segment-page.ts
+var fetchSegments = async (end) => {
+  const url = new URL("/api/segments", window.location.origin);
+  url.searchParams.set("end", end.toISOString());
+  const res = await fetch(url.toString()).then((res2) => res2.json());
+  return res;
+};
 var segmentsPage = async (root) => {
-  const res = await fetch("/api/v1/segments").then((res2) => res2.json());
-  const totalSegments = res.length;
-  const totalOriginalSize = res.reduce((sum, seg) => sum + seg.originalSize, 0);
-  const totalCompressedSize = res.reduce((sum, seg) => sum + seg.compressedSize, 0);
-  const totalLogsCount = res.reduce((sum, seg) => sum + seg.logsCount, 0);
-  const compressRatio = totalCompressedSize / totalOriginalSize * 100;
-  root.innerHTML = `
-		<div class="page-header">
-			<h1 style="flex-grow: 1">Segments</h1>
-			<div class="summary">
-				<div><strong>Total segments:</strong> ${formatNumber(totalSegments)}</div>
-				<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
-				<div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
-				<div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
-				<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
-			</div>
-		</div>
-		<div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px">
-			${res.map((segment) => `
-				<div class="list-row">
-					<div class="table-cell"><strong>Segment ID:</strong> <a href="/segment/${segment.id}">${segment.id}</a></div>
-					<div class="table-cell"><strong>First timestamp:</strong> ${segment.firstTimestamp}</div>
-					<div class="table-cell"><strong>Last timestamp:</strong> ${segment.lastTimestamp}</div>
-					<div class="table-cell"><strong>Original size:</strong> ${formatBytes(segment.originalSize)}</div>
-					<div class="table-cell"><strong>Compressed size:</strong> ${formatBytes(segment.compressedSize)}</div>
-					<div class="table-cell"><strong>Logs count:</strong> ${formatNumber(segment.logsCount)}</div>
-					<div class="table-cell"><strong>Compression ratio:</strong> ${(segment.compressedSize / segment.originalSize * 100).toFixed(2)}%</div>
-				</div>
-			`).join("")}
-		</div>
-	`;
+  const segementsMetadata = await fetch("/api/segment/metadata").then((res) => res.json());
+  const compressionRatio = segementsMetadata.compressedSize / segementsMetadata.originalSize * 100;
+  const averageCompressedLogSize = segementsMetadata.compressedSize / segementsMetadata.logsCount;
+  const averageOriginalLogSize = segementsMetadata.originalSize / segementsMetadata.logsCount;
+  const metadata = new KeyValueTable([
+    { key: "Total segments", value: formatNumber(segementsMetadata.segmentCount) },
+    { key: "Total original size", value: formatBytes(segementsMetadata.originalSize) },
+    { key: "Total compressed size", value: formatBytes(segementsMetadata.compressedSize) },
+    { key: "Total logs count", value: formatNumber(segementsMetadata.logsCount) },
+    { key: "Compression ratio", value: compressionRatio.toFixed(2) + "%" },
+    { key: "Average compressed log size", value: formatBytes(averageCompressedLogSize) },
+    { key: "Average original log size", value: formatBytes(averageOriginalLogSize) }
+  ]);
+  metadata.root.style.whiteSpace = "nowrap";
+  const metadataCollapsible = new Collapsible({ buttonText: "Metadata", content: metadata });
+  const header = new Header({ title: "Segments", rightSide: metadataCollapsible });
+  root.add(header);
+  const segmentList = new WrapList;
+  const infiniteScroll = new InfiniteScroll({
+    container: segmentList
+  });
+  root.add(infiniteScroll);
+  let endDate = new Date;
+  infiniteScroll.onLoadMore = async () => {
+    console.log("loadMore");
+    const segments = await fetchSegments(endDate);
+    endDate = new Date(segments[segments.length - 1].lastTimestamp);
+    for (const segment of segments) {
+      const table = new KeyValueTable([
+        { key: "Segment ID", value: segment.id.toString(), href: `/segment/${segment.id}` },
+        { key: "First timestamp", value: formatTimestamp(segment.firstTimestamp) },
+        { key: "Last timestamp", value: formatTimestamp(segment.lastTimestamp) },
+        { key: "Original size", value: formatBytes(segment.originalSize) },
+        { key: "Compressed size", value: formatBytes(segment.compressedSize) },
+        { key: "Logs count", value: formatNumber(segment.logsCount) },
+        { key: "Compression ratio", value: (segment.compressedSize / segment.originalSize * 100).toFixed(2) + "%" }
+      ]);
+      segmentList.add(table);
+    }
+  };
 };
 var segmentPage = async (root, segmentId) => {
   const segment = await fetch(`/api/v1/segment/${segmentId}`).then((res) => res.json());
@@ -1413,11 +1564,12 @@ window.onload = () => {
   if (!body) {
     throw new Error("No body element found");
   }
+  const container = new Container(body);
   routes({
     "/tests/logs": () => logtableTest(body),
-    "/settings": () => settingsPage(new Container(body)),
+    "/settings": () => settingsPage(container),
     "/devices": () => devicesPage(body),
-    "/segments": () => segmentsPage(body),
+    "/segments": () => segmentsPage(container),
     "/segment/:segmentId": (params) => segmentPage(body, params.segmentId),
     "/pivot": () => PivotPage(body),
     "/*": () => mainPage(body)

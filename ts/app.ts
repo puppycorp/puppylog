@@ -12,11 +12,12 @@ window.onload = () => {
 	if (!body) {
 		throw new Error("No body element found")
 	}
+	const container = new Container(body);
 	routes({
 		"/tests/logs": () => logtableTest(body),
-		"/settings": () => settingsPage(new Container(body)),
+		"/settings": () => settingsPage(container),
 		"/devices": () => devicesPage(body),
-		"/segments": () => segmentsPage(body),
+		"/segments": () => segmentsPage(container),
 		"/segment/:segmentId": (params: any) => segmentPage(body, params.segmentId),
 		"/pivot": () => PivotPage(body),
 		"/*": () => mainPage(body)

@@ -32,14 +32,6 @@ export class VList extends UiComponent<HTMLDivElement> {
 	}
 }
 
-// export const vlist = (...components: (UiComponent<HTMLElement> | HTMLElement)[]) => {
-// 	const root = document.createElement("div")
-// 	root.style.display = "flex"
-// 	root.style.flexDirection = "column"
-// 	root.append(...components.map(c => c instanceof HTMLElement ? c : c.root))
-// 	return root
-// }
-
 export class HList extends UiComponent<HTMLDivElement> {
 	constructor() {
 		super(document.createElement("div"))
@@ -239,4 +231,205 @@ export class MultiCheckboxSelect extends UiComponent<HTMLDivElement> {
 			checkbox.onchange = callback
 		})
 	}
+}
+
+export class InfiniteScroll extends UiComponent<HTMLElement> {
+    private isLoading: boolean
+    private onLoadMoreCallback: (() => Promise<void>) | null
+    private sentinel: HTMLElement
+    private observer: IntersectionObserver
+
+    constructor(args: { container: UiComponent<HTMLElement> }) {
+        super(document.createElement("div"))
+		this.root.style.minHeight = "100px"
+
+        // Append the custom container to our own root
+        this.root.appendChild(args.container.root)
+        this.isLoading = false
+        this.onLoadMoreCallback = null
+
+        // Create the sentinel element at the bottom
+        this.sentinel = document.createElement("div")
+        this.sentinel.style.height = "1px"
+        this.sentinel.style.marginTop = "1px"
+        this.root.appendChild(this.sentinel)
+
+        // Use the custom container’s root as the observer's root
+        const observerRoot = args.container.root
+        const options: IntersectionObserverInit = {
+            threshold: 0.1
+        }
+        this.observer = new IntersectionObserver((entries: IntersectionObserverEntry[]) => {
+            entries.forEach((entry: IntersectionObserverEntry) => {
+                if (!this.isLoading && entry.isIntersecting) {
+                    this.loadMore()
+                }
+            })
+        }, options)
+        this.observer.observe(this.sentinel)
+    }
+
+    private async loadMore(): Promise<void> {
+        this.isLoading = true
+        if (this.onLoadMoreCallback) {
+            await this.onLoadMoreCallback()
+        }
+        this.isLoading = false
+    }
+
+    public set onLoadMore(callback: () => Promise<void>) {
+        this.onLoadMoreCallback = callback
+    }
+}
+
+export class Header extends UiComponent<HTMLDivElement> {
+	constructor(args: {
+		title: string
+		rightSide?: UiComponent<HTMLElement>
+	}) {
+		super(document.createElement("div"))
+		this.root.className = "page-header"
+		const title = document.createElement("h1")
+		title.textContent = args.title
+		title.style.flexGrow = "1"
+		this.root.appendChild(title)
+		if (args.rightSide) {
+			this.root.append(args.rightSide.root)
+		}
+	}
+}
+
+export class WrapList implements UiComponent<HTMLDivElement> {
+	public readonly root: HTMLDivElement
+
+	constructor() {
+		this.root = document.createElement("div")
+		this.root.style.display = "flex"
+		this.root.style.flexDirection = "row"
+		this.root.style.flexWrap = "wrap"
+		this.root.style.gap = "5px"
+		this.root.style.overflowX = "auto"
+		this.root.style.padding = "16px"
+	}
+
+	public add(device: UiComponent<HTMLElement>) {
+		this.root.appendChild(device.root)
+	}
+
+	public set status(message: string) {
+		this.root.innerHTML = `<p>${message}</p>`
+	}
+
+	public clear() {
+		this.root.innerHTML = ""
+	}
+}
+
+type KeyValue = {
+	key: string
+	value: string
+	href?: string
+}
+
+export class KeyValueTable extends VList {
+	constructor(items: KeyValue[]) {
+		super()
+		this.root.className = "list-row"
+		for (const item of items) {
+			const container = document.createElement("div")
+			container.className = "table-cell"
+			container.style.fontWeight = "bold"
+			this.root.appendChild(container)
+			const key = document.createElement("strong")
+			key.textContent = item.key
+			container.appendChild(key)
+			container.appendChild(document.createTextNode(`: ${item.value}`))
+		}
+	}
+}
+
+export class Collapsible extends UiComponent<HTMLDivElement> {
+    private expandButton: HTMLButtonElement
+    private content: UiComponent<HTMLElement>
+    private contentContainer: HTMLDivElement
+    private isOpen: boolean
+
+    constructor(args: { 
+        buttonText: string
+        content: UiComponent<HTMLElement>
+    }) {
+        super(document.createElement("div"))
+        // Position the root relative, so we can absolutely position the content
+        this.root.style.position = "relative"
+
+        // Create the expand button
+        this.expandButton = document.createElement("button")
+        this.expandButton.textContent = args.buttonText
+        this.expandButton.style.cursor = "pointer"
+        this.root.appendChild(this.expandButton)
+
+        // Store the user-defined content
+        this.content = args.content
+
+        // Create a container for the content with absolute positioning
+        this.contentContainer = document.createElement("div")
+        this.contentContainer.style.position = "absolute"
+        // Default to the right side
+        this.contentContainer.style.top = "0"
+        this.contentContainer.style.left = "100%"
+        this.contentContainer.style.zIndex = "1000"
+        // Hide by default
+        this.contentContainer.style.display = "none"
+
+        // Add the content's root into the container
+        this.contentContainer.appendChild(this.content.root)
+        this.root.appendChild(this.contentContainer)
+
+        this.isOpen = false
+
+        // Toggle the content on button click
+        this.expandButton.addEventListener("click", (e: MouseEvent) => {
+            e.stopPropagation()
+            this.toggle()
+        })
+
+        // Hide the content if clicked outside
+        document.addEventListener("click", this.handleDocumentClick.bind(this))
+    }
+
+    private toggle(): void {
+        if (this.isOpen) {
+            this.hide()
+        } else {
+            this.show()
+        }
+    }
+
+    private show(): void {
+        this.isOpen = true
+        this.contentContainer.style.display = "block"
+
+        // Reset to default (open on right)
+        this.contentContainer.style.left = "100%"
+        this.contentContainer.style.right = "auto"
+
+        // Measure if it goes offscreen
+        const rect = this.contentContainer.getBoundingClientRect()
+        if (rect.right > window.innerWidth) {
+            // Flip to open on the left
+            this.contentContainer.style.left = "auto"
+            this.contentContainer.style.right = "100%"
+        }
+    }
+
+    private hide(): void {
+        this.isOpen = false
+        this.contentContainer.style.display = "none"
+    }
+
+    private handleDocumentClick(e: MouseEvent): void {
+        if (!this.root.contains(e.target as Node)) {
+            this.hide()
+        }
+    }
 }

@@ -107,6 +107,8 @@ async fn main() {
 		.route("/api/settings/query", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/settings/query", get(get_settings_query)).with_state(ctx.clone())
 		.route("/api/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
+		.route("/api/segments", get(get_segments)).with_state(ctx.clone())	
+		.route("/api/segment/metadata", get(get_segment_metadata)).with_state(ctx.clone())
 		.route("/api/v1/validate_query", get(validate_query))
 		.route("/api/v1/logs", get(get_logs)).layer(cors.clone())
 		.route("/api/v1/logs/stream", get(stream_logs)).layer(cors.clone())
@@ -124,7 +126,6 @@ async fn main() {
 		.route("/api/v1/settings", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/settings", get(get_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/devices", get(get_devices)).with_state(ctx.clone())
-		.route("/api/v1/segments", get(get_segments)).with_state(ctx.clone())
 		.route("/api/v1/segment/{segmentId}", get(get_segment)).with_state(ctx.clone())
 		.route("/api/v1/segment/{segmentId}/props", get(get_segment_props)).with_state(ctx.clone())
 		.fallback(get(root));
@@ -135,6 +136,13 @@ async fn main() {
 		listener,
 		app,
 	).await.unwrap();
+}
+
+async fn get_segment_metadata(
+	State(ctx): State<Arc<Context>>
+) -> Json<Value> {
+	let segments = ctx.db.fetch_segments_metadata().await.unwrap();
+	Json(serde_json::to_value(&segments).unwrap())
 }
 
 async fn get_segment(
@@ -217,8 +225,18 @@ async fn get_devices(State(ctx): State<Arc<Context>>) -> Json<Value> {
 	Json(serde_json::to_value(&devices).unwrap())
 }
 
-async fn get_segments(State(ctx): State<Arc<Context>>) -> Json<Value> {
-	let segments = ctx.db.find_segments(Utc::now()).await.unwrap();
+#[derive(Deserialize, Debug)]
+struct GetSegmentsQuery {
+	pub end: DateTime<Utc>,
+	pub count: Option<usize>,
+}
+
+async fn get_segments(
+	State(ctx): State<Arc<Context>>,
+	Query(params): Query<GetSegmentsQuery>
+) -> Json<Value> {
+	let count = params.count.unwrap_or(100);
+	let segments = ctx.db.find_segments(params.end, count).await.unwrap();
 	Json(serde_json::to_value(&segments).unwrap())
 }
 

@@ -1,5 +1,5 @@
 import { showModal } from "./common"
-import { Button, Container, HList, Label, MultiCheckboxSelect, Select, SelectGroup, TextInput, UiComponent, vlist, VList } from "./ui"
+import { Button, Container, Header, HList, Label, MultiCheckboxSelect, Select, SelectGroup, TextInput, UiComponent, vlist, VList } from "./ui"
 import { formatBytes, formatNumber } from "./utility"
 
 const saveDeviceSettings = async (device: DeviceSetting) => {
@@ -218,23 +218,6 @@ class Summary extends UiComponent<HTMLDivElement> {
 			<div><strong>Average Log Size:</strong> ${formatBytes(args.averageLogSize)}</div>
 			<div><strong>Logs per Second:</strong> ${args.totalLogsPerSecond.toFixed(2)}</div>
 		`
-	}
-}
-
-class Header extends UiComponent<HTMLDivElement> {
-	constructor(args: {
-		title: string
-		rightSide?: UiComponent<HTMLElement>
-	}) {
-		super(document.createElement("div"))
-		this.root.className = "page-header"
-		const title = document.createElement("h1")
-		title.textContent = args.title
-		title.style.flexGrow = "1"
-		this.root.appendChild(title)
-		if (args.rightSide) {
-			this.root.append(args.rightSide.root)
-		}
 	}
 }
 
