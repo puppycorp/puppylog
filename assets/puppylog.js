@@ -1379,64 +1379,32 @@ var segmentPage = async (root, segmentId) => {
 };
 
 // ts/settings.ts
-var settingsPage = (root) => {
-  const infoText = document.createElement("div");
-  infoText.style.color = "red";
-  let originalQuery = "";
-  const updateQuery = (query) => {
-    fetch("/api/settings/query", {
-      method: "POST",
-      body: query
-    }).then((res) => {
-      if (!res.ok) {
-        console.error("Failed to fetch query", res);
-        return;
-      }
-      originalQuery = query;
-      infoText.innerHTML = "";
-    }).catch((err) => {
-      console.error("Failed to update query", err);
-    });
-  };
-  root.innerHTML = "";
-  const header = document.createElement("h1");
-  header.innerHTML = "Settings";
-  root.appendChild(header);
-  const collectionQuery = document.createElement("h2");
-  collectionQuery.innerHTML = "Collection query";
-  root.appendChild(collectionQuery);
-  const textarea = document.createElement("textarea");
-  textarea.style.width = "100%";
-  textarea.style.height = "100px";
-  textarea.style.resize = "none";
-  root.appendChild(textarea);
-  textarea.oninput = (e) => {
-    console.log("onchange", textarea.value);
-    if (originalQuery === textarea.value)
-      infoText.innerHTML = "";
-    else
-      infoText.innerHTML = "Unsaved changes";
-  };
-  fetch("/api/settings/query").then((res) => {
-    if (!res.ok) {
-      console.error("Failed to fetch query", res);
+class LinkList extends UiComponent {
+  constructor(links) {
+    super(document.createElement("div"));
+    this.root.style.display = "flex";
+    this.root.style.flexWrap = "wrap";
+    this.root.style.gap = "10px";
+    for (const link of links) {
+      const item = document.createElement("div");
+      item.className = "list-row";
+      item.style.padding = "30px";
+      this.root.appendChild(item);
+      const linkElement = document.createElement("a");
+      linkElement.href = link.href;
+      linkElement.innerText = link.text;
+      item.appendChild(linkElement);
     }
-    return res.text();
-  }).then((query) => {
-    console.log("query", query);
-    originalQuery = query;
-    textarea.value = query;
-  }).catch((err) => {
-    console.error("Failed to fetch query", err);
-  });
-  const saveButton = document.createElement("button");
-  saveButton.innerHTML = "Save";
-  saveButton.onclick = () => {
-    updateQuery(textarea.value);
-  };
-  root.appendChild(infoText);
-  root.appendChild(saveButton);
-  return root;
+  }
+}
+var settingsPage = (root) => {
+  root.root.innerHTML = "";
+  const linkList = new LinkList([
+    { href: "/logs", text: "Logs" },
+    { href: "/devices", text: "Devices" },
+    { href: "/segments", text: "Segments" }
+  ]);
+  root.add(linkList);
 };
 
 // ts/app.ts
@@ -1447,7 +1415,7 @@ window.onload = () => {
   }
   routes({
     "/tests/logs": () => logtableTest(body),
-    "/settings": () => settingsPage(body),
+    "/settings": () => settingsPage(new Container(body)),
     "/devices": () => devicesPage(body),
     "/segments": () => segmentsPage(body),
     "/segment/:segmentId": (params) => segmentPage(body, params.segmentId),
