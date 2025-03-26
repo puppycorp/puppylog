@@ -271,7 +271,14 @@ class KeyValueTable extends VList {
       const key = document.createElement("strong");
       key.textContent = item.key;
       container.appendChild(key);
-      container.appendChild(document.createTextNode(`: ${item.value}`));
+      if (item.href) {
+        const link = document.createElement("a");
+        link.href = item.href;
+        link.textContent = item.value;
+        container.appendChild(link);
+      } else {
+        container.appendChild(document.createTextNode(`: ${item.value}`));
+      }
     }
   }
 }
