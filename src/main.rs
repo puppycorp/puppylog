@@ -328,9 +328,6 @@ async fn get_device_status(
 		resp.next_poll = Some(rand::rng().random_range(10..=120));
 	}
 
-	let next_poll_interval = allowed_to_send.then(|| 30);
-	resp.next_poll = next_poll_interval;
-
 	Json(serde_json::to_value(resp).unwrap())
 }
 
