@@ -464,7 +464,7 @@ impl DB {
 		let conn = self.conn.lock().await;
 		let mut stmt = conn.prepare("SELECT id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE first_timestamp <= ? ORDER BY last_timestamp DESC LIMIT ?")?;
 		let mut get_props_query = conn.prepare("SELECT key, value FROM segment_props WHERE segment_id = ?1")?;
-		let mut rows = stmt.query(rusqlite::params![query.end_date, query.limit])?;
+		let mut rows = stmt.query(rusqlite::params![query.end_date, 10_000])?;
 		let mut metas = Vec::new();
 		while let Some(row) = rows.next()? {
 			let meta = SegmentMeta {

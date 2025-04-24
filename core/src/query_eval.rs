@@ -154,6 +154,7 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 		fn compare(left: &String, right: &Value, op: &Operator) -> Result<bool, String> {
 			match (right, left, op) {
 				(Value::String(left), right, op) => Ok(magic_cmp(left, right, op)),
+				(Value::Number(left), right, op) => Ok(magic_cmp(&left.to_string(), right, op)),
 				(Value::List(list), right, Operator::In) => any(list, right, &Operator::Equal),
 				(_, _, _) => Ok(false)
 			}
@@ -241,6 +242,21 @@ mod tests {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::String("auth2".to_string())))
+		});
+		assert!(check_props(&expr, &props).unwrap());
+	}
+
+	#[test]
+	fn matches_number_props() {
+		let props = vec![
+			Prop { key: "service".to_string(), value: "auth".to_string() },
+			Prop { key: "user_id".to_string(), value: "123".to_string() },
+			Prop { key: "duration_ms".to_string(), value: "150".to_string() },
+		];
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("duration_ms".to_string()))),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::Number(150)))
 		});
 		assert!(check_props(&expr, &props).unwrap());
 	}
