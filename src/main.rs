@@ -156,7 +156,7 @@ async fn get_segment_props(
 	State(ctx): State<Arc<Context>>,
 	Path(segment_id): Path<u32>
 ) -> Json<Value> {
-	let props = ctx.db.fetch_segments_props(&[segment_id]).await.unwrap();
+	let props = ctx.db.fetch_segment_props(segment_id).await.unwrap();
 	Json(serde_json::to_value(&props).unwrap())
 }
 
