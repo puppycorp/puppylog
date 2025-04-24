@@ -107,7 +107,7 @@ impl Context {
 			let iter = current.iter();
 			for entry in iter {
 				if entry.timestamp > end {
-					break;
+					continue;
 				}
 				end = entry.timestamp;
 				if !cb(entry) {
@@ -126,7 +126,7 @@ impl Context {
 			let iter = segment.iter();
 			for entry in iter {
 				if entry.timestamp > end {
-					break;
+					continue;
 				}
 				end = entry.timestamp;
 				if !cb(entry) {

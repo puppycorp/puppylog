@@ -379,7 +379,7 @@ impl DB {
 		let mut stmt = conn.prepare(r#"
 			SELECT id, first_timestamp, last_timestamp, 
 				original_size, compressed_size, logs_count, created_at
-				FROM log_segments where last_timestamp < ? order by last_timestamp desc LIMIT ?
+				FROM log_segments WHERE first_timestamp <= ? ORDER BY last_timestamp DESC LIMIT ?
 		"#)?;
 		let mut rows = stmt.query(rusqlite::params![date, count])?;
 		let mut metas = Vec::new();
