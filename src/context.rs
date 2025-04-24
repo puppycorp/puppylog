@@ -125,9 +125,11 @@ impl Context {
 				log::info!("no more segments to load");
 				break;
 			}
+			let segment_ids = segments.iter().map(|s| s.id).collect::<Vec<_>>();
+			let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
 			for segment in &segments {
 				let timer = Instant::now();
-				let props = self.db.fetch_segment_props(segment.id).await.unwrap();
+				let props = segment_props.get(&segment.id).unwrap();
 				let check = check_props(&query.root, &props).unwrap_or_default();
 				log::info!("segment {} check took {:?}", segment.id, timer.elapsed());
 				if !check {
