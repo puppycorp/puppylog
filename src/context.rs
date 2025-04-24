@@ -133,7 +133,6 @@ impl Context {
 				let timer = Instant::now();
 				let props = segment_props.get(&segment.id).unwrap();
 				let check = check_props(&query.root, &props).unwrap_or_default();
-				log::info!("checking {} props took {:?}", props.len(), timer.elapsed());
 				if !check {
 					end = segment.first_timestamp;
 					continue;
