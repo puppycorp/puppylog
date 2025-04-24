@@ -110,7 +110,6 @@ async fn main() {
 		.route("/api/segments", get(get_segments)).with_state(ctx.clone())	
 		.route("/api/segment/metadata", get(get_segment_metadata)).with_state(ctx.clone())
 		.route("/api/v1/validate_query", get(validate_query))
-		.route("/api/v1/logs", get(get_logs)).layer(cors.clone())
 		.route("/api/v1/logs/stream", get(stream_logs)).layer(cors.clone())
 		.route("/api/v1/device/settings", post(update_devices_settings)).with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
