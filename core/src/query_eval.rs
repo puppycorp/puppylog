@@ -170,7 +170,6 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 				}
 
 				if compare(&prop.value, val, op)? {
-					log::info!("match_field: {} {} {:?} {:?}", field, prop.value, op, val);
 					return Ok(true)
 				}
 			}
