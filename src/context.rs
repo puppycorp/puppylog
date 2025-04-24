@@ -8,6 +8,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use puppylog::LogEntry;
 use puppylog::PuppylogEvent;
+use puppylog::QueryAst;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
@@ -101,7 +102,8 @@ impl Context {
 		}
 	}
 
-	pub async fn find_logs(&self, mut end: DateTime<Utc>, mut cb: impl FnMut(&LogEntry) -> bool) {
+	pub async fn find_logs(&self, query: QueryAst, mut cb: impl FnMut(&LogEntry) -> bool) {
+		let mut end = query.end_date.unwrap_or(Utc::now());
 		{
 			let current = self.current.lock().await;
 			let iter = current.iter();
@@ -116,7 +118,7 @@ impl Context {
 			}
 		}
 		log::info!("looking from archive");
-		let segments = self.db.find_segments(end, 10_000).await.unwrap();
+		let segments = self.db.find_segments_with_query(&query).await.unwrap();
 		for segment in segments {
 			let path = log_path().join(format!("{}.log", segment.id));
 			log::info!("loading segment from disk: {}", path.display());

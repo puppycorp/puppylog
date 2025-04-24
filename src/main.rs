@@ -549,7 +549,10 @@ async fn get_logs(
 		None => QueryAst::default(),
 	};
 	query.limit = params.count;
-	query.end_date = params.end_date;
+	query.end_date = match params.end_date {
+		Some(end_date) => Some(end_date),
+		None => Some(Utc::now() + chrono::Duration::days(200)),
+	};
 
 	let (tx, rx) = mpsc::channel(100);
 	let producer_query = query.clone();
@@ -558,7 +561,7 @@ async fn get_logs(
 		let end = producer_query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
 		let count = producer_query.limit.unwrap_or(200);
 		let mut sent = 0;
-		block_on(ctx_clone.find_logs(end, |entry| {
+		block_on(ctx_clone.find_logs(query, |entry| {
 			if tx.is_closed() {
 				return false;
 			}

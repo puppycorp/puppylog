@@ -8,6 +8,7 @@ use crate::query_parsing::Condition;
 use crate::query_parsing::Expr;
 use crate::query_parsing::Operator;
 use crate::query_parsing::Value;
+use crate::Prop;
 
 #[derive(Debug)]
 enum FieldType {
@@ -126,32 +127,6 @@ fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String>
         (Expr::Value(val), Expr::Value(Value::String(right)), op) => match_field(right, val, op, logline),
         (Expr::Value(Value::String(left)), Expr::Empty, Operator::Exists) => Ok(find_field(left, logline).is_some()),
         (Expr::Value(Value::String(left)), Expr::Empty, Operator::NotExists) => Ok(find_field(left, logline).is_none()), 
-		// (Expr::FieldAccess(FieldAccess { expr, field }), right, op) => {
-		// 	match expr.as_ref() {
-		// 		Expr::Value(Value::String(obj)) => {
-		// 			match obj.as_str() {
-		// 				"timestamp" => {
-		// 					let num = match right {
-		// 						Expr::Value(Value::Number(num)) => *num as i32,
-		// 						_ => return Err("Invalid value for timestamp field".to_string())
-		// 					};
-
-		// 					match field.as_str() {
-		// 						"year" => Ok(magic_cmp(logline.timestamp.year(), num, op)),
-		// 						"month" => Ok(magic_cmp(logline.timestamp.month(), num as u32, op)),
-		// 						"day" => Ok(magic_cmp(logline.timestamp.day(), num as u32, op)),
-		// 						"hour" => Ok(magic_cmp(logline.timestamp.hour(), num as u32, op)),
-		// 						"minute" => Ok(magic_cmp(logline.timestamp.minute(), num as u32, op)),
-		// 						"second" => Ok(magic_cmp(logline.timestamp.second(), num as u32, op)),
-		// 						_ => Err(format!("Field not found: {}", field))
-		// 					}
-		// 				},
-		// 				_ => Err(format!("does not have fields: {}", obj))
-		// 			}
-		// 		},
-		// 		_ => Err(format!("Field not found: {}", field))
-		// 	}
-		// },
 		(Expr::FieldAccess(field), right, op) => check_field_access(field, right, op, logline),
         (left, Expr::FieldAccess(field), op) => check_field_access(field, left, op, logline),
         _ => panic!("Nothing makes sense anymore {:?} logline: {:?}", cond, logline)
@@ -174,13 +149,116 @@ pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 	}
 }
 
+pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
+	fn check_condition(cond: &Condition, props: &[Prop]) -> Result<bool, String> {
+		fn compare(left: &String, right: &Value, op: &Operator) -> Result<bool, String> {
+			match (right, left, op) {
+				(Value::String(left), right, op) => Ok(magic_cmp(left, right, op)),
+				(Value::List(list), right, Operator::In) => any(list, right, &Operator::Equal),
+				(_, _, _) => Ok(false)
+			}
+		}
+	
+		fn match_field(field: &String, val: &Value, op: &Operator, props: &[Prop]) -> Result<bool, String> {
+			if field == "msg" || field == "timestamp" {
+				return Ok(true)
+			}
+			for prop in props {
+				if prop.key != *field {
+					continue
+				}
+
+				log::info!("PROP FOUND ! {} {} {:?}", prop.key, prop.value, val);
+				if compare(&prop.value, val, op)? {
+					return Ok(true)
+				}
+			}
+			return Ok(false)
+		}
+	
+		fn any(list: &[Value], left: &String, op: &Operator) -> Result<bool, String> {
+			for value in list {
+				if compare(left, value, op)? {
+					return Ok(true)
+				}
+			}
+			return Ok(false)
+		}
+	
+		match (cond.left.as_ref(), cond.right.as_ref(), &cond.operator) {
+			(Expr::Value(Value::String(left)), Expr::Value(val), op) => match_field(left, val, op, props),
+			_ => Ok(false)
+		}
+	}
+
+	match expr {
+		Expr::Condition(cond) => check_condition(cond, props),
+		Expr::And(expr, expr1) => Ok(check_props(expr, props)? && check_props(expr1, props)?),
+		Expr::Or(expr, expr1) => Ok(check_props(expr, props)? || check_props(expr1, props)?),
+		Expr::Value(value) => match value {
+			Value::String(value) => Ok(value != ""),
+			Value::Number(value) => Ok(*value > 0),
+			Value::Date(value) => Ok(true),
+            Value::List(_) => Err("This is not javascript".to_string())
+		},
+		Expr::Empty => Ok(true),
+        _ => todo!("expr {:?} not supported yet", expr),
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use chrono::DateTime;
-use chrono::Utc;
+	use chrono::Utc;
 	use crate::FieldAccess;
-use crate::Prop;
+	use crate::Prop;
 	use super::*;
+
+	#[test]
+	fn matches_props() {
+		let props = vec![
+			Prop { key: "service".to_string(), value: "auth".to_string() },
+			Prop { key: "user_id".to_string(), value: "123".to_string() },
+			Prop { key: "duration_ms".to_string(), value: "150".to_string() },
+		];
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("service".to_string()))),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::String("auth".to_string())))
+		});
+		assert!(check_props(&expr, &props).unwrap());
+	}
+
+	#[test]
+	fn matches_props_with_many_same_kesy() {
+		let props = vec![
+			Prop { key: "service".to_string(), value: "auth".to_string() },
+			Prop { key: "user_id".to_string(), value: "123".to_string() },
+			Prop { key: "duration_ms".to_string(), value: "150".to_string() },
+			Prop { key: "service".to_string(), value: "auth2".to_string() },
+		];
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("service".to_string()))),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::String("auth2".to_string())))
+		});
+		assert!(check_props(&expr, &props).unwrap());
+	}
+
+	#[test]
+	fn does_not_match_props() {
+		let props = vec![
+			Prop { key: "service".to_string(), value: "auth".to_string() },
+			Prop { key: "user_id".to_string(), value: "123".to_string() },
+			Prop { key: "duration_ms".to_string(), value: "150".to_string() },
+		];
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("service".to_string()))),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::String("wrong_service".to_string())))
+		});
+		assert!(!check_props(&expr, &props).unwrap());
+	}
 
 	#[test]
 	fn msg_does_not_match() {

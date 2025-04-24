@@ -12,6 +12,7 @@ pub use logger::PuppylogBuilder;
 pub use logentry::*;
 pub use query_parsing::*;
 pub use query_eval::check_expr;
+pub use query_eval::check_props;
 use serde::Deserialize;
 use serde::Serialize;
 

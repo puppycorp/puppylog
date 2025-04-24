@@ -1,9 +1,11 @@
 use std::fs::create_dir_all;
 use chrono::DateTime;
 use chrono::Utc;
+use puppylog::check_props;
 use puppylog::LogEntry;
 use puppylog::LogLevel;
 use puppylog::Prop;
+use puppylog::QueryAst;
 use rusqlite::Connection;
 use rusqlite::ToSql;
 use serde::Deserialize;
@@ -457,6 +459,47 @@ impl DB {
 			});
 		}
 		Ok(props)
+	}
+
+	pub async fn find_segments_with_query(&self, query: &QueryAst) -> anyhow::Result<Vec<SegmentMeta>> {
+		let conn = self.conn.lock().await;
+		let mut stmt = conn.prepare("SELECT id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE first_timestamp <= ? ORDER BY last_timestamp DESC LIMIT ?")?;
+		let mut get_props_query = conn.prepare("SELECT key, value FROM segment_props WHERE segment_id = ?1")?;
+		let mut rows = stmt.query(rusqlite::params![query.end_date, query.limit])?;
+		let mut metas = Vec::new();
+		while let Some(row) = rows.next()? {
+			let meta = SegmentMeta {
+				id: row.get(0)?,
+				first_timestamp: row.get(1)?,
+				last_timestamp: row.get(2)?,
+				original_size: row.get(3)?,
+				compressed_size: row.get(4)?,
+				logs_count: row.get(5)?,
+				created_at: row.get(6)?,
+			};
+			let mut prop_rows = get_props_query.query(rusqlite::params![meta.id])?;
+			let mut props = Vec::new();
+			while let Some(p_row) = prop_rows.next()? {
+				let prop = Prop {
+					key: p_row.get(0)?,
+					value: p_row.get(1)?,
+				};
+				props.push(prop);
+			}
+			if !check_props(&query.root, &props).unwrap_or_default() {
+				continue;
+			}
+			metas.push(SegmentMeta {
+				id:               meta.id,
+				first_timestamp:  meta.first_timestamp,
+				last_timestamp:   meta.last_timestamp,
+				original_size:    meta.original_size,
+				compressed_size:  meta.compressed_size,
+				logs_count:       meta.logs_count,
+				created_at:       meta.created_at,
+			});
+		}
+		Ok(metas)
 	}
 }
 
