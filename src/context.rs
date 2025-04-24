@@ -118,21 +118,27 @@ impl Context {
 			}
 		}
 		log::info!("looking from archive");
-		let segments = self.db.find_segments_with_query(&query).await.unwrap();
-		for segment in segments {
-			let path = log_path().join(format!("{}.log", segment.id));
-			log::info!("loading segment from disk: {}", path.display());
-			let file: File = File::open(path).unwrap();
-			let mut decoder = zstd::Decoder::new(file).unwrap();
-			let segment = LogSegment::parse(&mut decoder);
-			let iter = segment.iter();
-			for entry in iter {
-				if entry.timestamp > end {
-					continue;
-				}
-				end = entry.timestamp;
-				if !cb(entry) {
-					return;
+		loop {
+			let segments = self.db.find_segments_with_query(&query).await.unwrap();
+			if segments.is_empty() {
+				break;
+			}
+			log::info!("found {} segments", segments.len());
+			for segment in segments {
+				let path = log_path().join(format!("{}.log", segment.id));
+				log::info!("loading segment from disk: {}", path.display());
+				let file: File = File::open(path).unwrap();
+				let mut decoder = zstd::Decoder::new(file).unwrap();
+				let segment = LogSegment::parse(&mut decoder);
+				let iter = segment.iter();
+				for entry in iter {
+					if entry.timestamp > end {
+						continue;
+					}
+					end = entry.timestamp;
+					if !cb(entry) {
+						return;
+					}
 				}
 			}
 		}
