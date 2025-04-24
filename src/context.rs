@@ -6,6 +6,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use chrono::DateTime;
 use chrono::Utc;
+use puppylog::check_props;
 use puppylog::LogEntry;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
@@ -119,12 +120,16 @@ impl Context {
 		}
 		log::info!("looking from archive");
 		loop {
-			let segments = self.db.find_segments_with_query(&query).await.unwrap();
+			let segments = self.db.find_segments(end, 100).await.unwrap();
 			if segments.is_empty() {
+				log::info!("no more segments to load");
 				break;
 			}
-			log::info!("found {} segments", segments.len());
-			for segment in segments {
+			for segment in &segments {
+				let props = self.db.fetch_segment_props(segment.id).await.unwrap();
+				if !check_props(&query.root, &props).unwrap_or_default() {
+					continue;
+				}
 				let path = log_path().join(format!("{}.log", segment.id));
 				log::info!("loading segment from disk: {}", path.display());
 				let file: File = File::open(path).unwrap();
