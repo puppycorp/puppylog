@@ -131,7 +131,10 @@ impl Context {
 			log::info!("fetching segment props took {:?}", timer.elapsed());
 			for segment in &segments {
 				let timer = Instant::now();
-				let props = segment_props.get(&segment.id).unwrap();
+				let props = match segment_props.get(&segment.id) {
+					Some(props) => props,
+					None => continue,
+				};
 				let check = check_props(&query.root, &props).unwrap_or_default();
 				if !check {
 					end = segment.first_timestamp;
