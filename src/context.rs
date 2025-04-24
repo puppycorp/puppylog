@@ -4,7 +4,7 @@ use std::io::Cursor;
 use std::io::Write;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use chrono::DateTime;
+use std::time::Instant;
 use chrono::Utc;
 use puppylog::check_props;
 use puppylog::LogEntry;
@@ -126,8 +126,12 @@ impl Context {
 				break;
 			}
 			for segment in &segments {
+				let timer = Instant::now();
 				let props = self.db.fetch_segment_props(segment.id).await.unwrap();
-				if !check_props(&query.root, &props).unwrap_or_default() {
+				let check = check_props(&query.root, &props).unwrap_or_default();
+				log::info!("segment {} check took {:?}", segment.id, timer.elapsed());
+				if !check {
+					end = segment.first_timestamp;
 					continue;
 				}
 				let path = log_path().join(format!("{}.log", segment.id));
@@ -137,9 +141,6 @@ impl Context {
 				let segment = LogSegment::parse(&mut decoder);
 				let iter = segment.iter();
 				for entry in iter {
-					if entry.timestamp > end {
-						continue;
-					}
 					end = entry.timestamp;
 					if !cb(entry) {
 						return;
