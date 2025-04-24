@@ -181,7 +181,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		if (clear) clearLogs()
 		if (currentStream) currentStream()
 		currentStream = args.streamLogs(
-			{ query, count: 1000, endDate },
+			{ query, count: 200, endDate },
 			(log) => {
 				streamRowsCount++
 				addLogs(log)
