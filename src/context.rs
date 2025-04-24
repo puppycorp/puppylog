@@ -7,10 +7,7 @@ use std::sync::atomic::Ordering;
 use chrono::DateTime;
 use chrono::Utc;
 use puppylog::LogEntry;
-use puppylog::LogLevel;
 use puppylog::PuppylogEvent;
-use puppylog::QueryAst;
-use serde::Serialize;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
@@ -109,6 +106,9 @@ impl Context {
 			let current = self.current.lock().await;
 			let iter = current.iter();
 			for entry in iter {
+				if entry.timestamp > end {
+					break;
+				}
 				end = entry.timestamp;
 				if !cb(entry) {
 					return;
@@ -125,6 +125,10 @@ impl Context {
 			let segment = LogSegment::parse(&mut decoder);
 			let iter = segment.iter();
 			for entry in iter {
+				if entry.timestamp > end {
+					break;
+				}
+				end = entry.timestamp;
 				if !cb(entry) {
 					return;
 				}
@@ -139,12 +143,4 @@ impl Context {
 	pub fn upload_guard(&self) -> Result<UploadGuard<'_>, &str> {
 		UploadGuard::new(&self.upload_queue, 10)
 	}
-}
-
-#[derive(Serialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct DeviceStatus {
-	pub query: Option<String>,
-	pub level: Option<LogLevel>,
-	pub send_logs: bool
 }
