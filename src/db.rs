@@ -178,7 +178,6 @@ impl DB {
 			stmt.execute(&[&device_id as &dyn ToSql, &logs_size as &dyn ToSql, &logs_count as &dyn ToSql])?;
 		}
 		tx.commit()?;
-		log::info!("saved device metadata: {} {} {}", device_id, logs_size, logs_count);
 		Ok(())
 	}
 
