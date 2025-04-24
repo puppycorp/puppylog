@@ -126,11 +126,8 @@ impl Context {
 				break;
 			}
 			let segment_ids = segments.iter().map(|s| s.id).collect::<Vec<_>>();
-			let timer = Instant::now();
 			let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
-			log::info!("fetching segment props took {:?}", timer.elapsed());
 			for segment in &segments {
-				let timer = Instant::now();
 				let props = match segment_props.get(&segment.id) {
 					Some(props) => props,
 					None => continue,
