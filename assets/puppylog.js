@@ -1122,7 +1122,7 @@ var logsSearchPage = (args) => {
       clearLogs();
     if (currentStream)
       currentStream();
-    currentStream = args.streamLogs({ query, count: 100, endDate }, (log) => {
+    currentStream = args.streamLogs({ query, count: 1000, endDate }, (log) => {
       streamRowsCount++;
       addLogs(log);
     }, () => {
