@@ -179,6 +179,7 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 		fn any(list: &[Value], left: &String, op: &Operator) -> Result<bool, String> {
 			for value in list {
 				if compare(left, value, op)? {
+					log::info!("found match for any: {:?} {:?} {:?}", left, value, op);
 					return Ok(true)
 				}
 			}
