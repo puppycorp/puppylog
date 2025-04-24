@@ -70,8 +70,8 @@ impl LogSegment {
 			buffer: Vec::new()
 		}
 	}
-	pub fn iter(&self, end: DateTime<Utc>) -> LogIterator {
-		let i = self.date_index(end);
+	pub fn iter(&self) -> LogIterator {
+		let i = self.buffer.len();
 		LogIterator::new(&self.buffer[..i], i)
 	}
 	fn date_index(&self, date: DateTime<Utc>) -> usize {
@@ -161,7 +161,7 @@ mod tests {
 		};
 		segment.add_log_entry(log.clone());
 
-		let mut iter = segment.iter(timestamp + Duration::days(1));
+		let mut iter = segment.iter();
 		let lof1 = iter.next().unwrap();
 		assert_eq!(log, lof1.clone());
 		assert!(iter.next().is_none());

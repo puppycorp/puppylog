@@ -109,7 +109,7 @@ impl Context {
 			let current = self.current.lock().await;
 			if current.contains_date(end) {
 				log::info!("current segment contains date");
-				let iter = current.iter(end);
+				let iter = current.iter();
 				for entry in iter {
 					end = entry.timestamp;
 					if !cb(entry) {
@@ -126,7 +126,7 @@ impl Context {
 			let file: File = File::open(path).unwrap();
 			let mut decoder = zstd::Decoder::new(file).unwrap();
 			let segment = LogSegment::parse(&mut decoder);
-			let iter = segment.iter(end);
+			let iter = segment.iter();
 			for entry in iter {
 				if !cb(entry) {
 					return;
