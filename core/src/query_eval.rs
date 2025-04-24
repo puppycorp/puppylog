@@ -170,7 +170,6 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 				}
 
 				if compare(&prop.value, val, op)? {
-					log::info!("PROP MATCHED ! {} {} {:?}", prop.key, prop.value, val);
 					return Ok(true)
 				}
 			}
