@@ -244,8 +244,6 @@ async fn upload_device_logs(
 	Path(device_id): Path<String>,
 	body: Body
 ) -> impl IntoResponse {
-	log::info!("upload_device_logs device_id: {}", device_id);
-
 	let _guard = match ctx.upload_guard() {
 		Ok(guard) => guard,
 		Err(err) => {
@@ -278,13 +276,11 @@ async fn upload_device_logs(
 			}
 		}
 	}
-	log::info!("uploaded {} logs in {:?}", i, upload_timer.elapsed());
 	let timer = Instant::now();
 	if let Err(err) = ctx.db.update_device_stats(&device_id, total_bytes, chunk_reader.log_entries.len()).await {
 		log::error!("Failed to update device metadata: {}", err);
 	}
 	ctx.save_logs(&chunk_reader.log_entries).await;
-	log::info!("saved {} logs in {:?}", i, timer.elapsed());
 	(StatusCode::OK, "ok").into_response()
 }
 
@@ -311,7 +307,6 @@ async fn get_device_status(
 	State(ctx): State<Arc<Context>>, 
 	Path(device_id): Path<String>
 ) -> Json<Value> {
-	log::info!("get_device_status device_id: {}", device_id);
 	let device = ctx.db.get_or_create_device(&device_id).await.unwrap();
 	
 	let mut resp = DeviceStatus {
