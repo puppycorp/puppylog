@@ -107,14 +107,11 @@ impl Context {
 	pub async fn find_logs(&self, mut end: DateTime<Utc>, mut cb: impl FnMut(&LogEntry) -> bool) {
 		{
 			let current = self.current.lock().await;
-			if current.contains_date(end) {
-				log::info!("current segment contains date");
-				let iter = current.iter();
-				for entry in iter {
-					end = entry.timestamp;
-					if !cb(entry) {
-						return;
-					}
+			let iter = current.iter();
+			for entry in iter {
+				end = entry.timestamp;
+				if !cb(entry) {
+					return;
 				}
 			}
 		}

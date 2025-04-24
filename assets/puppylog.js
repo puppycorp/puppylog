@@ -1281,7 +1281,7 @@ var mainPage = (root) => {
         streamQuery.append("count", args.count.toString());
       if (args.endDate)
         streamQuery.append("endDate", args.endDate);
-      const streamUrl = new URL("/api/v1/logs", window.location.origin);
+      const streamUrl = new URL("/api/logs", window.location.origin);
       streamUrl.search = streamQuery.toString();
       const eventSource = new EventSource(streamUrl);
       eventSource.onmessage = (event) => {
