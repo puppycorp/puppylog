@@ -258,6 +258,7 @@ export const devicesPage = async (root: HTMLElement) => {
 	propsFiltters.root.style.gap = "10px"
 
 	const searchOptions = new HList()
+	searchOptions.root.style.flexWrap = "wrap"
 	searchOptions.root.style.margin = "10px"
 	searchOptions.root.style.gap = "10px"
 	searchOptions.add(sendLogsSearchOption)
