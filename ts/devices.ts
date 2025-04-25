@@ -256,6 +256,7 @@ export const devicesPage = async (root: HTMLElement) => {
 
 	const propsFiltters = new HList()
 	propsFiltters.root.style.gap = "10px"
+	propsFiltters.root.style.flexWrap = "wrap"
 
 	const searchOptions = new HList()
 	searchOptions.root.style.flexWrap = "wrap"
