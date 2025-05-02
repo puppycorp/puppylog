@@ -66,6 +66,7 @@ impl Context {
 	pub async fn save_logs(&self, logs: &[LogEntry]) {
 		let mut current = self.current.lock().await;
 		for entry in logs {
+			self.wal.write(entry.clone());
 			current.add_log_entry(entry.clone());
 			if let Err(e) = self.publisher.send(entry.clone()).await {
 				log::error!("Failed to publish log entry: {}", e);
