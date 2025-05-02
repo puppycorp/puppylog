@@ -247,7 +247,7 @@ async fn upload_device_logs(
 	let _guard = match ctx.upload_guard() {
 		Ok(guard) => guard,
 		Err(err) => {
-			let retry_after = rand::rng().random_range(10..=120);
+			let retry_after = rand::rng().random_range(10..=1000);
 			log::error!("Failed to acquire upload guard: {}", err);
 			let mut response = (StatusCode::SERVICE_UNAVAILABLE, "Upload limit reached").into_response();
 			response.headers_mut().insert(
