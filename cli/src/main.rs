@@ -366,6 +366,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 			
 			for i in 0..args.pararell.unwrap_or(1) {
 				let addr = args.address.clone();
+				println!("[{}] Uploading to {}", i, addr);
 				let auth = args.auth.clone();
 				let count = args.count;
 				let success_count = Arc::clone(&success_count);

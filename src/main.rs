@@ -1,12 +1,10 @@
 use std::sync::Arc;
 use axum::body::Body;
 use axum::body::BodyDataStream;
-use axum::extract::ws::WebSocket;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
-use axum::extract::WebSocketUpgrade;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::sse::Event;
@@ -14,7 +12,6 @@ use axum::response::Html;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::response::Sse;
-use axum::routing::any;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Json;
@@ -22,6 +19,9 @@ use axum::Router;
 use chrono::DateTime;
 use chrono::Utc;
 use config::log_path;
+use config::upload_path;
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
 use db::MetaProp;
 use db::UpdateDeviceSettings;
 use db::UpdateDevicesSettings;
@@ -40,7 +40,6 @@ use simple_logger::SimpleLogger;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio::task::spawn_blocking;
-use tokio::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::AllowMethods;
@@ -60,6 +59,7 @@ mod db;
 mod segment;
 mod wal;
 mod upload_guard;
+mod background;
 
 #[derive(Deserialize, Debug)]
 enum SortDir {
@@ -87,6 +87,9 @@ async fn main() {
 	}
 	let ctx = Context::new().await;
 	let ctx = Arc::new(ctx);
+
+	// Spawn background worker that ingests staged log uploads
+	tokio::spawn(background::process_log_uploads(ctx.clone()));
 
 	let cors = CorsLayer::new()
 		.allow_origin(Any) // Allow requests from any origin
@@ -238,48 +241,75 @@ async fn get_segments(
 }
 
 async fn upload_device_logs(
-	State(ctx): State<Arc<Context>>,
-	Path(device_id): Path<String>,
-	body: Body
+    State(ctx): State<Arc<Context>>,
+    Path(device_id): Path<String>,
+    body: Body,
 ) -> impl IntoResponse {
-	let _guard = match ctx.upload_guard() {
-		Ok(guard) => guard,
-		Err(err) => {
-			let retry_after = rand::rng().random_range(10..=5000);
-			log::error!("Failed to acquire upload guard: {}", err);
-			let mut response = (StatusCode::SERVICE_UNAVAILABLE, "Upload limit reached").into_response();
-			response.headers_mut().insert(
-				axum::http::header::RETRY_AFTER,
-				retry_after.to_string().parse().unwrap()
-			);
-			return response;
-		}
-	};
+    let _guard = match ctx.upload_guard() {
+        Ok(g) => g,
+        Err(err) => {
+            let retry_after = rand::rng().random_range(10..=5_000);
+            log::warn!("Upload guard busy: {}", err);
+            let mut resp =
+                (StatusCode::SERVICE_UNAVAILABLE, "Upload limit reached").into_response();
+            resp.headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, retry_after.to_string().parse().unwrap());
+            return resp;
+        }
+    };
 
-	let upload_timer = Instant::now();
-	let mut stream: BodyDataStream = body.into_data_stream();
-	let mut chunk_reader = LogEntryChunkParser::new();
-	let mut i = 0;
-	let mut total_bytes = 0;
-	while let Some(chunk_result) = stream.next().await {
-		match chunk_result {
-			Ok(chunk) => {
-				total_bytes += chunk.len();
-				chunk_reader.add_chunk(chunk);
-				i += chunk_reader.log_entries.len();
-			}
-			Err(e) => {
-				log::error!("Error receiving chunk: {}", e);
-				return (StatusCode::OK, "ok").into_response();
-			}
-		}
-	}
-	let timer = Instant::now();
-	if let Err(err) = ctx.db.update_device_stats(&device_id, total_bytes, chunk_reader.log_entries.len()).await {
-		log::error!("Failed to update device metadata: {}", err);
-	}
-	ctx.save_logs(&chunk_reader.log_entries).await;
-	(StatusCode::OK, "ok").into_response()
+    let upload_dir = upload_path();
+    let ts = chrono::Utc::now().timestamp_millis();
+    let nonce: u32 = rand::rng().random_range(0..=u32::MAX);
+    let part_path = upload_dir.join(format!("{device_id}-{ts:013}-{nonce:08x}.part"));
+
+    // Create & open the temp file.
+    let mut file = match OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&part_path)
+        .await
+    {
+        Ok(f) => f,
+        Err(e) => {
+            log::error!("cannot create {}: {}", part_path.display(), e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "cannot create file").into_response();
+        }
+    };
+
+    let mut stream: BodyDataStream = body.into_data_stream();
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(bytes) => {
+                if let Err(e) = file.write_all(&bytes).await {
+                    log::error!("write failed for {}: {}", part_path.display(), e);
+                    let _ = tokio::fs::remove_file(&part_path).await;
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "write error").into_response();
+                }
+            }
+            Err(e) => {
+                log::error!("Error receiving chunk: {}", e);
+                let _ = tokio::fs::remove_file(&part_path).await;
+                return (StatusCode::BAD_REQUEST, "malformed upload").into_response();
+            }
+        }
+    }
+
+    if let Err(e) = file.sync_all().await {
+        log::warn!("sync_all failed on {}: {}", part_path.display(), e);
+    }
+    drop(file); // ensure the handle is closed before rename
+
+    let ready_path = part_path.with_extension("ready");
+    if let Err(e) = tokio::fs::rename(&part_path, &ready_path).await {
+        log::error!("rename {} → {} failed: {}", part_path.display(), ready_path.display(), e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "rename failed").into_response();
+    }
+
+	log::info!("upload complete: {}", ready_path.display());
+
+    (StatusCode::NO_CONTENT, "ok").into_response()
 }
 
 async fn update_devices_settings(
@@ -341,7 +371,6 @@ const FAVICON_192x192: &[u8] = include_bytes!("../assets/favicon-192x192.png");
 const FAVICON_512x512: &[u8] = include_bytes!("../assets/favicon-512x512.png");
 const CSS: &str = include_str!("../assets/puppylog.css");
 
-#[cfg(debug_assertions)]
 async fn css() -> String {
 	let mut file = tokio::fs::File::open("assets/puppylog.css").await.unwrap();
 	let mut contents = String::new();

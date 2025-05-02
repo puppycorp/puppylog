@@ -26,6 +26,8 @@ use crate::wal::Wal;
 use crate::subscribe_worker::Subscriber;
 use crate::subscribe_worker::Worker;
 
+const CONCURRENCY_LIMIT: usize = 10;
+
 #[derive(Debug)]
 pub struct Context {
 	pub subscriber: Subscriber,
@@ -64,7 +66,6 @@ impl Context {
 	pub async fn save_logs(&self, logs: &[LogEntry]) {
 		let mut current = self.current.lock().await;
 		for entry in logs {
-			self.wal.write(entry.clone());
 			current.add_log_entry(entry.clone());
 			if let Err(e) = self.publisher.send(entry.clone()).await {
 				log::error!("Failed to publish log entry: {}", e);
@@ -154,10 +155,10 @@ impl Context {
 	}
 
 	pub fn allowed_to_upload(&self) -> bool {
-		self.upload_queue.load(Ordering::SeqCst) < 1
+		self.upload_queue.load(Ordering::SeqCst) < CONCURRENCY_LIMIT
 	}
 
 	pub fn upload_guard(&self) -> Result<UploadGuard<'_>, &str> {
-		UploadGuard::new(&self.upload_queue, 1)
+		UploadGuard::new(&self.upload_queue, CONCURRENCY_LIMIT)
 	}
 }

@@ -19,3 +19,10 @@ pub fn settings_path() -> std::path::PathBuf {
 		Err(_) => std::path::Path::new("./settings.json").to_owned()
 	}
 }
+
+pub fn upload_path() -> std::path::PathBuf {
+	match std::env::var("UPLOAD_PATH") {
+		Ok(val) => std::path::Path::new(&val).to_owned(),
+		Err(_) => std::path::Path::new("./uploads").to_owned()
+	}
+}
