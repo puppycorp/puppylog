@@ -318,6 +318,7 @@ async fn get_device_status(
 
 	let allowed_to_send = ctx.allowed_to_upload();
 	if !allowed_to_send {
+		log::info!("[{}] not allowed to upload", device_id);
 		resp.send_logs = false;
 		resp.next_poll = Some(rand::rng().random_range(10..=120));
 	}
