@@ -307,8 +307,6 @@ async fn upload_device_logs(
         return (StatusCode::INTERNAL_SERVER_ERROR, "rename failed").into_response();
     }
 
-	log::info!("upload complete: {}", ready_path.display());
-
     (StatusCode::NO_CONTENT, "ok").into_response()
 }
 

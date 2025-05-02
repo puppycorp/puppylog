@@ -4,7 +4,6 @@ use std::io::Cursor;
 use std::io::Write;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use std::time::Instant;
 use chrono::Utc;
 use puppylog::check_props;
 use puppylog::LogEntry;
@@ -74,7 +73,7 @@ impl Context {
 		}
 		current.sort();
 		if current.buffer.len() > 50_000 {
-			log::info!("flushing segment wiht {} logs", current.buffer.len());
+			log::info!("flushing segment with {} logs", current.buffer.len());
 			self.wal.clear();
 			let first_timestamp = current.buffer.first().unwrap().timestamp;
 			let last_timestamp = current.buffer.last().unwrap().timestamp;
