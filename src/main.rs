@@ -371,6 +371,7 @@ const FAVICON_192x192: &[u8] = include_bytes!("../assets/favicon-192x192.png");
 const FAVICON_512x512: &[u8] = include_bytes!("../assets/favicon-512x512.png");
 const CSS: &str = include_str!("../assets/puppylog.css");
 
+#[cfg(debug_assertions)]
 async fn css() -> String {
 	let mut file = tokio::fs::File::open("assets/puppylog.css").await.unwrap();
 	let mut contents = String::new();
