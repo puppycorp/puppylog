@@ -106,13 +106,11 @@ async fn main() {
 		.route("/api/logs/stream", get(stream_logs)).layer(cors.clone())
 		.route("/api/settings/query", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/settings/query", get(get_settings_query)).with_state(ctx.clone())
-		.route("/api/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
 		.route("/api/segments", get(get_segments)).with_state(ctx.clone())	
 		.route("/api/segment/metadata", get(get_segment_metadata)).with_state(ctx.clone())
 		.route("/api/v1/validate_query", get(validate_query))
 		.route("/api/v1/logs/stream", get(stream_logs)).layer(cors.clone())
 		.route("/api/v1/device/settings", post(update_devices_settings)).with_state(ctx.clone())
-		.route("/api/v1/device/{deviceId}/ws", any(device_ws_handler)).with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/status", get(get_device_status)).layer(cors.clone()).with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/logs", post(upload_device_logs))
 			.layer(cors.clone())
@@ -334,78 +332,6 @@ async fn update_device_metadata(
 	log::info!("update_device_metadata device_id: {:?}", device_id);
 	ctx.db.update_device_metadata(&device_id, &body).await.unwrap();
 	"ok"
-}
-
-async fn device_ws_handler(
-	ws: WebSocketUpgrade,
-	State(ctx): State<Arc<Context>>,
-	Path(device_id): Path<String>
-) -> impl IntoResponse {
-	ws.on_upgrade(|socket| handle_socket(socket, device_id, ctx))
-}
-
-async fn handle_socket(mut socket: WebSocket, device_id: String, ctx: Arc<Context>) {
-	log::info!("device connected: {:?}", device_id);
-	let mut rx = ctx.event_tx.subscribe();
-	let mut chunk_reader = LogEntryChunkParser::new();
-	{
-		let settings = ctx.settings.inner().await;
-		let query = settings.collection_query.clone();
-		let event = PuppylogEvent::QueryChanged { query };
-		let txt = to_string(&event).unwrap();
-		log::info!("Sending event to client {:?}", txt);
-		socket.send(axum::extract::ws::Message::Text(txt.into())).await.unwrap();
-	}
-	loop {
-		tokio::select! {
-			e = rx.recv() => {
-				match e {
-					Ok(e) => {
-						let txt = to_string(&e).unwrap();
-						log::info!("Sending event to client {:?}", txt);
-						socket.send(axum::extract::ws::Message::Text(txt.into())).await.unwrap();
-					},
-					Err(err) => {},
-				}
-			}
-			msg = socket.recv() => {
-				match msg {
-					Some(Ok(msg)) => {
-						// log::info!("Received message: {:?}", msg);
-						match msg {
-							axum::extract::ws::Message::Text(utf8_bytes) => {},
-							axum::extract::ws::Message::Binary(bytes) => {
-								let bytes_len = bytes.len();
-								log::info!("received batch of {} bytes", bytes_len);
-								chunk_reader.add_chunk(bytes);
-								let timer = Instant::now();
-								log::info!("saving {} logs", chunk_reader.log_entries.len());
-								if let Err(err) = ctx.db.update_device_stats(&device_id, bytes_len, chunk_reader.log_entries.len()).await {
-									log::error!("Failed to update device metadata: {}", err);
-								}
-								ctx.save_logs(&chunk_reader.log_entries).await;
-								log::info!("saved {} logs in {:?}", chunk_reader.log_entries.len(), timer.elapsed());
-								chunk_reader.log_entries.clear();
-							},
-							axum::extract::ws::Message::Ping(bytes) => {},
-							axum::extract::ws::Message::Pong(bytes) => {},
-							axum::extract::ws::Message::Close(close_frame) => {
-								log::info!("Connection closed: {:?}", close_frame);
-								break;
-							},
-						}
-					}
-					Some(Err(err)) => {
-						log::error!("Error receiving message: {}", err);
-					}
-					None => {
-						log::error!("Connection closed");
-						break;
-					}
-				}
-			}
-		}
-	}
 }
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
