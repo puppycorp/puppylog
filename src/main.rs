@@ -247,7 +247,7 @@ async fn upload_device_logs(
 	let _guard = match ctx.upload_guard() {
 		Ok(guard) => guard,
 		Err(err) => {
-			let retry_after = rand::rng().random_range(10..=1000);
+			let retry_after = rand::rng().random_range(10..=5000);
 			log::error!("Failed to acquire upload guard: {}", err);
 			let mut response = (StatusCode::SERVICE_UNAVAILABLE, "Upload limit reached").into_response();
 			response.headers_mut().insert(
@@ -319,7 +319,7 @@ async fn get_device_status(
 	let allowed_to_send = ctx.allowed_to_upload();
 	if !allowed_to_send {
 		resp.send_logs = false;
-		resp.next_poll = Some(rand::rng().random_range(10..=1000));
+		resp.next_poll = Some(rand::rng().random_range(10..=5000));
 		log::info!("[{}] not allowed to upload logs next poll {}", device_id, resp.next_poll.unwrap());
 	}
 
