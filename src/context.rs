@@ -151,10 +151,10 @@ impl Context {
 	}
 
 	pub fn allowed_to_upload(&self) -> bool {
-		self.upload_queue.load(Ordering::SeqCst) < 10
+		self.upload_queue.load(Ordering::SeqCst) < 4
 	}
 
 	pub fn upload_guard(&self) -> Result<UploadGuard<'_>, &str> {
-		UploadGuard::new(&self.upload_queue, 10)
+		UploadGuard::new(&self.upload_queue, 4)
 	}
 }
