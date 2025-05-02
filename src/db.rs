@@ -14,6 +14,7 @@ use tokio::sync::Mutex;
 
 use crate::config::db_path;
 use crate::segment::SegmentMeta;
+use std::collections::HashMap;
 
 struct Migration {
     id: u32,
@@ -458,6 +459,42 @@ impl DB {
 			});
 		}
 		Ok(props)
+	}
+
+	pub async fn fetch_segments_props(
+		&self,
+		segment_ids: &[u32],
+	) -> anyhow::Result<HashMap<u32, Vec<Prop>>> {
+		let conn = self.conn.lock().await;
+		if segment_ids.is_empty() {
+			return Ok(HashMap::new());
+		}
+
+		// build a placeholder string like "?, ?, ?"
+		let placeholders = segment_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+		let sql = format!(
+			"SELECT segment_id, key, value FROM segment_props WHERE segment_id IN ({})",
+			placeholders
+		);
+
+		let mut stmt = conn.prepare(&sql)?;
+		let params: Vec<&dyn ToSql> = segment_ids
+			.iter()
+			.map(|id| id as &dyn ToSql)
+			.collect();
+		let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
+
+		let mut map: HashMap<u32, Vec<Prop>> = HashMap::new();
+		while let Some(row) = rows.next()? {
+			let sid: u32 = row.get(0)?;
+			let prop = Prop {
+				key: row.get(1)?,
+				value: row.get(2)?,
+			};
+			map.entry(sid).or_default().push(prop);
+		}
+
+		Ok(map)
 	}
 
 	pub async fn find_segments_with_query(&self, query: &QueryAst) -> anyhow::Result<Vec<SegmentMeta>> {
