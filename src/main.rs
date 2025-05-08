@@ -307,7 +307,7 @@ async fn upload_device_logs(
         return (StatusCode::INTERNAL_SERVER_ERROR, "rename failed").into_response();
     }
 
-    (StatusCode::NO_CONTENT, "ok").into_response()
+    (StatusCode::OK, "ok").into_response()
 }
 
 async fn update_devices_settings(
