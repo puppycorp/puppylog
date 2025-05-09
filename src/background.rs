@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::fs::{create_dir_all, metadata, read_dir, remove_file, rename, File};
+use tokio::fs::{create_dir_all, metadata, read_dir, remove_file, File};
 use tokio::io::AsyncReadExt;
 use tokio::time::sleep;
 
@@ -47,23 +47,17 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
                 continue;
             }
 
-            if !path.is_file()
-                || path.extension().and_then(|e| e.to_str()) != Some("ready")
-            {
+            if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("ready") {
                 continue;
             }
 
-            let processing_path = path.with_extension("processing");
-            if let Err(e) = rename(&path, &processing_path).await {
-                log::warn!("failed to rename {} -> {}: {}", path.display(), processing_path.display(), e);
-                continue;
-            }
+			log::info!("processing log file {}", path.display());
 
-            match File::open(&processing_path).await {
+            match File::open(&path).await {
                 Ok(mut file) => {
                     let mut buf = Vec::new();
                     if let Err(e) = file.read_to_end(&mut buf).await {
-                        log::error!("failed to read {}: {}", processing_path.display(), e);
+                        log::error!("failed to read {}: {}", path.display(), e);
                         continue;
                     }
 
@@ -81,7 +75,7 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
                     let log_count = log_entries.len();
                     let total_bytes = buf.len();
 
-                    if let Some(stem) = processing_path.file_stem().and_then(|s| s.to_str()) {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                         if let Some((device_id, _rest)) = stem.split_once('-') {
                             if let Err(e) = ctx
                                 .db
@@ -93,12 +87,13 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
                         }
                     }
 
-                    if let Err(e) = remove_file(&processing_path).await {
-                        log::warn!("failed to delete {}: {}", processing_path.display(), e);
+                    if let Err(e) = remove_file(&path).await {
+                        log::warn!("failed to delete {}: {}", path.display(), e);
                     }
+					log::info!("processed log file {}: {} bytes, {} entries", path.display(), total_bytes, log_count);
                 }
                 Err(e) => {
-                    log::error!("cannot open {}: {}", processing_path.display(), e);
+                    log::error!("cannot open {}: {}", path.display(), e);
                 }
             }
         }
