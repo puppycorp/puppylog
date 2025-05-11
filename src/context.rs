@@ -5,6 +5,7 @@ use std::io::Write;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use chrono::Utc;
+use puppylog::check_expr;
 use puppylog::check_props;
 use puppylog::LogEntry;
 use puppylog::PuppylogEvent;
@@ -103,19 +104,19 @@ impl Context {
 
 	pub async fn find_logs(&self, query: QueryAst, mut cb: impl FnMut(&LogEntry) -> bool) {
 		let mut end = query.end_date.unwrap_or(Utc::now());
-		{
-			let current = self.current.lock().await;
-			let iter = current.iter();
-			for entry in iter {
-				if entry.timestamp > end {
-					continue;
-				}
-				end = entry.timestamp;
-				if !cb(entry) {
-					return;
-				}
-			}
-		}
+		// {
+		// 	let current = self.current.lock().await;
+		// 	let iter = current.iter();
+		// 	for entry in iter {
+		// 		if entry.timestamp > end {
+		// 			continue;
+		// 		}
+		// 		end = entry.timestamp;
+		// 		if !cb(entry) {
+		// 			return;
+		// 		}
+		// 	}
+		// }
 		log::info!("looking from archive");
 		loop {
 			let segments = self.db.find_segments(end, 100).await.unwrap();
@@ -147,6 +148,10 @@ impl Context {
 						continue;
 					}
 					end = entry.timestamp;
+					match check_expr(&query.root, &entry) {
+						Ok(_) => {},
+						_ => continue
+					}
 					if !cb(entry) {
 						return;
 					}

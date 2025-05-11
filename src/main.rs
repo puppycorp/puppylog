@@ -515,16 +515,14 @@ async fn get_logs(
 			if tx.is_closed() {
 				return false;
 			}
-			if check_expr(&producer_query.root, &entry).unwrap() {
-				log::info!("log entry {:?} matches query {:?}", entry, producer_query);
-				let log_json = logentry_to_json(entry);
-				if tx.blocking_send(log_json).is_err() {
-					return false;
-				}
-				sent += 1;
-				if sent >= count {
-					return false;
-				}
+			log::info!("log entry {:?} matches query {:?}", entry, producer_query);
+			let log_json = logentry_to_json(entry);
+			if tx.blocking_send(log_json).is_err() {
+				return false;
+			}
+			sent += 1;
+			if sent >= count {
+				return false;
 			}
 			true
 		}));
