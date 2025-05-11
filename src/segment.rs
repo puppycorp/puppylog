@@ -2,11 +2,13 @@ use std::cmp::Ordering;
 use std::io::Read;
 use std::io::Write;
 use std::sync::Arc;
+use std::time::Instant;
 use bytes::Bytes;
 use chrono::DateTime;
 use chrono::Utc;
 use puppylog::LogEntry;
 use puppylog::LogEntryChunkParser;
+use puppylog::LogentryDeserializerError;
 use serde::Serialize;
 
 #[derive(Debug)]
@@ -67,7 +69,7 @@ impl LogSegment {
 	}
 	pub fn new() -> Self {
 		LogSegment {
-			buffer: Vec::new()
+			buffer: Vec::with_capacity(500_000)
 		}
 	}
 	pub fn iter(&self) -> LogIterator {
@@ -110,19 +112,18 @@ impl LogSegment {
 		if version != VERSION {
 			panic!("Invalid version: {}", version);
 		}
-		let mut chunk_parser = LogEntryChunkParser::new();
-		let mut chunk = [0u8; 4096];
+		let mut log_entries = Vec::new();
+		let mut buff = Vec::new();
+		let mut ptr = 0;
+		reader.read_to_end(&mut buff).unwrap();
 		loop {
-			let n = reader.read(&mut chunk).unwrap();
-			if n == 0 {
-				break;
+			match LogEntry::fast_deserialize(&buff, &mut ptr) {
+				Ok(log_entry) => log_entries.push(log_entry),
+				Err(LogentryDeserializerError::NotEnoughData) => break,
+				Err(err) => panic!("Error deserializing log entry: {:?}", err)
 			}
-			chunk_parser.add_chunk(Bytes::copy_from_slice(&chunk[..n]));
 		}
-
-		LogSegment {
-			buffer: chunk_parser.log_entries
-		}
+		LogSegment { buffer: log_entries }
 	}
 
 	pub fn contains_date(&self, date: DateTime<Utc>) -> bool {
