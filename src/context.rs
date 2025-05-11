@@ -135,6 +135,7 @@ impl Context {
 					end = segment.first_timestamp;
 					continue;
 				}
+				log::info!("matched query {:?} with props {:?}", query, props);
 				let path = log_path().join(format!("{}.log", segment.id));
 				log::info!("loading segment from disk: {}", path.display());
 				let file: File = File::open(path).unwrap();
