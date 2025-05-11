@@ -64,12 +64,9 @@ impl Context {
 
 	pub async fn save_logs(&self, logs: &[LogEntry]) {
 		let mut current = self.current.lock().await;
+		current.buffer.extend_from_slice(logs);
 		for entry in logs {
-			self.wal.write(entry.clone());
-			current.add_log_entry(entry.clone());
-			if let Err(e) = self.publisher.send(entry.clone()).await {
-				log::error!("Failed to publish log entry: {}", e);
-			}
+		 	self.wal.write(entry.clone());
 		}
 		current.sort();
 		if current.buffer.len() > 50_000 {
@@ -100,7 +97,7 @@ impl Context {
 			let path = log_path().join(format!("{}.log", segment_id));
 			let mut file = File::create(&path).unwrap();
 			file.write_all(&buff).unwrap();
-			*current = LogSegment::new();
+			current.buffer.clear();
 		}
 	}
 
