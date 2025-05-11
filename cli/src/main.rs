@@ -374,12 +374,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				
 				let handle = tokio::spawn(async move {
 					let mut buffer = Vec::new();
-					let mut start = Utc::now();
+					let mut timestamp = {
+						let mut rng = thread_rng();
+						// pick a random start up to 5 months (approx. 150 days) ago
+						let max_secs = 5 * 30 * 24 * 3600;
+						let offset_secs = rng.gen_range(0..=max_secs);
+						Utc::now() - Duration::from_secs(offset_secs)
+					};
 					
 					for _ in 0..count {
-						let log = random_log_entry(start);
+						let log = random_log_entry(timestamp);
 						log.serialize(&mut buffer).unwrap();
-						start += Duration::from_millis(100);
+						timestamp += Duration::from_millis(100);
 					}
 				
 					let client = reqwest::Client::new();
