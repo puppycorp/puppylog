@@ -145,6 +145,9 @@ impl Context {
 				let segment = LogSegment::parse(&mut decoder);
 				let iter = segment.iter();
 				for entry in iter {
+					if end < entry.timestamp {
+						continue;
+					}
 					end = entry.timestamp;
 					if !cb(entry) {
 						return;
