@@ -51,7 +51,7 @@ export const searchSvg = `<svg xmlns="http://www.w3.org/2000/svg"  viewBox="0 0 
 
 const formatTimestamp = (ts: string): string => {
 	const date = new Date(ts)
-	return date.toLocaleString()
+	return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
 }
 
 const escapeHTML = (str: string): string => {
