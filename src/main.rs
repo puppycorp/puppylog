@@ -516,6 +516,7 @@ async fn get_logs(
 				return false;
 			}
 			if check_expr(&producer_query.root, &entry).unwrap() {
+				log::info!("log entry {:?} matches query {:?}", entry, producer_query);
 				let log_json = logentry_to_json(entry);
 				if tx.blocking_send(log_json).is_err() {
 					return false;
