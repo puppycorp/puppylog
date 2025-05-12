@@ -148,7 +148,7 @@ impl Context {
 					}
 					end = entry.timestamp;
 					match check_expr(&query.root, &entry) {
-						Ok(_) => {},
+						Ok(true) => {},
 						_ => continue
 					}
 					if !cb(entry) {
