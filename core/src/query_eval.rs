@@ -276,6 +276,28 @@ mod tests {
 	}
 
 	#[test]
+	fn matches_and_with_props() {
+		let props = vec![
+			Prop { key: "service".to_string(), value: "auth".to_string() },
+			Prop { key: "user_id".to_string(), value: "123".to_string() },
+			Prop { key: "duration_ms".to_string(), value: "150".to_string() },
+		];
+		let expr = Expr::And(
+			Box::new(Expr::Condition(Condition {
+				left: Box::new(Expr::Value(Value::String("service".to_string()))),
+				operator: Operator::Equal,
+				right: Box::new(Expr::Value(Value::String("auth".to_string())))
+			})),
+			Box::new(Expr::Condition(Condition {
+				left: Box::new(Expr::Value(Value::String("user_id".to_string()))),
+				operator: Operator::Equal,
+				right: Box::new(Expr::Value(Value::String("123".to_string())))
+			}))
+		);
+		assert!(check_props(&expr, &props).unwrap());
+	}
+
+	#[test]
 	fn msg_does_not_match() {
 		let logline = LogEntry {
 			timestamp: Utc::now(),
