@@ -112,6 +112,10 @@ impl Context {
 					continue;
 				}
 				end = entry.timestamp;
+				match check_expr(&query.root, &entry) {
+					Ok(true) => {},
+					_ => continue
+				}
 				if !cb(entry) {
 					return;
 				}
