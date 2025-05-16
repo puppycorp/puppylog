@@ -14,6 +14,8 @@ use tokio::sync::Mutex;
 
 use crate::config::db_path;
 use crate::segment::SegmentMeta;
+use crate::types::GetSegmentsQuery;
+use crate::types::SortDir;
 use std::collections::HashMap;
 
 struct Migration {
@@ -376,28 +378,61 @@ impl DB {
 		Ok(new_id as u32)
 	}
 
-	pub async fn find_segments(&self, date: DateTime<Utc>, count: usize) -> anyhow::Result<Vec<SegmentMeta>> {
-		let conn = self.conn.lock().await;
-		let mut stmt = conn.prepare(r#"
-			SELECT id, first_timestamp, last_timestamp, 
-				original_size, compressed_size, logs_count, created_at
-				FROM log_segments WHERE first_timestamp <= ? ORDER BY last_timestamp DESC LIMIT ?
-		"#)?;
-		let mut rows = stmt.query(rusqlite::params![date, count])?;
-		let mut metas = Vec::new();
-		while let Some(row) = rows.next()? {
-			metas.push(SegmentMeta {
-				id: row.get(0)?,
-				first_timestamp: row.get(1)?,
-				last_timestamp: row.get(2)?,
-				original_size: row.get(3)?,
-				compressed_size: row.get(4)?,
-				logs_count: row.get(5)?,
-				created_at: row.get(6)?,
-			});
+	pub async fn find_segments(&self, query: &GetSegmentsQuery) -> anyhow::Result<Vec<SegmentMeta>> {
+        let conn = self.conn.lock().await;
+        let mut sql = String::from(
+            "SELECT id, first_timestamp, last_timestamp, \
+             original_size, compressed_size, logs_count, created_at \
+             FROM log_segments"
+        );
+		let mut conditions: Vec<&str> = Vec::new();
+		let mut params: Vec<&dyn ToSql> = Vec::new();
+		let mut limit_param: i64 = 0;
+
+        if let Some(start) = &query.start {
+            conditions.push("first_timestamp >= ?");
+            params.push(start);
+        }
+        if let Some(end) = &query.end {
+            conditions.push("last_timestamp <= ?");
+            params.push(end);
+        }
+
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        let dir = match query.sort {
+            Some(SortDir::Asc)  => "ASC",
+            Some(SortDir::Desc) => "DESC",
+            None                => "DESC",
+        };
+        sql.push_str(" ORDER BY last_timestamp ");
+        sql.push_str(dir);
+		if let Some(cnt) = query.count {
+			sql.push_str(" LIMIT ?");
+			limit_param = cnt as i64;
+			params.push(&limit_param);
 		}
-		Ok(metas)
-	}
+
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(params.as_slice())?;
+        let mut metas = Vec::new();
+        while let Some(row) = rows.next()? {
+            metas.push(SegmentMeta {
+                id:              row.get(0)?,
+                first_timestamp: row.get(1)?,
+                last_timestamp:  row.get(2)?,
+                original_size:   row.get(3)?,
+                compressed_size: row.get(4)?,
+                logs_count:      row.get(5)?,
+                created_at:      row.get(6)?,
+            });
+        }
+
+        Ok(metas)
+    }
 
 	pub async fn fetch_segment(&self, segment: u32) -> anyhow::Result<SegmentMeta> {
 		let conn = self.conn.lock().await;
@@ -421,9 +456,18 @@ impl DB {
 		Ok(segment)
 	}
 
+	pub async fn delete_segment(&self, segment: u32) -> anyhow::Result<()> {
+		let mut conn = self.conn.lock().await;
+		let tx = conn.transaction()?;
+		tx.execute("DELETE FROM log_segments WHERE id = ?1", [segment])?;
+		tx.execute("DELETE FROM segment_props WHERE segment_id = ?1", [segment])?;
+		tx.commit()?;
+		Ok(())
+	}
+
 	pub async fn fetch_segments_metadata(&self) -> anyhow::Result<SegmentsMetadata> {
 		let conn = self.conn.lock().await;
-		let mut stmt = conn.prepare("SELECT COUNT(*), SUM(original_size), SUM(compressed_size), SUM(logs_count) FROM log_segments")?;
+		let mut stmt = conn.prepare("SELECT COUNT(*), COALESCE(SUM(original_size), 0), COALESCE(SUM(compressed_size), 0), COALESCE(SUM(logs_count), 0) FROM log_segments")?;
 		let mut rows = stmt.query([])?;
 		let row = rows.next()?.unwrap();
 		Ok(SegmentsMetadata {

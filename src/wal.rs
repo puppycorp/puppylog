@@ -43,7 +43,9 @@ impl Wal {
 					},
 					Cmd::Clear => {
 						log::info!("clearing logs from wal");
-						wal_file.set_len(0).unwrap();
+						if let Err(err) = wal_file.set_len(0) {
+							log::error!("Failed to clear wal: {}", err);
+						}
 					}
 				}
 			}

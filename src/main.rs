@@ -12,6 +12,7 @@ use axum::response::Html;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::response::Sse;
+use axum::routing::delete;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Json;
@@ -20,6 +21,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use config::log_path;
 use config::upload_path;
+use tokio::fs;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use db::MetaProp;
@@ -47,6 +49,7 @@ use tower_http::cors::Any;
 use tower_http::cors::CorsLayer;
 use tower_http::decompression::RequestDecompressionLayer;
 use context::Context;
+use types::GetSegmentsQuery;
 
 mod logline;
 mod cache;
@@ -60,12 +63,7 @@ mod segment;
 mod wal;
 mod upload_guard;
 mod background;
-
-#[derive(Deserialize, Debug)]
-enum SortDir {
-	Asc,
-	Desc
-}
+mod types;
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -126,8 +124,11 @@ async fn main() {
 		.route("/api/v1/settings", post(post_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/settings", get(get_settings_query)).with_state(ctx.clone())
 		.route("/api/v1/devices", get(get_devices)).with_state(ctx.clone())
+		.route("/api/v1/segments", get(get_segments)).with_state(ctx.clone())
 		.route("/api/v1/segment/{segmentId}", get(get_segment)).with_state(ctx.clone())
 		.route("/api/v1/segment/{segmentId}/props", get(get_segment_props)).with_state(ctx.clone())
+		.route("/api/v1/segment/{segmentId}/download", get(download_segment)).with_state(ctx.clone())
+		.route("/api/v1/segment/{segmentId}", delete(delete_segment)).with_state(ctx.clone())
 		.fallback(get(root));
 
 	// run our app with hyper, listening globally on port 3000
@@ -151,6 +152,31 @@ async fn get_segment(
 ) -> Json<Value> {
 	let segment = ctx.db.fetch_segment(segment_id).await.unwrap();
 	Json(serde_json::to_value(&segment).unwrap())
+}
+
+async fn download_segment(
+	State(ctx): State<Arc<Context>>,
+	Path(segment_id): Path<u32>
+) -> Json<Value> {
+	let path = log_path().join(format!("{}.log", segment_id));
+	let mut file = OpenOptions::new()
+		.read(true)
+		.open(&path)
+		.await
+		.unwrap();
+	let mut buff = Vec::new();
+	file.read_to_end(&mut buff).await.unwrap();
+	Json(serde_json::to_value(&buff).unwrap())
+}
+
+async fn delete_segment(
+	State(ctx): State<Arc<Context>>,
+	Path(segment_id): Path<u32>
+) -> &'static str {
+	log::info!("delete_segment: {:?}", segment_id);
+	ctx.db.delete_segment(segment_id).await.unwrap();
+	fs::remove_file(log_path().join(format!("{}.log", segment_id))).await.unwrap();
+	"ok"
 }
 
 async fn get_segment_props(
@@ -225,18 +251,16 @@ async fn get_devices(State(ctx): State<Arc<Context>>) -> Json<Value> {
 	Json(serde_json::to_value(&devices).unwrap())
 }
 
-#[derive(Deserialize, Debug)]
-struct GetSegmentsQuery {
-	pub end: DateTime<Utc>,
-	pub count: Option<usize>,
-}
+
 
 async fn get_segments(
 	State(ctx): State<Arc<Context>>,
-	Query(params): Query<GetSegmentsQuery>
+	Query(mut params): Query<GetSegmentsQuery>
 ) -> Json<Value> {
-	let count = params.count.unwrap_or(100);
-	let segments = ctx.db.find_segments(params.end, count).await.unwrap();
+	if params.count.is_none() {
+		params.count = Some(100);
+	}
+	let segments = ctx.db.find_segments(&params).await.unwrap();
 	Json(serde_json::to_value(&segments).unwrap())
 }
 

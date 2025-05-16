@@ -20,6 +20,7 @@ use crate::db::NewSegmentArgs;
 use crate::db::DB;
 use crate::segment::LogSegment;
 use crate::settings::Settings;
+use crate::types::GetSegmentsQuery;
 use crate::upload_guard::UploadGuard;
 use crate::wal::load_logs_from_wal;
 use crate::wal::Wal;
@@ -123,7 +124,11 @@ impl Context {
 		}
 		log::info!("looking from archive");
 		loop {
-			let segments = self.db.find_segments(end, 100).await.unwrap();
+			let segments = self.db.find_segments(&GetSegmentsQuery {
+				end: Some(end),
+				count: Some(100),
+				..Default::default()
+			}).await.unwrap();
 			if segments.is_empty() {
 				log::info!("no more segments to load");
 				break;
