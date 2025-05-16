@@ -129,17 +129,17 @@ impl Context {
 				break;
 			}
 			let segment_ids = segments.iter().map(|s| s.id).collect::<Vec<_>>();
-			let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
+			// let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
 			for segment in &segments {
-				let props = match segment_props.get(&segment.id) {
-					Some(props) => props,
-					None => continue,
-				};
-				let check = check_props(&query.root, &props).unwrap_or_default();
-				if !check {
-					end = segment.first_timestamp;
-					continue;
-				}
+				// let props = match segment_props.get(&segment.id) {
+				// 	Some(props) => props,
+				// 	None => continue,
+				// };
+				// let check = check_props(&query.root, &props).unwrap_or_default();
+				// if !check {
+				// 	end = segment.first_timestamp;
+				// 	continue;
+				// }
 				let path = log_path().join(format!("{}.log", segment.id));
 				log::info!("loading segment from disk: {}", path.display());
 				let file: File = File::open(path).unwrap();
