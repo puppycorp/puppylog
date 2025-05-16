@@ -5,6 +5,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
+use axum::http::header;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::sse::Event;
@@ -40,9 +41,11 @@ use serde_json::to_string;
 use serde_json::Value;
 use simple_logger::SimpleLogger;
 use tokio::io::AsyncReadExt;
+use tokio::io::BufReader;
 use tokio::sync::mpsc;
 use tokio::task::spawn_blocking;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::io::ReaderStream;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::AllowMethods;
 use tower_http::cors::Any;
@@ -50,6 +53,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::decompression::RequestDecompressionLayer;
 use context::Context;
 use types::GetSegmentsQuery;
+use tokio::fs::File;
 
 mod logline;
 mod cache;
@@ -127,7 +131,7 @@ async fn main() {
 		.route("/api/v1/segments", get(get_segments)).with_state(ctx.clone())
 		.route("/api/v1/segment/{segmentId}", get(get_segment)).with_state(ctx.clone())
 		.route("/api/v1/segment/{segmentId}/props", get(get_segment_props)).with_state(ctx.clone())
-		.route("/api/v1/segment/{segmentId}/download", get(download_segment)).with_state(ctx.clone())
+		.route("/api/v1/segment/{segmentId}/download", get(download_segment))
 		.route("/api/v1/segment/{segmentId}", delete(delete_segment)).with_state(ctx.clone())
 		.fallback(get(root));
 
@@ -154,19 +158,41 @@ async fn get_segment(
 	Json(serde_json::to_value(&segment).unwrap())
 }
 
-async fn download_segment(
-	State(ctx): State<Arc<Context>>,
-	Path(segment_id): Path<u32>
-) -> Json<Value> {
-	let path = log_path().join(format!("{}.log", segment_id));
-	let mut file = OpenOptions::new()
-		.read(true)
-		.open(&path)
-		.await
-		.unwrap();
-	let mut buff = Vec::new();
-	file.read_to_end(&mut buff).await.unwrap();
-	Json(serde_json::to_value(&buff).unwrap())
+pub async fn download_segment(
+    Path(segment_id): Path<u32>,
+) -> Response {
+    let path = log_path().join(format!("{segment_id}.log"));
+    let file = match File::open(&path).await {
+        Ok(f) => f,
+        Err(e) => {
+            return (
+                StatusCode::NOT_FOUND,
+                format!("segment {segment_id} not found: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    let len = file.metadata().await.ok().map(|m| m.len());
+    let stream = ReaderStream::new(BufReader::new(file));
+    let body = Body::from_stream(stream);
+
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE,"application/zstd".parse().unwrap());
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        format!(
+            "attachment; filename=\"{}\"",
+            format!("segment-{segment_id}.zst")
+        )
+        .parse()
+        .unwrap(),
+    );
+    if let Some(len) = len {
+        headers.insert(header::CONTENT_LENGTH, len.into());
+    }
+
+    (headers, body).into_response()
 }
 
 async fn delete_segment(

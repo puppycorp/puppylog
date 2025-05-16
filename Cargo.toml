@@ -24,6 +24,7 @@ anyhow = "1"
 zstd = "0.13"
 rand = "0.9"
 rusqlite = { version =  "0.33", features = ["bundled", "chrono"] }
+tokio-util = { version = "0.7", features = ["io"] }
 
 [workspace.dependencies]
 chrono = { version = "0.4", features = ["serde"] }
