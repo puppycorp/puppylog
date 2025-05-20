@@ -4,15 +4,41 @@ use clap::{Parser, Subcommand};
 use log::Level;
 use puppylog::{DrainParser, LogEntry, LogLevel, Prop, PuppylogBuilder};
 use rand::{distributions::Alphanumeric, prelude::*};
-use reqwest::{self, Client};
+use reqwest::{self, Client, Url};
 use std::collections::HashMap;
 use std::error::Error;
+use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::io::Write;
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+
+/// Load default server URL if `--address` was not supplied on the command‑line.
+/// Precedence:
+/// 1. Environment variable `PUPPYLOG_ADDRESS`
+/// 2. File `$HOME/.puppylog/address` (first non‑empty line)
+fn load_default_address() -> Option<String> {
+    // env var first
+    if let Ok(val) = std::env::var("PUPPYLOG_ADDRESS") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_owned());
+        }
+    }
+    // config file
+    if let Ok(home) = std::env::var("HOME") {
+        let path = std::path::Path::new(&home).join(".puppylog").join("address");
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            let trimmed = contents.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_owned());
+            }
+        }
+    }
+    None
+}
 
 // Constants from the Python version
 const LOG_LEVELS: &[LogLevel] = &[LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error];
@@ -192,24 +218,12 @@ fn random_log_entry(timestamp: DateTime<Utc>) -> LogEntry {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
+    /// Base URL of the puppylog server, e.g. http://127.0.0.1:3337
+    #[arg(long)]
+    address: Option<String>,
+
     #[command(subcommand)]
     subcommand: Commands,
-}
-
-#[derive(Parser)]
-struct StreamLogsArgs {
-	#[arg(long)]
-	address: String,
-	#[arg(long)]
-	interval: u64,
-	#[arg(long)]
-	count: Option<u64>,
-	#[arg(long)]
-	auth: Option<String>,
-	#[arg(long, default_value = "1000")]
-	increment: u32,
-	#[arg(long)]
-	start: Option<String>,
 }
 
 #[derive(Parser)]
@@ -234,15 +248,52 @@ struct UploadLogsArgs {
 }
 
 #[derive(Subcommand)]
+enum SegmentSubCommand {
+	Get {
+		#[arg(long)]
+		start: Option<NaiveDate>,
+		#[arg(long)]
+		end: Option<NaiveDate>,
+		#[arg(long)]
+		count: Option<u32>,
+		#[arg(long)]
+		sort: Option<String>,
+	},
+	DownloadRemove {
+		#[arg(long)]
+		start: Option<NaiveDate>,
+		#[arg(long)]
+		end: Option<NaiveDate>,
+		#[arg(long)]
+		count: Option<u32>,
+		#[arg(long)]
+		sort: Option<String>,
+		output: String,
+	},
+	Download {
+		#[arg(long)]
+		start: Option<NaiveDate>,
+		#[arg(long)]
+		end: Option<NaiveDate>,
+		#[arg(long)]
+		count: Option<u32>,
+		#[arg(long)]
+		sort: Option<String>,
+		output: String,
+	}
+}
+
+#[derive(Subcommand)]
 enum Commands {
     /// Upload log data
     Upload(UploadLogsArgs),
-	StreamLogs(StreamLogsArgs),
     Tokenize {
         #[command(subcommand)]
         subcommand: TokenizeSubcommands,
     },
 	UpdateMetadata(UpdateMetadataArgs),
+	#[command(subcommand)]
+	Segment(SegmentSubCommand),
 }
 
 #[derive(Subcommand)]
@@ -285,80 +336,9 @@ async fn upload_logs(address: &str, logs: &[String], compress: bool) -> Result<(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let args = Cli::parse();
-    
-    // let logs = generate_logs(cli.count);
+    let cli = Cli::parse();
 
-	// let client = reqwest::Client::new();
-
-	// let mut buffer = Vec::new();
-	// let mut cursor = std::io::Cursor::new(&mut buffer);
-	// for log in logs {
-	// 	log.serialize(&mut cursor)?;
-	// }
-
-    // let mut headers = reqwest::header::HeaderMap::new();
-
-	// headers.insert(
-	// 	reqwest::header::CONTENT_ENCODING,
-	// 	reqwest::header::HeaderValue::from_static("gzip"),
-	// );
-	
-	// let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-	// encoder.write_all(&buffer)?;
-	// let body = encoder.finish()?;
-
-    // let response = client
-    //     .post(cli.address)
-    //     .headers(headers)
-    //     .body(body)
-    //     .send()
-    //     .await?;
-
-    // println!("Upload status: {}", response.status());
-
-    match args.subcommand {
-		Commands::StreamLogs(args) => {
-			let logger = PuppylogBuilder::new()
-				.server(&args.address).unwrap()
-				.level(Level::Info)
-				.stdout()
-				.authorization(&args.auth.unwrap_or_default())
-				.prop("app", "puppylogcli")
-				.build()
-				.unwrap();
-
-			fn parse_date_to_utc(date_str: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
-				let naive_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")?;
-				let naive_datetime = naive_date.and_hms_opt(0, 0, 0).unwrap();
-				Ok(DateTime::<Utc>::from_naive_utc_and_offset(naive_datetime, Utc))
-			}
-
-			// Start in format YYYY-MM-DD
-			let mut now = match args.start {
-                Some(start) => parse_date_to_utc(&start).unwrap(),
-				None => Utc::now()
-			};
-
-			let mut i = 0;
-			loop {
-				if i % 1000 == 0 {
-					println!("[{}] timestamp: {}", i, now);
-				}
-				let log = random_log_entry(now);
-				logger.send_logentry(log);
-				now += Duration::from_millis(args.increment as u64);
-				i += 1;
-				if let Some(count) = args.count {
-					if i >= count {
-						break;
-					}
-				}
-				sleep(Duration::from_millis(args.interval));
-			}
-
-			logger.close();
-		},
+    match cli.subcommand {
 		Commands::Upload(args) => {
 			let success_count = Arc::new(AtomicUsize::new(0));
 			let fail_count = Arc::new(AtomicUsize::new(0));
@@ -474,6 +454,144 @@ async fn main() -> Result<(), Box<dyn Error>> {
 			// 	.unwrap();
 			// logger.update_metadata(&device_id, props);
 			// logger.close();	
+		}
+		Commands::Segment(sub) => {
+			let client = reqwest::Client::new();
+            let base_addr = cli
+                .address
+                .clone()
+                .or_else(load_default_address)
+                .unwrap_or_else(|| "http://127.0.0.1:3337".to_string());
+			match sub {
+				SegmentSubCommand::Get { start, end, count, sort } => {
+					let mut url = Url::parse(&format!("{}/api/v1/segments", base_addr))?;
+					{
+						let mut query = url.query_pairs_mut();
+						if start.is_some() {
+							query.append_pair("start", &start.unwrap().and_hms(0, 0, 0).and_utc().to_string());
+						}
+						if end.is_some() {
+							query.append_pair("end", &end.unwrap().and_hms(23, 59, 59).and_utc().to_string());
+						}
+						if count.is_some() {
+							query.append_pair("count", &count.unwrap().to_string());
+						}
+						if sort.is_some() {
+							query.append_pair("sort", &sort.unwrap());
+						}
+					}
+
+					println!("URL: {}", url);
+
+					let response = client.get(url)
+						.send()
+						.await?
+						.text()
+						.await?;
+					println!("Response: {:#?}", response);
+				},
+				SegmentSubCommand::DownloadRemove { start, end, count, sort, output } => {
+					let mut url = Url::parse(&format!("{}/api/v1/segments", base_addr))?;
+					let output_path = Path::new(&output);
+					if !output_path.exists() {
+						std::fs::create_dir_all(output_path)?;
+					}
+					{
+						let mut query = url.query_pairs_mut();
+						if start.is_some() {
+							query.append_pair("start", &start.unwrap().and_hms(0, 0, 0).and_utc().to_string());
+						}
+						if end.is_some() {
+							query.append_pair("end", &end.unwrap().and_hms(23, 59, 59).and_utc().to_string());
+						}
+						if count.is_some() {
+							query.append_pair("count", &count.unwrap().to_string());
+						}
+						if sort.is_some() {
+							query.append_pair("sort", &sort.unwrap());
+						}
+					}
+
+					let segements = client.get(url.clone())
+						.send()
+						.await?
+						.json::<Vec<serde_json::Value>>()
+						.await?;
+
+					for segment in segements {
+						let id = segment["id"].as_i64().unwrap().to_string();
+						let url = Url::parse(&format!("{}/api/v1/segment/{}/download", base_addr, id)).unwrap();
+						let file_path = output_path.join(format!("segment_{}.zstd", id));
+						if !file_path.exists() {
+							println!("downloading: {}", url);
+							let response = client.get(url)
+								.send()
+								.await?
+								.bytes()
+								.await?;
+							
+							
+							let mut file = std::fs::File::create(file_path)?;
+							file.write_all(&response)?;
+						}
+
+						let url = Url::parse(&format!("{}/api/v1/segment/{}", base_addr, id)).unwrap();
+						client.delete(url)
+							.send()
+							.await?;
+						println!("deleted segment: {}", id);
+					}
+				}
+				SegmentSubCommand::Download { start, end, count, sort, output } => {
+					let mut url = Url::parse(&format!("{}/api/v1/segments", base_addr))?;
+					let output_path = Path::new(&output);
+					if !output_path.exists() {
+						std::fs::create_dir_all(output_path)?;
+					}
+					{
+						let mut query = url.query_pairs_mut();
+						if start.is_some() {
+							query.append_pair("start", &start.unwrap().and_hms(0, 0, 0).and_utc().to_string());
+						}
+						if end.is_some() {
+							query.append_pair("end", &end.unwrap().and_hms(23, 59, 59).and_utc().to_string());
+						}
+						if count.is_some() {
+							query.append_pair("count", &count.unwrap().to_string());
+						}
+						if sort.is_some() {
+							query.append_pair("sort", &sort.unwrap());
+						}
+					}
+
+					let segements = client.get(url.clone())
+						.send()
+						.await?
+						.json::<Vec<serde_json::Value>>()
+						.await?;
+
+					for segment in segements {
+						let id = segment["id"].as_i64().unwrap().to_string();
+						let url = Url::parse(&format!("{}/api/v1/segment/{}/download", base_addr, id)).unwrap();
+						let file_path = output_path.join(format!("segment_{}.zst", id));
+						if file_path.exists() {
+							println!("file already exists: {}", file_path.display());
+							continue;
+						}
+
+						println!("downloading: {}", url);
+						let response = client.get(url)
+							.send()
+							.await?
+							.bytes()
+							.await?;
+						
+						
+						let mut file = std::fs::File::create(file_path)?;
+						file.write_all(&response)?;
+					}
+				}
+			}
 		}
     }
     
