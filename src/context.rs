@@ -6,7 +6,6 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use chrono::Utc;
 use puppylog::check_expr;
-use puppylog::check_props;
 use puppylog::LogEntry;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
@@ -113,7 +112,7 @@ impl Context {
 					continue;
 				}
 				end = entry.timestamp;
-				match check_expr(&query.root, &entry) {
+				match check_expr(&query.root, entry) {
 					Ok(true) => {},
 					_ => continue
 				}
@@ -156,7 +155,7 @@ impl Context {
 						continue;
 					}
 					end = entry.timestamp;
-					match check_expr(&query.root, &entry) {
+					match check_expr(&query.root, entry) {
 						Ok(true) => {},
 						_ => continue
 					}

@@ -1,13 +1,9 @@
 use std::cmp::Ordering;
 use std::io::Read;
 use std::io::Write;
-use std::sync::Arc;
-use std::time::Instant;
-use bytes::Bytes;
 use chrono::DateTime;
 use chrono::Utc;
 use puppylog::LogEntry;
-use puppylog::LogEntryChunkParser;
 use puppylog::LogentryDeserializerError;
 use serde::Serialize;
 
@@ -138,9 +134,9 @@ impl LogSegment {
 #[cfg(test)]
 mod tests {
 	use std::io::Cursor;
-	use chrono::Duration;
-	use chrono::NaiveDate;
-	use chrono::TimeZone;
+	
+	
+	
 	use puppylog::LogLevel;
 	use puppylog::Prop;
 	use super::*;

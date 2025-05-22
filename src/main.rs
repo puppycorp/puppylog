@@ -249,7 +249,7 @@ async fn validate_query(
 				return Ok(());
 			}
 			log::info!("validating query {}", q);
-			if let Err(err) = parse_log_query(&q) {
+			if let Err(err) = parse_log_query(q) {
 				log::error!("query {} is invalid: {}", q, err);
 				return Err(BadRequestError(err.to_string()));
 			}
@@ -540,7 +540,7 @@ async fn get_logs(
 				log::info!("query is empty");
 				QueryAst::default()
 			} else {
-				match parse_log_query(&q) {
+				match parse_log_query(q) {
 					Ok(query) => query,
 					Err(err) => return Err(BadRequestError(err.to_string())),
 				}

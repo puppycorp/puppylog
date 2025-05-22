@@ -2,7 +2,6 @@ use std::fs::create_dir_all;
 use chrono::DateTime;
 use chrono::Utc;
 use puppylog::check_props;
-use puppylog::LogEntry;
 use puppylog::LogLevel;
 use puppylog::Prop;
 use puppylog::QueryAst;
@@ -178,7 +177,7 @@ impl DB {
 					 logs_count = devices.logs_count + ?3,
 					 last_upload_at = current_timestamp"
 			)?;
-			stmt.execute(&[&device_id as &dyn ToSql, &logs_size as &dyn ToSql, &logs_count as &dyn ToSql])?;
+			stmt.execute([&device_id as &dyn ToSql, &logs_size as &dyn ToSql, &logs_count as &dyn ToSql])?;
 		}
 		tx.commit()?;
 		Ok(())
@@ -278,7 +277,7 @@ impl DB {
 				filter_level = ?3,
 				send_interval = ?4"
 		).unwrap();
-		stmt.execute(&[
+		stmt.execute([
 			&device_id as &dyn ToSql,
 			&payload.send_logs as &dyn ToSql,
 			&payload.filter_level.to_u8() as &dyn ToSql,
@@ -365,7 +364,7 @@ impl DB {
 				"INSERT INTO log_segments (first_timestamp, last_timestamp, original_size, compressed_size, logs_count)
 				 VALUES (?1, ?2, ?3, ?4, ?5)"
 			)?;
-			stmt.execute(&[
+			stmt.execute([
 				&args.first_timestamp as &dyn ToSql,
 				&args.last_timestamp as &dyn ToSql,
 				&args.original_size as &dyn ToSql,
@@ -607,7 +606,7 @@ pub fn run_migrations(conn: &mut Connection) -> anyhow::Result<()> {
             log::info!("applying migration {}: {}", migration.id, migration.name);
             let tx = conn.transaction()?;
             tx.execute_batch(migration.sql)?;
-            tx.execute("INSERT INTO migrations (id, name) VALUES (?1, ?2)", &[&migration.id as &dyn ToSql, &migration.name as &dyn ToSql])?;
+            tx.execute("INSERT INTO migrations (id, name) VALUES (?1, ?2)", [&migration.id as &dyn ToSql, &migration.name as &dyn ToSql])?;
             tx.commit()?;
             log::info!("migration {} applied successfully.", migration.id);
         }

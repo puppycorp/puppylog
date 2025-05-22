@@ -20,7 +20,7 @@ impl<'a> UploadGuard<'a> {
 	}
 }
 
-impl<'a> Drop for UploadGuard<'a> {
+impl Drop for UploadGuard<'_> {
 	fn drop(&mut self) {
 		self.counter.fetch_sub(1, Ordering::SeqCst);
 	}
