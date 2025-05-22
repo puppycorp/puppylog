@@ -10,82 +10,121 @@ use crate::query_parsing::Operator;
 use crate::query_parsing::Value;
 use crate::Prop;
 
+
 #[derive(Debug)]
 enum FieldType {
-    Timestamp,
-    Level,
-    Msg,
-    Prop(String, String),
+	Timestamp,
+	Level,
+	Msg,
+	Prop(String, String),
 }
 
 fn find_field(v: &str, logline: &LogEntry) -> Option<FieldType> {
-    if v == "timestamp" {
-        return Some(FieldType::Timestamp);
-    }
+	if v == "timestamp" {
+		return Some(FieldType::Timestamp);
+	}
 
-    if v == "level" {
-        return Some(FieldType::Level);
-    }
+	if v == "level" {
+		return Some(FieldType::Level);
+	}
 
-    if v == "msg" {
-        return Some(FieldType::Msg);
-    }
+	if v == "msg" {
+		return Some(FieldType::Msg);
+	}
 
-    for prop in &logline.props {
-        if prop.key == v {
-            return Some(FieldType::Prop(prop.key.clone(), prop.value.clone()));
-        }
-    }
+	for prop in &logline.props {
+		if prop.key == v {
+			return Some(FieldType::Prop(prop.key.clone(), prop.value.clone()));
+		}
+	}
 
-    None
+	None
 }
 
 fn magic_cmp<V, R>(left: V, right: R, op: &Operator) -> bool
 where
-    V: PartialEq<R> + PartialOrd<R>,
-    R: PartialEq<V> + PartialOrd<V>,
+	V: PartialEq<R> + PartialOrd<R>,
+	R: PartialEq<V> + PartialOrd<V>,
 {
-    match op {
-        Operator::Equal => left == right,
-        Operator::NotEqual => left != right,
-        Operator::GreaterThan => left > right,
-        Operator::GreaterThanOrEqual => left >= right,
-        Operator::LessThan => left < right,
-        Operator::LessThanOrEqual => left <= right,
-        _ => todo!("operator {:?} not supported yet", op),
-    }
+	match op {
+		Operator::Equal => left == right,
+		Operator::NotEqual => left != right,
+		Operator::GreaterThan => left > right,
+		Operator::GreaterThanOrEqual => left >= right,
+		Operator::LessThan => left < right,
+		Operator::LessThanOrEqual => left <= right,
+		_ => todo!("operator {:?} not supported yet", op),
+	}
+}
+
+fn parse_semver(v: &str) -> Option<(u64, u64, u64)> {
+	let mut it = v.split('.');
+	let major = it.next()?.parse().ok()?;
+	let minor_part = it.next().unwrap_or("0");
+	let minor = minor_part
+		.split(|c| c == '-' || c == '+')
+		.next()
+		.unwrap_or(minor_part)
+		.parse()
+		.ok()?;
+	let patch_part = it.next().unwrap_or("0");
+	let patch = patch_part
+		.split(|c| c == '-' || c == '+')
+		.next()
+		.unwrap_or(patch_part)
+		.parse()
+		.ok()?;
+	Some((major, minor, patch))
+}
+
+fn semver_cmp(left: &str, right: &str, op: &Operator) -> Option<bool> {
+	let left_v = parse_semver(left)?;
+	let right_v = parse_semver(right)?;
+	Some(match op {
+		Operator::Equal => left_v == right_v,
+		Operator::NotEqual => left_v != right_v,
+		Operator::GreaterThan => left_v > right_v,
+		Operator::GreaterThanOrEqual => left_v >= right_v,
+		Operator::LessThan => left_v < right_v,
+		Operator::LessThanOrEqual => left_v <= right_v,
+		_ => return None,
+	})
+}
+
+fn cmp_semver_or_string(left: &str, right: &str, op: &Operator) -> bool {
+	semver_cmp(left, right, op).unwrap_or_else(|| magic_cmp(left, right, op))
 }
 
 fn any(field: &FieldType, values: &[Value], op: &Operator, logline: &LogEntry) -> Result<bool, String> {
-    for value in values {
-        if does_field_match(field, value, op, logline)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+	for value in values {
+		if does_field_match(field, value, op, logline)? {
+			return Ok(true);
+		}
+	}
+	Ok(false)
 }
 
 fn does_field_match(field: &FieldType, value: &Value, operator: &Operator, logline: &LogEntry) -> Result<bool, String> {
-    match (field, value, operator) {
-        (FieldType::Msg, Value::String(val), Operator::Like) => Ok(logline.msg.to_lowercase().contains(&val.to_lowercase())),
-        (FieldType::Msg, Value::String(val), Operator::NotLike) => Ok(!logline.msg.to_lowercase().contains(&val.to_lowercase())),
-        (FieldType::Timestamp, Value::Date(val), op) => Ok(magic_cmp(logline.timestamp, *val, op)),
-        (FieldType::Timestamp, _ , _) => Err(format!("Invalid value for timestamp {:?}", value)),
-        (FieldType::Level, Value::String(val), op) => Ok(magic_cmp(&logline.level, &LogLevel::from_string(&val), op)),
-        (FieldType::Level, Value::Date(d), _) => Err(format!("Invalid value for level {:?}", d)),
-        (FieldType::Level, Value::Number(l), op) => Ok(magic_cmp(&logline.level, &LogLevel::from_i64(*l), op)),
-        (FieldType::Msg, Value::String(val), op) => Ok(magic_cmp(&logline.msg, val, op)),
-        (FieldType::Msg, Value::Number(n), op) => Ok(magic_cmp(&logline.msg, &n.to_string(), op)),
-        (FieldType::Msg, Value::Date(d), _) => Err(format!("Invalid value for msg {:?}", d)),
+	match (field, value, operator) {
+		(FieldType::Msg, Value::String(val), Operator::Like) => Ok(logline.msg.to_lowercase().contains(&val.to_lowercase())),
+		(FieldType::Msg, Value::String(val), Operator::NotLike) => Ok(!logline.msg.to_lowercase().contains(&val.to_lowercase())),
+		(FieldType::Timestamp, Value::Date(val), op) => Ok(magic_cmp(logline.timestamp, *val, op)),
+		(FieldType::Timestamp, _ , _) => Err(format!("Invalid value for timestamp {:?}", value)),
+		(FieldType::Level, Value::String(val), op) => Ok(magic_cmp(&logline.level, &LogLevel::from_string(&val), op)),
+		(FieldType::Level, Value::Date(d), _) => Err(format!("Invalid value for level {:?}", d)),
+		(FieldType::Level, Value::Number(l), op) => Ok(magic_cmp(&logline.level, &LogLevel::from_i64(*l), op)),
+		(FieldType::Msg, Value::String(val), op) => Ok(cmp_semver_or_string(&logline.msg, val, op)),
+		(FieldType::Msg, Value::Number(n), op) => Ok(magic_cmp(&logline.msg, &n.to_string(), op)),
+		(FieldType::Msg, Value::Date(d), _) => Err(format!("Invalid value for msg {:?}", d)),
 		(FieldType::Prop(_, val1), Value::String(val2), Operator::Like) => Ok(val1.contains(&val2.to_string())),
 		(FieldType::Prop(_, val1), Value::String(val2), Operator::NotLike) => Ok(!val1.contains(&val2.to_string())),
-        (FieldType::Prop(_, val1), Value::String(val2), op) => Ok(magic_cmp(val1, val2, op)),
-        (FieldType::Prop(_, val1), Value::Number(val2), op) => Ok(magic_cmp(val1, &val2.to_string(), op)),
-        (FieldType::Prop(_, _), Value::Date(_), _) => todo!(),
-        (field_type, Value::List(vec), Operator::In) => any(field_type, vec, &Operator::Equal, logline),
-        (field_type, Value::List(vec), Operator::NotIn) => Ok(!any(field_type, vec, &Operator::Equal, logline)?),
-        _ => Err(format!("Invalid comparison {:?} {:?} {:?}", field, value, operator))
-    }
+		(FieldType::Prop(_, val1), Value::String(val2), op) => Ok(cmp_semver_or_string(val1, val2, op)),
+		(FieldType::Prop(_, val1), Value::Number(val2), op) => Ok(magic_cmp(val1, &val2.to_string(), op)),
+		(FieldType::Prop(_, _), Value::Date(_), _) => todo!(),
+		(field_type, Value::List(vec), Operator::In) => any(field_type, vec, &Operator::Equal, logline),
+		(field_type, Value::List(vec), Operator::NotIn) => Ok(!any(field_type, vec, &Operator::Equal, logline)?),
+		_ => Err(format!("Invalid comparison {:?} {:?} {:?}", field, value, operator))
+	}
 }
 
 fn check_field_access(field_access: &FieldAccess, right: &Expr, op: &Operator, logline: &LogEntry) -> Result<bool, String> {
@@ -116,21 +155,21 @@ fn check_field_access(field_access: &FieldAccess, right: &Expr, op: &Operator, l
 }
 
 fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String> {
-    fn match_field(field: &str, val: &Value, op: &Operator, logline: &LogEntry) -> Result<bool, String> {
-        match find_field(field, logline) {
-            Some(field) => does_field_match(&field, val, op, logline),
-            None => Ok(false)
-        }
-    }
-    match (cond.left.as_ref(), cond.right.as_ref(), &cond.operator) {
-        (Expr::Value(Value::String(left)), Expr::Value(val), op) => match_field(left, val, op, logline),
-        (Expr::Value(val), Expr::Value(Value::String(right)), op) => match_field(right, val, op, logline),
-        (Expr::Value(Value::String(left)), Expr::Empty, Operator::Exists) => Ok(find_field(left, logline).is_some()),
-        (Expr::Value(Value::String(left)), Expr::Empty, Operator::NotExists) => Ok(find_field(left, logline).is_none()), 
+	fn match_field(field: &str, val: &Value, op: &Operator, logline: &LogEntry) -> Result<bool, String> {
+		match find_field(field, logline) {
+			Some(field) => does_field_match(&field, val, op, logline),
+			None => Ok(false)
+		}
+	}
+	match (cond.left.as_ref(), cond.right.as_ref(), &cond.operator) {
+		(Expr::Value(Value::String(left)), Expr::Value(val), op) => match_field(left, val, op, logline),
+		(Expr::Value(val), Expr::Value(Value::String(right)), op) => match_field(right, val, op, logline),
+		(Expr::Value(Value::String(left)), Expr::Empty, Operator::Exists) => Ok(find_field(left, logline).is_some()),
+		(Expr::Value(Value::String(left)), Expr::Empty, Operator::NotExists) => Ok(find_field(left, logline).is_none()), 
 		(Expr::FieldAccess(field), right, op) => check_field_access(field, right, op, logline),
-        (left, Expr::FieldAccess(field), op) => check_field_access(field, left, op, logline),
-        _ => panic!("Nothing makes sense anymore {:?} logline: {:?}", cond, logline)
-    }
+		(left, Expr::FieldAccess(field), op) => check_field_access(field, left, op, logline),
+		_ => panic!("Nothing makes sense anymore {:?} logline: {:?}", cond, logline)
+	}
 }
 
 pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
@@ -142,23 +181,23 @@ pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 			Value::String(value) => Ok(value != ""),
 			Value::Number(value) => Ok(*value > 0),
 			Value::Date(value) => Ok(true),
-            Value::List(_) => Err("This is not javascript".to_string())
+			Value::List(_) => Err("This is not javascript".to_string())
 		},
 		Expr::Empty => Ok(true),
-        _ => todo!("expr {:?} not supported yet", expr),
+		_ => todo!("expr {:?} not supported yet", expr),
 	}
 }
 
 pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 	fn check_condition(cond: &Condition, props: &[Prop]) -> Result<bool, String> {
-		fn compare(left: &String, right: &Value, op: &Operator) -> Result<bool, String> {
-			match (right, left, op) {
-				(Value::String(left), right, op) => Ok(magic_cmp(left, right, op)),
-				(Value::Number(left), right, op) => Ok(magic_cmp(&left.to_string(), right, op)),
-				(Value::List(list), right, Operator::In) => any(list, right, &Operator::Equal),
-				(_, _, _) => Ok(false)
-			}
-		}
+				fn compare(prop_val: &String, query_val: &Value, op: &Operator) -> Result<bool, String> {
+						match (query_val, prop_val, op) {
+								(Value::String(query_str), prop_val, op) => Ok(cmp_semver_or_string(prop_val, query_str, op)),
+								(Value::Number(num), prop_val, op) => Ok(magic_cmp(prop_val, &num.to_string(), op)),
+								(Value::List(list), right, Operator::In) => any(list, right, &Operator::Equal),
+								(_, _, _) => Ok(false)
+						}
+				}
 	
 		fn match_field(field: &String, val: &Value, op: &Operator, props: &[Prop]) -> Result<bool, String> {
 			if field == "msg" || field == "timestamp" {
@@ -199,10 +238,10 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 			Value::String(value) => Ok(value != ""),
 			Value::Number(value) => Ok(*value > 0),
 			Value::Date(value) => Ok(true),
-            Value::List(_) => Err("This is not javascript".to_string())
+			Value::List(_) => Err("This is not javascript".to_string())
 		},
 		Expr::Empty => Ok(true),
-        _ => todo!("expr {:?} not supported yet", expr),
+		_ => todo!("expr {:?} not supported yet", expr),
 	}
 }
 
@@ -632,7 +671,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_timestamp_fields() {
+		fn test_timestamp_fields() {
 		let logline = LogEntry {
 			timestamp: DateTime::from_utc(chrono::NaiveDate::from_ymd_opt(2024, 5, 15).unwrap().and_hms_opt(0, 0, 0).unwrap(), Utc),
 			level: LogLevel::Info,
@@ -693,6 +732,38 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::Number(0)))
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+				assert!(check_expr(&expr, &logline).unwrap());
+	}
+
+	#[test]
+	fn test_semver_comparison() {
+			let logline = LogEntry {
+					timestamp: Utc::now(),
+					level: LogLevel::Info,
+					props: vec![Prop { key: "version".to_string(), value: "1.10.0".to_string() }],
+					msg: "".to_string(),
+					..Default::default()
+			};
+
+			let expr = Expr::Condition(Condition {
+					left: Box::new(Expr::Value(Value::String("version".to_string()))),
+					operator: Operator::GreaterThan,
+					right: Box::new(Expr::Value(Value::String("1.2.0".to_string())))
+			});
+			assert!(check_expr(&expr, &logline).unwrap());
+
+			let expr = Expr::Condition(Condition {
+					left: Box::new(Expr::Value(Value::String("version".to_string()))),
+					operator: Operator::LessThan,
+					right: Box::new(Expr::Value(Value::String("2.0.0".to_string())))
+			});
+			assert!(check_expr(&expr, &logline).unwrap());
+
+			let expr = Expr::Condition(Condition {
+					left: Box::new(Expr::Value(Value::String("version".to_string()))),
+					operator: Operator::Equal,
+					right: Box::new(Expr::Value(Value::String("1.10.0".to_string())))
+			});
+			assert!(check_expr(&expr, &logline).unwrap());
 	}
 }
