@@ -1,0 +1,1 @@
+When you run tests use cargo test --workspace
