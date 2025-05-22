@@ -123,16 +123,33 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
 				chars.next();
 			}
 			'\"' => {
-				chars.next(); // consume opening quote
-				let mut value = String::new();
-				while let Some(&c) = chars.peek() {
-					if c == '\"' {
-						chars.next();
-						break;
+					chars.next(); // consume opening quote
+					let mut value = String::new();
+					while let Some(c) = chars.next() {
+							match c {
+									'\\' => {
+											if let Some(next_c) = chars.next() {
+													match next_c {
+															'\\' => value.push('\\'),
+															'"' => value.push('"'),
+															'n' => value.push('\n'),
+															't' => value.push('\t'),
+															'r' => value.push('\r'),
+															other => {
+																	value.push('\\');
+																	value.push(other);
+															}
+													}
+											} else {
+													value.push('\\');
+													break;
+											}
+									}
+									'"' => break,
+									other => value.push(other),
+							}
 					}
-					value.push(chars.next().unwrap());
-				}
-				tokens.push(Token::Value(Value::String(value)));
+					tokens.push(Token::Value(Value::String(value)));
 			}
 			_ => {
 				let mut word = String::new();
@@ -776,28 +793,38 @@ mod tests {
 	}
 
 	#[test]
-	fn parse_like() {
-		let query = r#"msg like "error""#;
-		let ast = parse_log_query(query).unwrap();
-		match ast.root {
-			Expr::Condition(c) => {
-				assert_eq!(c.left, Box::new(Expr::Value(Value::String("msg".to_string()))));
-				assert_eq!(c.operator, Operator::Like);
-				assert_eq!(c.right, Box::new(Expr::Value(Value::String("error".to_string()))));
-			},
-			_ => panic!("Expected Condition"),
-		}
-		let query = r#"msg not like "error""#;
-		let ast = parse_log_query(query).unwrap();
-		match ast.root {
-			Expr::Condition(c) => {
-				assert_eq!(c.left, Box::new(Expr::Value(Value::String("msg".to_string()))));
-				assert_eq!(c.operator, Operator::NotLike);
-				assert_eq!(c.right, Box::new(Expr::Value(Value::String("error".to_string()))));
-			},
-			_ => panic!("Expected Condition"),
-		}
-	}
+        fn parse_like() {
+                let query = r#"msg like "error""#;
+                let ast = parse_log_query(query).unwrap();
+                match ast.root {
+                        Expr::Condition(c) => {
+                                assert_eq!(c.left, Box::new(Expr::Value(Value::String("msg".to_string()))));
+                                assert_eq!(c.operator, Operator::Like);
+                                assert_eq!(c.right, Box::new(Expr::Value(Value::String("error".to_string()))));
+                        },
+                        _ => panic!("Expected Condition"),
+                }
+                let query = r#"msg not like "error""#;
+                let ast = parse_log_query(query).unwrap();
+                match ast.root {
+                        Expr::Condition(c) => {
+                                assert_eq!(c.left, Box::new(Expr::Value(Value::String("msg".to_string()))));
+                                assert_eq!(c.operator, Operator::NotLike);
+                                assert_eq!(c.right, Box::new(Expr::Value(Value::String("error".to_string()))));
+                        },
+                        _ => panic!("Expected Condition"),
+                }
+                let query = r#"msg like "error \"oops\"""#;
+                let ast = parse_log_query(query).unwrap();
+                match ast.root {
+                        Expr::Condition(c) => {
+                                assert_eq!(c.left, Box::new(Expr::Value(Value::String("msg".to_string()))));
+                                assert_eq!(c.operator, Operator::Like);
+                                assert_eq!(c.right, Box::new(Expr::Value(Value::String("error \"oops\"".to_string()))));
+                        },
+                        _ => panic!("Expected Condition"),
+                }
+        }
 
 	#[test]
 	fn parse_exists() {
