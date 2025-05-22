@@ -299,17 +299,17 @@ fn parse_condition(tokens: &[Token], start: usize) -> Result<(Expr, usize), Stri
 	let (left_expr, mut pos) = parse_field_chain(tokens, start)?;
 	// If the next token is a boolean operator or we have reached the end, and the left_expr is a bare string,
 	// wrap it as a default text search on the "msg" field.
-	if pos >= tokens.len() || matches!(tokens[pos], Token::And | Token::Or) {
-	    if let Expr::Value(Value::String(text)) = left_expr {
-	        return Ok((
-	            Expr::Condition(Condition {
-	                left: Box::new(Expr::Value(Value::String("msg".to_string()))),
-	                operator: Operator::Like,
-	                right: Box::new(Expr::Value(Value::String(text))),
-	            }),
-	            pos,
-	        ));
-	    }
+		if pos >= tokens.len() || matches!(tokens[pos], Token::And | Token::Or | Token::CloseParen) {
+			if let Expr::Value(Value::String(text)) = left_expr {
+				return Ok((
+					Expr::Condition(Condition {
+					left: Box::new(Expr::Value(Value::String("msg".to_string()))),
+					operator: Operator::Like,
+					right: Box::new(Expr::Value(Value::String(text))),
+				}),
+				pos,
+			));
+		}
 	}
 	if pos >= len {
 		return Err("Missing operator".into());
@@ -930,11 +930,11 @@ mod tests {
 		}));
 	}
 
-	#[test]
-	fn test_and_or() {
-		let query = r#"(level = "info" and msg like "error") || (level = "debug" && msg like "jyrki")"#;
-		let ast = parse_log_query(query).unwrap();
-		assert_eq!(ast.root, Expr::Or(
+        #[test]
+        fn test_and_or() {
+			let query = r#"(level = "info" and msg like "error") || (level = "debug" && msg like "jyrki")"#;
+			let ast = parse_log_query(query).unwrap();
+			assert_eq!(ast.root, Expr::Or(
 			Box::new(Expr::And(
 				Box::new(Expr::Condition(Condition {
 					left: Box::new(Expr::Value(Value::String("level".to_string()))),
@@ -960,5 +960,26 @@ mod tests {
 				})),
 			)),
 		));
+	}
+
+	#[test]
+	fn bare_strings_with_parentheses_are_text_searches() {
+			let query = r#"("openDoor" or "DoorEvent")"#;
+			let ast = parse_log_query(query).unwrap();
+			assert_eq!(
+					ast.root,
+					Expr::Or(
+							Box::new(Expr::Condition(Condition {
+									left: Box::new(Expr::Value(Value::String("msg".to_string()))),
+									operator: Operator::Like,
+									right: Box::new(Expr::Value(Value::String("openDoor".to_string()))),
+							})),
+							Box::new(Expr::Condition(Condition {
+									left: Box::new(Expr::Value(Value::String("msg".to_string()))),
+									operator: Operator::Like,
+									right: Box::new(Expr::Value(Value::String("DoorEvent".to_string()))),
+							})),
+					)
+			);
 	}
 }
