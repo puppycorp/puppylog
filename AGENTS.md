@@ -1,4 +1,6 @@
 When you run tests use cargo test --workspace --frozen --offline
+After changes run cargo clippy --workspace
+After changes run cargo fmt --all -- --check
 
 end_of_line = lf
 tab_width = 4
