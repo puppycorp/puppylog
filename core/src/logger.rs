@@ -1,29 +1,29 @@
+use bytes::Bytes;
+use chrono::Utc;
+use log::{Level, Metadata, Record, SetLoggerError};
+use native_tls::TlsConnector;
 use std::collections::VecDeque;
 use std::net::TcpStream;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::mpsc::{self, Receiver};
-use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
-use bytes::Bytes;
-use log::{Record, Level, Metadata, SetLoggerError};
-use chrono::Utc;
-use native_tls::TlsConnector;
 use tungstenite::client::client_with_config;
 use tungstenite::http::Uri;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{ClientRequestBuilder, Message, WebSocket};
 
-use crate::{check_expr, parse_log_query};
 use crate::LogEntry;
 use crate::LogLevel;
 use crate::Prop;
 use crate::PuppylogEvent;
 use crate::QueryAst;
+use crate::{check_expr, parse_log_query};
 
 enum WorkerMessage {
-    LogEntry(LogEntry),
-    Flush(mpsc::Sender<()>),
+	LogEntry(LogEntry),
+	Flush(mpsc::Sender<()>),
 	FlushClose(mpsc::Sender<()>),
 }
 
@@ -61,21 +61,21 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 						println!("send interval reached");
 						break;
 					}
-				},
+				}
 				Ok(WorkerMessage::Flush(ack)) => {
 					let _ = ack.send(());
-				},
+				}
 				Ok(WorkerMessage::FlushClose(ack)) => {
 					close_ack = Some(ack);
 					break;
-				},
+				}
 				Err(mpsc::RecvTimeoutError::Timeout) => {
 					println!("timeout");
 					break;
-				},
+				}
 				Err(mpsc::RecvTimeoutError::Disconnected) => {
 					eprintln!("channel disconnected");
-					break 'main
+					break 'main;
 				}
 			};
 		}
@@ -100,12 +100,10 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 						Message::Text(utf8_bytes) => {
 							println!("received text: {}", utf8_bytes);
 							match serde_json::from_str::<PuppylogEvent>(&utf8_bytes) {
-								Ok(event) => {
-									match event {
-										PuppylogEvent::QueryChanged { query } => {
-											if let Ok(q) = parse_log_query(&query) {
-												logquery = Some(q);
-											}
+								Ok(event) => match event {
+									PuppylogEvent::QueryChanged { query } => {
+										if let Ok(q) = parse_log_query(&query) {
+											logquery = Some(q);
 										}
 									}
 								},
@@ -114,12 +112,12 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 									continue;
 								}
 							}
-						},
+						}
 						Message::Close(close_frame) => {
 							println!("received close frame: {:?}", close_frame);
 							client_broken = true;
 							break;
-						},
+						}
 						msg => {
 							println!("unhandled msg: {:?}", msg);
 						}
@@ -130,14 +128,16 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 				if let Some(batch) = queue.pop_front() {
 					println!("seding batch size: {}", batch.len());
 					match c.send(Message::Binary(batch)) {
-						Ok(_) => { serialize_buffer.clear(); },
+						Ok(_) => {
+							serialize_buffer.clear();
+						}
 						Err(e) => {
 							eprintln!("Failed to send message: {}", e);
 							client_broken = true;
 						}
 					};
 				}
-			},
+			}
 			None => {
 				if connect_timer.elapsed().as_secs() < 1 {
 					continue;
@@ -152,7 +152,7 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 							eprintln!("unsupported scheme: {}", scheme);
 							continue;
 						}
-					}
+					},
 					None => {
 						eprintln!("No scheme in url");
 						continue;
@@ -161,9 +161,18 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 
 				let port = match url.port() {
 					Some(p) => p.as_u16(),
-					None => if https { 443 } else { 80 }
+					None => {
+						if https {
+							443
+						} else {
+							80
+						}
+					}
 				};
-				let host = url.host().ok_or(PuppyLogError::new("no host in url")).unwrap();
+				let host = url
+					.host()
+					.ok_or(PuppyLogError::new("no host in url"))
+					.unwrap();
 				let host = format!("{}:{}", host, port);
 				let socket = match TcpStream::connect(host) {
 					Ok(socket) => socket,
@@ -172,10 +181,12 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 						continue;
 					}
 				};
-				socket.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+				socket
+					.set_read_timeout(Some(Duration::from_millis(500)))
+					.unwrap();
 				println!("tcp socket connected");
 				let stream = if https {
-					let connector = match  TlsConnector::builder().build() {
+					let connector = match TlsConnector::builder().build() {
 						Ok(c) => c,
 						Err(_) => {
 							eprintln!("Failed to create Tlsconnector");
@@ -187,15 +198,18 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 						Err(_) => {
 							eprintln!("Failed to connect");
 							continue;
-						},
+						}
 					};
 					println!("tls connected");
 					MaybeTlsStream::NativeTls(stream)
-				}
-				else { MaybeTlsStream::Plain(socket) };
+				} else {
+					MaybeTlsStream::Plain(socket)
+				};
 				println!("creating ws client addr: {}", url);
-				let req = ClientRequestBuilder::new(url.clone())
-					.with_header("Authorization", builder.authorization.clone().unwrap_or_default());
+				let req = ClientRequestBuilder::new(url.clone()).with_header(
+					"Authorization",
+					builder.authorization.clone().unwrap_or_default(),
+				);
 				let c = match client_with_config(req, stream, None) {
 					Ok((c, _)) => c,
 					Err(e) => {
@@ -205,7 +219,7 @@ fn worker(rx: Receiver<WorkerMessage>, builder: PuppylogBuilder) {
 				};
 				println!("connected");
 				client = Some(c);
-			},
+			}
 		};
 
 		if client_broken {
@@ -233,7 +247,7 @@ impl PuppylogClient {
 		let level = builder.level_filter;
 		let stdout = builder.log_stdout;
 		let (sender, rx) = mpsc::channel();
-		thread::spawn(move || { worker(rx, builder) });
+		thread::spawn(move || worker(rx, builder));
 		PuppylogClient {
 			sender,
 			level,
@@ -248,11 +262,11 @@ impl PuppylogClient {
 		}
 	}
 
-    fn flush(&self) {
-        let (ack_tx, ack_rx) = mpsc::channel();
-        self.sender.send(WorkerMessage::Flush(ack_tx)).ok();
-        let _ = ack_rx.recv(); // blocks until worker finishes flushing
-    }
+	fn flush(&self) {
+		let (ack_tx, ack_rx) = mpsc::channel();
+		self.sender.send(WorkerMessage::Flush(ack_tx)).ok();
+		let _ = ack_rx.recv(); // blocks until worker finishes flushing
+	}
 
 	pub fn close(&self) {
 		let (ack_tx, ack_rx) = mpsc::channel();
@@ -300,7 +314,7 @@ impl log::Log for PuppylogClient {
 				timestamp: Utc::now(),
 				random: 0,
 				props,
-				msg: record.args().to_string()
+				msg: record.args().to_string(),
 			};
 			self.send_logentry(entry);
 		}

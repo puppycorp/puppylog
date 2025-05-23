@@ -1,12 +1,12 @@
-use std::io::{self, Read, Write};
 use byteorder::LittleEndian;
+use byteorder::ReadBytesExt;
+use byteorder::WriteBytesExt;
 use bytes::Bytes;
 use chrono::Datelike;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde::Serialize;
-use byteorder::ReadBytesExt;
-use byteorder::WriteBytesExt;
+use std::io::{self, Read, Write};
 
 use crate::ChunkReader;
 
@@ -19,7 +19,7 @@ pub enum LogLevel {
 	Warn,
 	Error,
 	Fatal,
-	Uknown
+	Uknown,
 }
 
 impl LogLevel {
@@ -31,7 +31,7 @@ impl LogLevel {
 			"warn" | "WARN" => LogLevel::Warn,
 			"error" | "ERROR" => LogLevel::Error,
 			"fatal" | "FATAL" => LogLevel::Fatal,
-			_ => LogLevel::Uknown
+			_ => LogLevel::Uknown,
 		}
 	}
 
@@ -43,7 +43,7 @@ impl LogLevel {
 			4 => LogLevel::Warn,
 			5 => LogLevel::Error,
 			6 => LogLevel::Fatal,
-			_ => LogLevel::Uknown
+			_ => LogLevel::Uknown,
 		}
 	}
 
@@ -55,7 +55,7 @@ impl LogLevel {
 			LogLevel::Warn => 4,
 			LogLevel::Error => 5,
 			LogLevel::Fatal => 6,
-			LogLevel::Uknown => 0
+			LogLevel::Uknown => 0,
 		}
 	}
 }
@@ -78,7 +78,7 @@ impl TryFrom<u8> for LogLevel {
 			4 => Ok(LogLevel::Warn),
 			5 => Ok(LogLevel::Error),
 			6 => Ok(LogLevel::Fatal),
-			_ => Err("Invalid log level")
+			_ => Err("Invalid log level"),
 		}
 	}
 }
@@ -92,7 +92,7 @@ impl ToString for LogLevel {
 			LogLevel::Warn => "warn".to_string(),
 			LogLevel::Error => "error".to_string(),
 			LogLevel::Fatal => "fatal".to_string(),
-			LogLevel::Uknown => "unknown".to_string()
+			LogLevel::Uknown => "unknown".to_string(),
 		}
 	}
 }
@@ -110,13 +110,13 @@ pub enum LogentryDeserializerError {
 	InvalidPropKey,
 	InvalidPropValue,
 	InvalidMessage,
-	NotEnoughData
+	NotEnoughData,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
 pub struct Prop {
 	pub key: String,
-	pub value: String
+	pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -126,7 +126,7 @@ pub struct LogEntry {
 	pub timestamp: DateTime<Utc>,
 	pub level: LogLevel,
 	pub props: Vec<Prop>,
-	pub msg: String
+	pub msg: String,
 }
 
 impl PartialOrd for LogEntry {
@@ -150,7 +150,7 @@ impl Default for LogEntry {
 			timestamp: Utc::now(),
 			level: LogLevel::Info,
 			props: vec![],
-			msg: "".to_string()
+			msg: "".to_string(),
 		}
 	}
 }
@@ -216,20 +216,20 @@ impl LogEntry {
 			ptr += 1;
 			let value = String::from_utf8_lossy(&buff[ptr..ptr + value_len]).to_string();
 			ptr += value_len;
-			props.push(Prop {
-				key,
-				value
-			});
+			props.push(Prop { key, value });
 		}
 	}
 
-	pub fn fast_deserialize(data: &[u8], ptr: &mut usize) -> Result<LogEntry, LogentryDeserializerError> {
+	pub fn fast_deserialize(
+		data: &[u8],
+		ptr: &mut usize,
+	) -> Result<LogEntry, LogentryDeserializerError> {
 		if *ptr + 16 > data.len() {
 			return Err(LogentryDeserializerError::NotEnoughData);
 		}
-		let version = u16::from_le_bytes(data[*ptr..(*ptr+2)].try_into().unwrap());
+		let version = u16::from_le_bytes(data[*ptr..(*ptr + 2)].try_into().unwrap());
 		*ptr += 2;
-		let timestamp = i64::from_le_bytes(data[*ptr..(*ptr+8)].try_into().unwrap());
+		let timestamp = i64::from_le_bytes(data[*ptr..(*ptr + 8)].try_into().unwrap());
 		*ptr += 8;
 		let timestamp = match DateTime::from_timestamp_micros(timestamp) {
 			Some(timestamp) => timestamp,
@@ -238,11 +238,11 @@ impl LogEntry {
 				return Err(LogentryDeserializerError::InvalidTimestamp);
 			}
 		};
-		let random = u32::from_le_bytes(data[*ptr..(*ptr+4)].try_into().unwrap());
+		let random = u32::from_le_bytes(data[*ptr..(*ptr + 4)].try_into().unwrap());
 		*ptr += 4;
 		let level = match LogLevel::try_from(data[*ptr]) {
 			Ok(level) => level,
-			Err(_) => return Err(LogentryDeserializerError::InvalidLogLevel)
+			Err(_) => return Err(LogentryDeserializerError::InvalidLogLevel),
 		};
 		*ptr += 1;
 		let prop_count = data[*ptr];
@@ -269,10 +269,7 @@ impl LogEntry {
 			}
 			let value = String::from_utf8_lossy(&data[*ptr..*ptr + value_len]).to_string();
 			*ptr += value_len;
-			props.push(Prop {
-				key,
-				value
-			});
+			props.push(Prop { key, value });
 		}
 		if *ptr + 4 > data.len() {
 			return Err(LogentryDeserializerError::NotEnoughData);
@@ -290,28 +287,39 @@ impl LogEntry {
 			timestamp,
 			level,
 			props,
-			msg
+			msg,
 		})
 	}
 
 	pub fn deserialize<R: Read>(reader: &mut R) -> io::Result<LogEntry> {
 		let version = reader.read_u16::<LittleEndian>()?;
 		if version > 1 {
-			return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid version"));
+			return Err(io::Error::new(
+				io::ErrorKind::InvalidData,
+				"Invalid version",
+			));
 		}
 		let timestamp = reader.read_i64::<LittleEndian>()?;
 		let timestamp = match DateTime::from_timestamp_micros(timestamp) {
 			Some(timestamp) => timestamp,
 			None => {
 				log::error!("Invalid timestamp");
-				return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid timestamp"));
+				return Err(io::Error::new(
+					io::ErrorKind::InvalidData,
+					"Invalid timestamp",
+				));
 			}
 		};
 		let random = reader.read_u32::<LittleEndian>()?;
 		let level = reader.read_u8()?;
 		let level = match LogLevel::try_from(level) {
 			Ok(level) => level,
-			Err(_) => return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid log level"))
+			Err(_) => {
+				return Err(io::Error::new(
+					io::ErrorKind::InvalidData,
+					"Invalid log level",
+				))
+			}
 		};
 		let prop_count = reader.read_u8()?;
 		let mut props = Vec::with_capacity(prop_count as usize);
@@ -319,51 +327,51 @@ impl LogEntry {
 			let key_len = reader.read_u8()?;
 			let mut key = vec![0; key_len as usize];
 			reader.read_exact(&mut key)?;
-			let key = String::from_utf8(key).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid prop key"))?;
+			let key = String::from_utf8(key)
+				.map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid prop key"))?;
 			let value_len = reader.read_u8()?;
 			let mut value = vec![0; value_len as usize];
 			reader.read_exact(&mut value)?;
-			let value = String::from_utf8(value).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid prop value"))?;
-			props.push(Prop {
-				key,
-				value
-			});
+			let value = String::from_utf8(value)
+				.map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid prop value"))?;
+			props.push(Prop { key, value });
 		}
 		let msg_len = reader.read_u32::<LittleEndian>()?;
 		let mut msg = vec![0; msg_len as usize];
 		reader.read_exact(&mut msg)?;
-		let msg = String::from_utf8(msg).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid message"))?;
+		let msg = String::from_utf8(msg)
+			.map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid message"))?;
 		Ok(LogEntry {
 			version,
 			random,
 			timestamp,
 			level,
 			props,
-			msg
+			msg,
 		})
 	}
 }
 
 pub struct LogEntryChunkParser {
-    chunck_parser: ChunkReader,
-    pub log_entries: Vec<LogEntry>
+	chunck_parser: ChunkReader,
+	pub log_entries: Vec<LogEntry>,
 }
 
 impl LogEntryChunkParser {
-    pub fn new() -> Self {
-        Self {
-            chunck_parser: ChunkReader::new(),
-            log_entries: vec![]
-        }
-    }
+	pub fn new() -> Self {
+		Self {
+			chunck_parser: ChunkReader::new(),
+			log_entries: vec![],
+		}
+	}
 
-    pub fn add_chunk(&mut self, chunk: Bytes) {
+	pub fn add_chunk(&mut self, chunk: Bytes) {
 		let current_year = chrono::Utc::now().year();
-        self.chunck_parser.add_chunk(chunk);
-        loop {
-            match LogEntry::deserialize(&mut self.chunck_parser) {
-                Ok(entry) => {
-                    self.chunck_parser.commit();
+		self.chunck_parser.add_chunk(chunk);
+		loop {
+			match LogEntry::deserialize(&mut self.chunck_parser) {
+				Ok(entry) => {
+					self.chunck_parser.commit();
 					if entry.timestamp.year() > current_year + 10 {
 						log::error!("Invalid year in log entry: {:?}", entry);
 						continue;
@@ -372,35 +380,41 @@ impl LogEntryChunkParser {
 						log::error!("Invalid year in log entry: {:?}", entry);
 						continue;
 					}
-                    self.log_entries.push(entry);
-                },
-                Err(_) => {
-                    self.chunck_parser.rollback();
-                    break;
-                }
-            }
-        }
-    }
+					self.log_entries.push(entry);
+				}
+				Err(_) => {
+					self.chunck_parser.rollback();
+					break;
+				}
+			}
+		}
+	}
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
+	use chrono::Utc;
 
-    use crate::{LogEntry, LogEntryChunkParser, LogLevel, PuppylogBuilder, Prop};
+	use crate::{LogEntry, LogEntryChunkParser, LogLevel, Prop, PuppylogBuilder};
 
 	#[test]
 	fn test_serialize_and_deserialize() {
-		use std::io::Cursor;
-		use chrono::Utc;
 		use super::{LogEntry, LogLevel};
+		use chrono::Utc;
+		use std::io::Cursor;
 
 		let entry = LogEntry {
 			timestamp: Utc::now(),
 			level: LogLevel::Info,
 			props: vec![
-				Prop { key: "key1".to_string(), value: "value1".to_string() },
-				Prop { key: "key2".to_string(), value: "value2".to_string() }
+				Prop {
+					key: "key1".to_string(),
+					value: "value1".to_string(),
+				},
+				Prop {
+					key: "key2".to_string(),
+					value: "value2".to_string(),
+				},
 			],
 			msg: "Hello, world!".to_string(),
 			..Default::default()
@@ -411,7 +425,10 @@ mod tests {
 		buffer.set_position(0);
 		let deserialized = LogEntry::deserialize(&mut buffer).unwrap();
 
-		assert_eq!(entry.timestamp.timestamp_micros(), deserialized.timestamp.timestamp_micros());
+		assert_eq!(
+			entry.timestamp.timestamp_micros(),
+			deserialized.timestamp.timestamp_micros()
+		);
 		assert_eq!(entry.level, deserialized.level);
 		assert_eq!(entry.props, deserialized.props);
 		assert_eq!(entry.msg, deserialized.msg);
@@ -423,8 +440,14 @@ mod tests {
 			timestamp: Utc::now(),
 			level: LogLevel::Info,
 			props: vec![
-				Prop { key: "key1".to_string(), value: "value1".to_string() },
-				Prop { key: "key2".to_string(), value: "value2".to_string() }
+				Prop {
+					key: "key1".to_string(),
+					value: "value1".to_string(),
+				},
+				Prop {
+					key: "key2".to_string(),
+					value: "value2".to_string(),
+				},
 			],
 			msg: "Hello, world!".to_string(),
 			..Default::default()
@@ -434,13 +457,16 @@ mod tests {
 		entry.serialize(&mut buffer).unwrap();
 		let deserialized = LogEntry::fast_deserialize(&buffer, &mut 0).unwrap();
 
-		assert_eq!(entry.timestamp.timestamp_micros(), deserialized.timestamp.timestamp_micros());
+		assert_eq!(
+			entry.timestamp.timestamp_micros(),
+			deserialized.timestamp.timestamp_micros()
+		);
 		assert_eq!(entry.level, deserialized.level);
 		assert_eq!(entry.props, deserialized.props);
 		assert_eq!(entry.msg, deserialized.msg);
 	}
 
-    #[test]
+	#[test]
 	fn parse_many_log_entries_in_different_chuncks() {
 		fn gen_loentries() -> Vec<LogEntry> {
 			let mut entries = Vec::new();
@@ -449,8 +475,14 @@ mod tests {
 					timestamp: chrono::Utc::now(),
 					level: LogLevel::Info,
 					props: vec![
-						Prop { key: "key1".to_string(), value: "value1".to_string() },
-						Prop { key: "key2".to_string(), value: "value2".to_string() }
+						Prop {
+							key: "key1".to_string(),
+							value: "value1".to_string(),
+						},
+						Prop {
+							key: "key2".to_string(),
+							value: "value2".to_string(),
+						},
 					],
 					msg: format!("Hello, world! {}", i),
 					..Default::default()
@@ -467,19 +499,25 @@ mod tests {
 		buffer.set_position(0);
 		let mut reader = LogEntryChunkParser::new();
 		let buffer = buffer.into_inner();
-		let chuncks = buffer.chunks(buffer.len() / 5).map(|chunk| chunk.to_vec()).collect::<Vec<_>>();
+		let chuncks = buffer
+			.chunks(buffer.len() / 5)
+			.map(|chunk| chunk.to_vec())
+			.collect::<Vec<_>>();
 
 		let mut i = 0;
 		for chunck in chuncks {
 			reader.add_chunk(chunck.into());
-            for entry in &reader.log_entries {
-                assert_eq!(entry.timestamp.timestamp_micros(), entries[i].timestamp.timestamp_micros());
-                assert_eq!(entry.level, entries[i].level);
-                assert_eq!(entry.props, entries[i].props);
-                assert_eq!(entry.msg, entries[i].msg);
-                i += 1;
-            }
-            reader.log_entries.clear();
+			for entry in &reader.log_entries {
+				assert_eq!(
+					entry.timestamp.timestamp_micros(),
+					entries[i].timestamp.timestamp_micros()
+				);
+				assert_eq!(entry.level, entries[i].level);
+				assert_eq!(entry.props, entries[i].props);
+				assert_eq!(entry.msg, entries[i].msg);
+				i += 1;
+			}
+			reader.log_entries.clear();
 		}
 		assert_eq!(i, 100);
 	}

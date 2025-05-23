@@ -6,7 +6,7 @@ use serde::Deserialize;
 #[serde(rename_all = "lowercase")]
 pub enum SortDir {
 	Asc,
-	Desc
+	Desc,
 }
 
 #[derive(Deserialize, Debug, Default)]

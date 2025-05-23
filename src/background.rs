@@ -69,13 +69,18 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
 						if processed_loglines % 1_000_000 == 0 {
 							let elapsed = timer.elapsed();
 							let rate = processed_loglines as f64 / elapsed.as_secs_f64();
-							log::info!("[{}] processed in {:.2?} seconds at {:.2} loglines/s", processed_loglines, elapsed, rate);
+							log::info!(
+								"[{}] processed in {:.2?} seconds at {:.2} loglines/s",
+								processed_loglines,
+								elapsed,
+								rate
+							);
 						}
 						processed_loglines += 1;
 						match LogEntry::fast_deserialize(&buf, &mut ptr) {
 							Ok(log_entry) => log_entries.push(log_entry),
 							Err(LogentryDeserializerError::NotEnoughData) => break,
-							Err(err) => log::error!("Error deserializing log entry: {:?}", err)
+							Err(err) => log::error!("Error deserializing log entry: {:?}", err),
 						}
 					}
 
@@ -108,7 +113,12 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
 		if processed_loglines > 0 {
 			let elapsed = timer.elapsed();
 			let rate = processed_loglines as f64 / elapsed.as_secs_f64();
-			log::info!("processed {} log entries in {:.2} seconds at {:.2} entries/s", processed_loglines, elapsed.as_secs_f64(), rate);
+			log::info!(
+				"processed {} log entries in {:.2} seconds at {:.2} entries/s",
+				processed_loglines,
+				elapsed.as_secs_f64(),
+				rate
+			);
 		}
 
 		sleep(Duration::from_secs(2)).await;

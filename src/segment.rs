@@ -1,11 +1,11 @@
-use std::cmp::Ordering;
-use std::io::Read;
-use std::io::Write;
 use chrono::DateTime;
 use chrono::Utc;
 use puppylog::LogEntry;
 use puppylog::LogentryDeserializerError;
 use serde::Serialize;
+use std::cmp::Ordering;
+use std::io::Read;
+use std::io::Write;
 
 #[derive(Debug)]
 pub struct LogIterator<'a> {
@@ -15,10 +15,7 @@ pub struct LogIterator<'a> {
 
 impl<'a> LogIterator<'a> {
 	pub fn new(buffer: &'a [LogEntry], offset: usize) -> Self {
-		LogIterator {
-			buffer,
-			offset
-		}
+		LogIterator { buffer, offset }
 	}
 }
 
@@ -53,19 +50,17 @@ pub struct SegmentMeta {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LogSegment {
-	pub buffer: Vec<LogEntry>
+	pub buffer: Vec<LogEntry>,
 }
 
 impl LogSegment {
 	pub fn with_logs(mut logs: Vec<LogEntry>) -> Self {
 		logs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-		LogSegment {
-			buffer: logs
-		}
+		LogSegment { buffer: logs }
 	}
 	pub fn new() -> Self {
 		LogSegment {
-			buffer: Vec::with_capacity(500_000)
+			buffer: Vec::with_capacity(500_000),
 		}
 	}
 	pub fn iter(&self) -> LogIterator {
@@ -73,13 +68,15 @@ impl LogSegment {
 		LogIterator::new(&self.buffer[..i], i)
 	}
 	fn date_index(&self, date: DateTime<Utc>) -> usize {
-		self.buffer.binary_search_by(|log| {
-			if log.timestamp > date {
-				Ordering::Greater
-			} else {
-				Ordering::Less
-			}
-		}).unwrap_or_else(|idx| idx)
+		self.buffer
+			.binary_search_by(|log| {
+				if log.timestamp > date {
+					Ordering::Greater
+				} else {
+					Ordering::Less
+				}
+			})
+			.unwrap_or_else(|idx| idx)
 	}
 	pub fn sort(&mut self) {
 		self.buffer.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
@@ -116,10 +113,12 @@ impl LogSegment {
 			match LogEntry::fast_deserialize(&buff, &mut ptr) {
 				Ok(log_entry) => log_entries.push(log_entry),
 				Err(LogentryDeserializerError::NotEnoughData) => break,
-				Err(err) => panic!("Error deserializing log entry: {:?}", err)
+				Err(err) => panic!("Error deserializing log entry: {:?}", err),
 			}
 		}
-		LogSegment { buffer: log_entries }
+		LogSegment {
+			buffer: log_entries,
+		}
 	}
 
 	pub fn contains_date(&self, date: DateTime<Utc>) -> bool {
@@ -134,12 +133,10 @@ impl LogSegment {
 #[cfg(test)]
 mod tests {
 	use std::io::Cursor;
-	
-	
-	
+
+	use super::*;
 	use puppylog::LogLevel;
 	use puppylog::Prop;
-	use super::*;
 
 	#[test]
 	pub fn test_log_segment() {

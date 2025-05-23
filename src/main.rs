@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use axum::body::Body;
 use axum::body::BodyDataStream;
 use axum::extract::DefaultBodyLimit;
@@ -22,9 +21,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use config::log_path;
 use config::upload_path;
-use tokio::fs;
-use tokio::fs::OpenOptions;
-use tokio::io::AsyncWriteExt;
+use context::Context;
 use db::MetaProp;
 use db::UpdateDeviceSettings;
 use db::UpdateDevicesSettings;
@@ -40,7 +37,12 @@ use serde_json::json;
 use serde_json::to_string;
 use serde_json::Value;
 use simple_logger::SimpleLogger;
+use std::sync::Arc;
+use tokio::fs;
+use tokio::fs::File;
+use tokio::fs::OpenOptions;
 use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tokio::sync::mpsc;
 use tokio::task::spawn_blocking;
@@ -51,23 +53,21 @@ use tower_http::cors::AllowMethods;
 use tower_http::cors::Any;
 use tower_http::cors::CorsLayer;
 use tower_http::decompression::RequestDecompressionLayer;
-use context::Context;
 use types::GetSegmentsQuery;
-use tokio::fs::File;
 
-mod logline;
-mod cache;
-mod storage;
-mod context;
-mod subscribe_worker;
-mod config;
-mod settings;
-mod db;
-mod segment;
-mod wal;
-mod upload_guard;
 mod background;
+mod cache;
+mod config;
+mod context;
+mod db;
+mod logline;
+mod segment;
+mod settings;
+mod storage;
+mod subscribe_worker;
 mod types;
+mod upload_guard;
+mod wal;
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -77,10 +77,12 @@ struct GetLogsQuery {
 	pub end_date: Option<DateTime<Utc>>,
 }
 
-
 #[tokio::main]
 async fn main() {
-	SimpleLogger::new().with_level(LevelFilter::Info).init().unwrap();
+	SimpleLogger::new()
+		.with_level(LevelFilter::Info)
+		.init()
+		.unwrap();
 	let log_path = log_path();
 	log::info!("checking if log path exists: {:?}", log_path);
 	if !log_path.exists() {
@@ -107,113 +109,135 @@ async fn main() {
 		.route("/favicon-192x192.png", get(favicon_192x192))
 		.route("/favicon-512x512.png", get(favicon_512x512))
 		.route("/manifest.json", get(manifest))
-		.route("/api/logs", get(get_logs)).layer(CompressionLayer::new()).layer(cors.clone())
-		.route("/api/logs/stream", get(stream_logs)).layer(cors.clone())
-		.route("/api/settings/query", post(post_settings_query)).with_state(ctx.clone())
-		.route("/api/settings/query", get(get_settings_query)).with_state(ctx.clone())
-		.route("/api/segments", get(get_segments)).with_state(ctx.clone())	
-		.route("/api/segment/metadata", get(get_segment_metadata)).with_state(ctx.clone())
+		.route("/api/logs", get(get_logs))
+		.layer(CompressionLayer::new())
+		.layer(cors.clone())
+		.route("/api/logs/stream", get(stream_logs))
+		.layer(cors.clone())
+		.route("/api/settings/query", post(post_settings_query))
+		.with_state(ctx.clone())
+		.route("/api/settings/query", get(get_settings_query))
+		.with_state(ctx.clone())
+		.route("/api/segments", get(get_segments))
+		.with_state(ctx.clone())
+		.route("/api/segment/metadata", get(get_segment_metadata))
+		.with_state(ctx.clone())
 		.route("/api/v1/validate_query", get(validate_query))
-		.route("/api/v1/logs/stream", get(stream_logs)).layer(cors.clone())
-		.route("/api/v1/device/settings", post(update_devices_settings)).with_state(ctx.clone())
-		.route("/api/v1/device/{deviceId}/status", get(get_device_status)).layer(cors.clone()).with_state(ctx.clone())
+		.route("/api/v1/logs/stream", get(stream_logs))
+		.layer(cors.clone())
+		.route("/api/v1/device/settings", post(update_devices_settings))
+		.with_state(ctx.clone())
+		.route("/api/v1/device/{deviceId}/status", get(get_device_status))
+		.layer(cors.clone())
+		.with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/logs", post(upload_device_logs))
-			.layer(cors.clone())
-			.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
-			.layer(RequestDecompressionLayer::new().gzip(true).zstd(true))
-			.with_state(ctx.clone())
-		.route("/api/v1/device/{deviceId}/metadata", post(update_device_metadata)).with_state(ctx.clone())
-		.route("/api/v1/device/{deviceId}/settings", post(update_device_settings)).with_state(ctx.clone())
-		.route("/api/v1/device/bulkedit", post(bulk_edit)).with_state(ctx.clone())
-		.route("/api/v1/settings", post(post_settings_query)).with_state(ctx.clone())
-		.route("/api/v1/settings", get(get_settings_query)).with_state(ctx.clone())
-		.route("/api/v1/devices", get(get_devices)).with_state(ctx.clone())
-		.route("/api/v1/segments", get(get_segments)).with_state(ctx.clone())
-		.route("/api/v1/segment/{segmentId}", get(get_segment)).with_state(ctx.clone())
-		.route("/api/v1/segment/{segmentId}/props", get(get_segment_props)).with_state(ctx.clone())
-		.route("/api/v1/segment/{segmentId}/download", get(download_segment))
-		.route("/api/v1/segment/{segmentId}", delete(delete_segment)).with_state(ctx.clone())
+		.layer(cors.clone())
+		.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
+		.layer(RequestDecompressionLayer::new().gzip(true).zstd(true))
+		.with_state(ctx.clone())
+		.route(
+			"/api/v1/device/{deviceId}/metadata",
+			post(update_device_metadata),
+		)
+		.with_state(ctx.clone())
+		.route(
+			"/api/v1/device/{deviceId}/settings",
+			post(update_device_settings),
+		)
+		.with_state(ctx.clone())
+		.route("/api/v1/device/bulkedit", post(bulk_edit))
+		.with_state(ctx.clone())
+		.route("/api/v1/settings", post(post_settings_query))
+		.with_state(ctx.clone())
+		.route("/api/v1/settings", get(get_settings_query))
+		.with_state(ctx.clone())
+		.route("/api/v1/devices", get(get_devices))
+		.with_state(ctx.clone())
+		.route("/api/v1/segments", get(get_segments))
+		.with_state(ctx.clone())
+		.route("/api/v1/segment/{segmentId}", get(get_segment))
+		.with_state(ctx.clone())
+		.route("/api/v1/segment/{segmentId}/props", get(get_segment_props))
+		.with_state(ctx.clone())
+		.route(
+			"/api/v1/segment/{segmentId}/download",
+			get(download_segment),
+		)
+		.route("/api/v1/segment/{segmentId}", delete(delete_segment))
+		.with_state(ctx.clone())
 		.fallback(get(root));
 
 	// run our app with hyper, listening globally on port 3000
 	let listener = tokio::net::TcpListener::bind("0.0.0.0:3337").await.unwrap();
-	axum::serve(
-		listener,
-		app,
-	).await.unwrap();
+	axum::serve(listener, app).await.unwrap();
 }
 
-async fn get_segment_metadata(
-	State(ctx): State<Arc<Context>>
-) -> Json<Value> {
+async fn get_segment_metadata(State(ctx): State<Arc<Context>>) -> Json<Value> {
 	let segments = ctx.db.fetch_segments_metadata().await.unwrap();
 	Json(serde_json::to_value(&segments).unwrap())
 }
 
-async fn get_segment(
-	State(ctx): State<Arc<Context>>,
-	Path(segment_id): Path<u32>
-) -> Json<Value> {
+async fn get_segment(State(ctx): State<Arc<Context>>, Path(segment_id): Path<u32>) -> Json<Value> {
 	let segment = ctx.db.fetch_segment(segment_id).await.unwrap();
 	Json(serde_json::to_value(&segment).unwrap())
 }
 
-pub async fn download_segment(
-    Path(segment_id): Path<u32>,
-) -> Response {
-    let path = log_path().join(format!("{segment_id}.log"));
-    let file = match File::open(&path).await {
-        Ok(f) => f,
-        Err(e) => {
-            return (
-                StatusCode::NOT_FOUND,
-                format!("segment {segment_id} not found: {e}"),
-            )
-                .into_response();
-        }
-    };
+pub async fn download_segment(Path(segment_id): Path<u32>) -> Response {
+	let path = log_path().join(format!("{segment_id}.log"));
+	let file = match File::open(&path).await {
+		Ok(f) => f,
+		Err(e) => {
+			return (
+				StatusCode::NOT_FOUND,
+				format!("segment {segment_id} not found: {e}"),
+			)
+				.into_response();
+		}
+	};
 
-    let len = file.metadata().await.ok().map(|m| m.len());
-    let stream = ReaderStream::new(BufReader::new(file));
-    let body = Body::from_stream(stream);
+	let len = file.metadata().await.ok().map(|m| m.len());
+	let stream = ReaderStream::new(BufReader::new(file));
+	let body = Body::from_stream(stream);
 
-    let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE,"application/zstd".parse().unwrap());
-    headers.insert(
-        header::CONTENT_DISPOSITION,
-        format!(
-            "attachment; filename=\"{}\"",
-            format!("segment-{segment_id}.zst")
-        )
-        .parse()
-        .unwrap(),
-    );
-    if let Some(len) = len {
-        headers.insert(header::CONTENT_LENGTH, len.into());
-    }
+	let mut headers = HeaderMap::new();
+	headers.insert(header::CONTENT_TYPE, "application/zstd".parse().unwrap());
+	headers.insert(
+		header::CONTENT_DISPOSITION,
+		format!(
+			"attachment; filename=\"{}\"",
+			format!("segment-{segment_id}.zst")
+		)
+		.parse()
+		.unwrap(),
+	);
+	if let Some(len) = len {
+		headers.insert(header::CONTENT_LENGTH, len.into());
+	}
 
-    (headers, body).into_response()
+	(headers, body).into_response()
 }
 
 async fn delete_segment(
 	State(ctx): State<Arc<Context>>,
-	Path(segment_id): Path<u32>
+	Path(segment_id): Path<u32>,
 ) -> &'static str {
 	log::info!("delete_segment: {:?}", segment_id);
 	ctx.db.delete_segment(segment_id).await.unwrap();
-	fs::remove_file(log_path().join(format!("{}.log", segment_id))).await.unwrap();
+	fs::remove_file(log_path().join(format!("{}.log", segment_id)))
+		.await
+		.unwrap();
 	"ok"
 }
 
 async fn get_segment_props(
 	State(ctx): State<Arc<Context>>,
-	Path(segment_id): Path<u32>
+	Path(segment_id): Path<u32>,
 ) -> Json<Value> {
 	let props = ctx.db.fetch_segment_props(segment_id).await.unwrap();
 	Json(serde_json::to_value(&props).unwrap())
 }
 
-#[derive(Deserialize, Debug)] 
+#[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct BulkEdit {
 	pub filter_level: LogLevel,
@@ -222,24 +246,24 @@ struct BulkEdit {
 	pub device_ids: Vec<String>,
 }
 
-async fn bulk_edit(
-	State(ctx): State<Arc<Context>>,
-	body: Json<BulkEdit>
-) -> &'static str {
+async fn bulk_edit(State(ctx): State<Arc<Context>>, body: Json<BulkEdit>) -> &'static str {
 	log::info!("bulk_edit: {:?}", body);
 	for device_id in body.device_ids.iter() {
-		ctx.db.update_device_settings(device_id, &UpdateDeviceSettings {
-			filter_level: body.filter_level,
-			send_logs: body.send_logs,
-			send_interval: body.send_interval,
-		}).await;
+		ctx.db
+			.update_device_settings(
+				device_id,
+				&UpdateDeviceSettings {
+					filter_level: body.filter_level,
+					send_logs: body.send_logs,
+					send_interval: body.send_interval,
+				},
+			)
+			.await;
 	}
 	"ok"
 }
 
-async fn validate_query(
-	Query(params): Query<GetLogsQuery>
-) -> Result<(), BadRequestError> {
+async fn validate_query(Query(params): Query<GetLogsQuery>) -> Result<(), BadRequestError> {
 	log::info!("validate_query {:?}", params);
 	match params.query {
 		Some(ref q) => {
@@ -257,7 +281,7 @@ async fn validate_query(
 		}
 		None => {
 			log::info!("query is empty");
-		},
+		}
 	};
 	Ok(())
 }
@@ -265,7 +289,7 @@ async fn validate_query(
 async fn update_device_settings(
 	State(ctx): State<Arc<Context>>,
 	Path(device_id): Path<String>,
-	body: Json<UpdateDeviceSettings>
+	body: Json<UpdateDeviceSettings>,
 ) -> &'static str {
 	log::info!("update_device_settings device_id: {:?}", device_id);
 	ctx.db.update_device_settings(&device_id, &body).await;
@@ -277,11 +301,9 @@ async fn get_devices(State(ctx): State<Arc<Context>>) -> Json<Value> {
 	Json(serde_json::to_value(&devices).unwrap())
 }
 
-
-
 async fn get_segments(
 	State(ctx): State<Arc<Context>>,
-	Query(mut params): Query<GetSegmentsQuery>
+	Query(mut params): Query<GetSegmentsQuery>,
 ) -> Json<Value> {
 	if params.count.is_none() {
 		params.count = Some(100);
@@ -291,78 +313,85 @@ async fn get_segments(
 }
 
 async fn upload_device_logs(
-    State(ctx): State<Arc<Context>>,
-    Path(device_id): Path<String>,
-    body: Body,
+	State(ctx): State<Arc<Context>>,
+	Path(device_id): Path<String>,
+	body: Body,
 ) -> impl IntoResponse {
-    let _guard = match ctx.upload_guard() {
-        Ok(g) => g,
-        Err(err) => {
-            let retry_after = rand::rng().random_range(10..=5_000);
-            log::warn!("Upload guard busy: {}", err);
-            let mut resp =
-                (StatusCode::SERVICE_UNAVAILABLE, "Upload limit reached").into_response();
-            resp.headers_mut()
-                .insert(axum::http::header::RETRY_AFTER, retry_after.to_string().parse().unwrap());
-            return resp;
-        }
-    };
+	let _guard = match ctx.upload_guard() {
+		Ok(g) => g,
+		Err(err) => {
+			let retry_after = rand::rng().random_range(10..=5_000);
+			log::warn!("Upload guard busy: {}", err);
+			let mut resp =
+				(StatusCode::SERVICE_UNAVAILABLE, "Upload limit reached").into_response();
+			resp.headers_mut().insert(
+				axum::http::header::RETRY_AFTER,
+				retry_after.to_string().parse().unwrap(),
+			);
+			return resp;
+		}
+	};
 
-    let upload_dir = upload_path();
-    let ts = chrono::Utc::now().timestamp_millis();
-    let nonce: u32 = rand::rng().random_range(0..=u32::MAX);
-    let part_path = upload_dir.join(format!("{device_id}-{ts:013}-{nonce:08x}.part"));
+	let upload_dir = upload_path();
+	let ts = chrono::Utc::now().timestamp_millis();
+	let nonce: u32 = rand::rng().random_range(0..=u32::MAX);
+	let part_path = upload_dir.join(format!("{device_id}-{ts:013}-{nonce:08x}.part"));
 
-    // Create & open the temp file.
-    let mut file = match OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&part_path)
-        .await
-    {
-        Ok(f) => f,
-        Err(e) => {
-            log::error!("cannot create {}: {}", part_path.display(), e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "cannot create file").into_response();
-        }
-    };
+	// Create & open the temp file.
+	let mut file = match OpenOptions::new()
+		.create(true)
+		.write(true)
+		.truncate(true)
+		.open(&part_path)
+		.await
+	{
+		Ok(f) => f,
+		Err(e) => {
+			log::error!("cannot create {}: {}", part_path.display(), e);
+			return (StatusCode::INTERNAL_SERVER_ERROR, "cannot create file").into_response();
+		}
+	};
 
-    let mut stream: BodyDataStream = body.into_data_stream();
-    while let Some(chunk) = stream.next().await {
-        match chunk {
-            Ok(bytes) => {
-                if let Err(e) = file.write_all(&bytes).await {
-                    log::error!("write failed for {}: {}", part_path.display(), e);
-                    let _ = tokio::fs::remove_file(&part_path).await;
-                    return (StatusCode::INTERNAL_SERVER_ERROR, "write error").into_response();
-                }
-            }
-            Err(e) => {
-                log::error!("Error receiving chunk: {}", e);
-                let _ = tokio::fs::remove_file(&part_path).await;
-                return (StatusCode::BAD_REQUEST, "malformed upload").into_response();
-            }
-        }
-    }
+	let mut stream: BodyDataStream = body.into_data_stream();
+	while let Some(chunk) = stream.next().await {
+		match chunk {
+			Ok(bytes) => {
+				if let Err(e) = file.write_all(&bytes).await {
+					log::error!("write failed for {}: {}", part_path.display(), e);
+					let _ = tokio::fs::remove_file(&part_path).await;
+					return (StatusCode::INTERNAL_SERVER_ERROR, "write error").into_response();
+				}
+			}
+			Err(e) => {
+				log::error!("Error receiving chunk: {}", e);
+				let _ = tokio::fs::remove_file(&part_path).await;
+				return (StatusCode::BAD_REQUEST, "malformed upload").into_response();
+			}
+		}
+	}
 
-    if let Err(e) = file.sync_all().await {
-        log::warn!("sync_all failed on {}: {}", part_path.display(), e);
-    }
-    drop(file); // ensure the handle is closed before rename
+	if let Err(e) = file.sync_all().await {
+		log::warn!("sync_all failed on {}: {}", part_path.display(), e);
+	}
+	drop(file); // ensure the handle is closed before rename
 
-    let ready_path = part_path.with_extension("ready");
-    if let Err(e) = tokio::fs::rename(&part_path, &ready_path).await {
-        log::error!("rename {} → {} failed: {}", part_path.display(), ready_path.display(), e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "rename failed").into_response();
-    }
+	let ready_path = part_path.with_extension("ready");
+	if let Err(e) = tokio::fs::rename(&part_path, &ready_path).await {
+		log::error!(
+			"rename {} → {} failed: {}",
+			part_path.display(),
+			ready_path.display(),
+			e
+		);
+		return (StatusCode::INTERNAL_SERVER_ERROR, "rename failed").into_response();
+	}
 
-    (StatusCode::OK, "ok").into_response()
+	(StatusCode::OK, "ok").into_response()
 }
 
 async fn update_devices_settings(
 	State(ctx): State<Arc<Context>>,
-	body: Json<UpdateDevicesSettings>
+	body: Json<UpdateDevicesSettings>,
 ) -> &'static str {
 	log::info!("update_devices_settings: {:?}", body);
 	ctx.db.update_devices_settings(&body).await;
@@ -380,11 +409,11 @@ struct DeviceStatus {
 }
 
 async fn get_device_status(
-	State(ctx): State<Arc<Context>>, 
-	Path(device_id): Path<String>
+	State(ctx): State<Arc<Context>>,
+	Path(device_id): Path<String>,
 ) -> Json<Value> {
 	let device = ctx.db.get_or_create_device(&device_id).await.unwrap();
-	
+
 	let mut resp = DeviceStatus {
 		level: device.filter_level,
 		send_logs: device.send_logs,
@@ -396,7 +425,11 @@ async fn get_device_status(
 	if !allowed_to_send {
 		resp.send_logs = false;
 		resp.next_poll = Some(rand::rng().random_range(10..=5000));
-		log::info!("[{}] not allowed to upload logs next poll {}", device_id, resp.next_poll.unwrap());
+		log::info!(
+			"[{}] not allowed to upload logs next poll {}",
+			device_id,
+			resp.next_poll.unwrap()
+		);
 	}
 
 	Json(serde_json::to_value(resp).unwrap())
@@ -405,10 +438,13 @@ async fn get_device_status(
 async fn update_device_metadata(
 	State(ctx): State<Arc<Context>>,
 	Path(device_id): Path<String>,
-	body: Json<Vec<MetaProp>>
+	body: Json<Vec<MetaProp>>,
 ) -> &'static str {
 	log::info!("update_device_metadata device_id: {:?}", device_id);
-	ctx.db.update_device_metadata(&device_id, &body).await.unwrap();
+	ctx.db
+		.update_device_metadata(&device_id, &body)
+		.await
+		.unwrap();
 	"ok"
 }
 
@@ -460,7 +496,9 @@ async fn post_settings_query(State(ctx): State<Arc<Context>>, body: String) -> &
 	let mut settings = ctx.settings.inner().await;
 	settings.collection_query = body.clone();
 	settings.save().unwrap();
-	ctx.event_tx.send(PuppylogEvent::QueryChanged { query: body }).unwrap();
+	ctx.event_tx
+		.send(PuppylogEvent::QueryChanged { query: body })
+		.unwrap();
 	"ok"
 }
 
@@ -474,7 +512,8 @@ async fn favicon() -> Result<Response, StatusCode> {
 		StatusCode::OK,
 		[(axum::http::header::CONTENT_TYPE, "image/x-icon")],
 		FAVICON,
-	).into_response())
+	)
+		.into_response())
 }
 
 async fn favicon_192x192() -> Result<Response, StatusCode> {
@@ -482,7 +521,8 @@ async fn favicon_192x192() -> Result<Response, StatusCode> {
 		StatusCode::OK,
 		[(axum::http::header::CONTENT_TYPE, "image/png")],
 		FAVICON_192x192,
-	).into_response())
+	)
+		.into_response())
 }
 
 async fn favicon_512x512() -> Result<Response, StatusCode> {
@@ -490,7 +530,8 @@ async fn favicon_512x512() -> Result<Response, StatusCode> {
 		StatusCode::OK,
 		[(axum::http::header::CONTENT_TYPE, "image/png")],
 		FAVICON_512x512,
-	).into_response())
+	)
+		.into_response())
 }
 
 async fn manifest() -> Result<Response, StatusCode> {
@@ -498,7 +539,8 @@ async fn manifest() -> Result<Response, StatusCode> {
 		StatusCode::OK,
 		[(axum::http::header::CONTENT_TYPE, "application/json")],
 		include_bytes!("../assets/manifest.json"),
-	).into_response())
+	)
+		.into_response())
 }
 
 #[derive(Debug)]
@@ -510,8 +552,9 @@ impl IntoResponse for BadRequestError {
 			StatusCode::BAD_REQUEST,
 			Json(json!({
 				"error": self.0
-			}))
-		).into_response()
+			})),
+		)
+			.into_response()
 	}
 }
 
@@ -527,10 +570,10 @@ fn logentry_to_json(entry: &LogEntry) -> Value {
 }
 
 async fn get_logs(
-	State(ctx): State<Arc<Context>>, 
+	State(ctx): State<Arc<Context>>,
 	Query(params): Query<GetLogsQuery>,
 	headers: HeaderMap,
-) -> Result<Response, BadRequestError>  {
+) -> Result<Response, BadRequestError> {
 	log::info!("get_logs {:?}", params);
 	let mut query = match params.query {
 		Some(ref q) => {
@@ -558,7 +601,9 @@ async fn get_logs(
 	let producer_query = query.clone();
 	let ctx_clone = Arc::clone(&ctx);
 	spawn_blocking(move || {
-		let end = producer_query.end_date.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
+		let end = producer_query
+			.end_date
+			.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
 		let count = producer_query.limit.unwrap_or(200);
 		let mut sent = 0;
 		block_on(ctx_clone.find_logs(query, |entry| {
@@ -584,16 +629,13 @@ async fn get_logs(
 		.unwrap_or(false);
 
 	let res = if wants_stream {
-		let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
-			.map(|log| {
-				let data = to_string(&log).unwrap();
-				Ok::<Event, std::convert::Infallible>(Event::default().data(data))
-			});
+		let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(|log| {
+			let data = to_string(&log).unwrap();
+			Ok::<Event, std::convert::Infallible>(Event::default().data(data))
+		});
 		Sse::new(stream).into_response()
 	} else {
-		let logs: Vec<_> = ReceiverStream::new(rx)
-			.collect::<Vec<_>>()
-			.await;
+		let logs: Vec<_> = ReceiverStream::new(rx).collect::<Vec<_>>().await;
 		Json(serde_json::to_value(&logs).unwrap()).into_response()
 	};
 	Ok(res)
@@ -607,15 +649,14 @@ async fn stream_logs(
 	let query = match params.query {
 		Some(ref query) => match parse_log_query(query) {
 			Ok(query) => query,
-			Err(err) => return Err(BadRequestError(err.to_string()))
+			Err(err) => return Err(BadRequestError(err.to_string())),
 		},
 		None => QueryAst::default(),
 	};
 	let rx = ctx.subscriber.subscribe(query).await;
-	let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
-		.map(|p| {
-			let data = to_string(&logentry_to_json(&p)).unwrap();
-			Ok(Event::default().data(data))
-		});
+	let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(|p| {
+		let data = to_string(&logentry_to_json(&p)).unwrap();
+		Ok(Event::default().data(data))
+	});
 	Ok(Sse::new(stream))
 }

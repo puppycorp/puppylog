@@ -1,23 +1,23 @@
-use std::collections::HashMap;
-use std::time::Instant;
-use std::path::PathBuf;
+use crate::config::log_path;
 use chrono::Datelike;
 use puppylog::check_expr;
 use puppylog::LogEntry;
 use puppylog::LogentryDeserializerError;
 use puppylog::QueryAst;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time::Instant;
 use tokio::fs::read_dir;
 use tokio::fs::File;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
-use crate::config::log_path;
 
 struct Storage {
 	files: HashMap<String, File>,
 	logspath: PathBuf,
-	buff: Vec<u8>
+	buff: Vec<u8>,
 }
 
 impl Storage {
@@ -25,16 +25,26 @@ impl Storage {
 		Storage {
 			files: HashMap::new(),
 			logspath: log_path(),
-			buff: Vec::new()
+			buff: Vec::new(),
 		}
 	}
 
 	pub async fn save_log_entry(&mut self, log_entry: LogEntry) -> anyhow::Result<()> {
-		let folder = self.logspath.join(format!("{}/{}/{}", log_entry.timestamp.year(), log_entry.timestamp.month(), log_entry.timestamp.day()));
+		let folder = self.logspath.join(format!(
+			"{}/{}/{}",
+			log_entry.timestamp.year(),
+			log_entry.timestamp.month(),
+			log_entry.timestamp.day()
+		));
 		if !folder.exists() {
 			tokio::fs::create_dir_all(&folder).await?;
 		}
-		let path = folder.join(format!("{}-{}-{}.log", log_entry.timestamp.year(), log_entry.timestamp.month(), log_entry.timestamp.day()));
+		let path = folder.join(format!(
+			"{}-{}-{}.log",
+			log_entry.timestamp.year(),
+			log_entry.timestamp.month(),
+			log_entry.timestamp.day()
+		));
 		let file = match self.files.get_mut(&path.to_string_lossy().to_string()) {
 			Some(file) => file,
 			None => {
@@ -43,7 +53,9 @@ impl Storage {
 				} else {
 					File::create(&path).await?
 				};
-				self.files.entry(path.to_string_lossy().to_string()).or_insert(file)
+				self.files
+					.entry(path.to_string_lossy().to_string())
+					.or_insert(file)
 			}
 		};
 		log_entry.serialize(&mut self.buff)?;
@@ -64,7 +76,7 @@ async fn worker(mut rx: mpsc::Receiver<LogEntry>) {
 
 #[derive(Debug, Clone)]
 pub struct LogEntrySaver {
-	tx: mpsc::Sender<LogEntry>
+	tx: mpsc::Sender<LogEntry>,
 }
 
 impl LogEntrySaver {
@@ -73,9 +85,7 @@ impl LogEntrySaver {
 		tokio::spawn(async move {
 			worker(rx).await;
 		});
-		LogEntrySaver {
-			tx
-		}
+		LogEntrySaver { tx }
 	}
 
 	pub async fn save(&self, log_entry: LogEntry) -> anyhow::Result<()> {
@@ -112,7 +122,9 @@ async fn get_months(year: u32) -> Vec<u32> {
 
 async fn get_days(year: u32, month: u32) -> Vec<u32> {
 	let logs_path = log_path();
-	let mut days = read_dir(logs_path.join(year.to_string()).join(month.to_string())).await.unwrap();
+	let mut days = read_dir(logs_path.join(year.to_string()).join(month.to_string()))
+		.await
+		.unwrap();
 	let mut days_vec = Vec::new();
 	while let Some(day) = days.next_entry().await.unwrap() {
 		if let Ok(day) = day.file_name().into_string().unwrap().parse::<u32>() {
@@ -140,14 +152,17 @@ pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 			days.sort_by(|a, b| b.cmp(a));
 			for day in days {
 				log::info!("Searching logs for {}/{}/{}", year, month, day);
-				let path = logspath.join(format!("{}/{}/{}/{}-{}-{}.log", year, month, day, year, month, day));
+				let path = logspath.join(format!(
+					"{}/{}/{}/{}-{}-{}.log",
+					year, month, day, year, month, day
+				));
 				if path.exists() {
 					let timer = Instant::now();
 					let file = OpenOptions::new().read(true).open(&path).await?;
 					let mut reader = tokio::io::BufReader::new(file);
 					let mut buffer = Vec::new();
 					reader.read_to_end(&mut buffer).await?;
-					log::info!("Read {} bytes in {:?}", buffer.len(), timer.elapsed());	
+					log::info!("Read {} bytes in {:?}", buffer.len(), timer.elapsed());
 					let timer = Instant::now();
 					let mut total_loglines = 0;
 					let mut total_expr_time = 0;
@@ -161,16 +176,21 @@ pub async fn search_logs(query: QueryAst) -> anyhow::Result<Vec<LogEntry>> {
 									logs.push(log_entry);
 								}
 								total_expr_time += timer.elapsed().as_nanos();
-							},
+							}
 							Err(LogentryDeserializerError::NotEnoughData) => {
 								break;
-							},
+							}
 							Err(err) => {
 								log::error!("Error deserializing log entry: {:?}", err);
 							}
 						}
 					}
-					log::info!("Parsed {} loglines in {:?} expr time {}", total_loglines, timer.elapsed(), total_expr_time / 1000000);
+					log::info!(
+						"Parsed {} loglines in {:?} expr time {}",
+						total_loglines,
+						timer.elapsed(),
+						total_expr_time / 1000000
+					);
 					let timer = Instant::now();
 					logs.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 					log::info!("sorting {} logs in {:?}", logs.len(), timer.elapsed());

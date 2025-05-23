@@ -1,30 +1,30 @@
-use std::collections::HashSet;
-use std::fs::File;
-use std::io::Cursor;
-use std::io::Write;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
-use chrono::Utc;
-use puppylog::check_expr;
-use puppylog::LogEntry;
-use puppylog::PuppylogEvent;
-use puppylog::QueryAst;
-use tokio::sync::broadcast;
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::Sender;
-use tokio::sync::Mutex;
 use crate::config::log_path;
 use crate::db::open_db;
 use crate::db::NewSegmentArgs;
 use crate::db::DB;
 use crate::segment::LogSegment;
 use crate::settings::Settings;
+use crate::subscribe_worker::Subscriber;
+use crate::subscribe_worker::Worker;
 use crate::types::GetSegmentsQuery;
 use crate::upload_guard::UploadGuard;
 use crate::wal::load_logs_from_wal;
 use crate::wal::Wal;
-use crate::subscribe_worker::Subscriber;
-use crate::subscribe_worker::Worker;
+use chrono::Utc;
+use puppylog::check_expr;
+use puppylog::LogEntry;
+use puppylog::PuppylogEvent;
+use puppylog::QueryAst;
+use std::collections::HashSet;
+use std::fs::File;
+use std::io::Cursor;
+use std::io::Write;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use tokio::sync::broadcast;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::Mutex;
 
 const CONCURRENCY_LIMIT: usize = 10;
 
@@ -37,7 +37,7 @@ pub struct Context {
 	pub db: DB,
 	pub current: Mutex<LogSegment>,
 	pub wal: Wal,
-	pub upload_queue: AtomicUsize
+	pub upload_queue: AtomicUsize,
 }
 
 impl Context {
@@ -59,7 +59,7 @@ impl Context {
 			db,
 			current: Mutex::new(LogSegment::with_logs(logs)),
 			wal,
-			upload_queue: AtomicUsize::new(0)
+			upload_queue: AtomicUsize::new(0),
 		}
 	}
 
@@ -67,7 +67,7 @@ impl Context {
 		let mut current = self.current.lock().await;
 		current.buffer.extend_from_slice(logs);
 		for entry in logs {
-		 	self.wal.write(entry.clone());
+			self.wal.write(entry.clone());
 		}
 		current.sort();
 		if current.buffer.len() > 50_000 {
@@ -81,20 +81,27 @@ impl Context {
 			buff.set_position(0);
 			let buff = zstd::encode_all(buff, 0).unwrap();
 			let compressed_size = buff.len();
-		 	let segment_id = self.db.new_segment(NewSegmentArgs {
-				first_timestamp,
-				last_timestamp,
-				logs_count: current.buffer.len() as u64,
-				original_size,
-				compressed_size
-			}).await.unwrap();
+			let segment_id = self
+				.db
+				.new_segment(NewSegmentArgs {
+					first_timestamp,
+					last_timestamp,
+					logs_count: current.buffer.len() as u64,
+					original_size,
+					compressed_size,
+				})
+				.await
+				.unwrap();
 			let mut unique_props = HashSet::new();
 			for log in &current.buffer {
 				for prop in &log.props {
 					unique_props.insert(prop.clone());
 				}
 			}
-			self.db.upsert_segment_props(segment_id, unique_props.iter()).await.unwrap();
+			self.db
+				.upsert_segment_props(segment_id, unique_props.iter())
+				.await
+				.unwrap();
 			let path = log_path().join(format!("{}.log", segment_id));
 			let mut file = File::create(&path).unwrap();
 			file.write_all(&buff).unwrap();
@@ -113,8 +120,8 @@ impl Context {
 				}
 				end = entry.timestamp;
 				match check_expr(&query.root, entry) {
-					Ok(true) => {},
-					_ => continue
+					Ok(true) => {}
+					_ => continue,
 				}
 				if !cb(entry) {
 					return;
@@ -123,11 +130,15 @@ impl Context {
 		}
 		log::info!("looking from archive");
 		loop {
-			let segments = self.db.find_segments(&GetSegmentsQuery {
-				end: Some(end),
-				count: Some(100),
-				..Default::default()
-			}).await.unwrap();
+			let segments = self
+				.db
+				.find_segments(&GetSegmentsQuery {
+					end: Some(end),
+					count: Some(100),
+					..Default::default()
+				})
+				.await
+				.unwrap();
 			if segments.is_empty() {
 				log::info!("no more segments to load");
 				break;
@@ -156,8 +167,8 @@ impl Context {
 					}
 					end = entry.timestamp;
 					match check_expr(&query.root, entry) {
-						Ok(true) => {},
-						_ => continue
+						Ok(true) => {}
+						_ => continue,
 					}
 					if !cb(entry) {
 						return;

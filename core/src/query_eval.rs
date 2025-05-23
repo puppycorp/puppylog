@@ -1,15 +1,14 @@
 use chrono::Datelike;
 use chrono::Timelike;
 
-use crate::FieldAccess;
-use crate::LogEntry;
-use crate::LogLevel;
 use crate::query_parsing::Condition;
 use crate::query_parsing::Expr;
 use crate::query_parsing::Operator;
 use crate::query_parsing::Value;
+use crate::FieldAccess;
+use crate::LogEntry;
+use crate::LogLevel;
 use crate::Prop;
-
 
 #[derive(Debug)]
 enum FieldType {
@@ -95,7 +94,12 @@ fn cmp_semver_or_string(left: &str, right: &str, op: &Operator) -> bool {
 	semver_cmp(left, right, op).unwrap_or_else(|| magic_cmp(left, right, op))
 }
 
-fn any(field: &FieldType, values: &[Value], op: &Operator, logline: &LogEntry) -> Result<bool, String> {
+fn any(
+	field: &FieldType,
+	values: &[Value],
+	op: &Operator,
+	logline: &LogEntry,
+) -> Result<bool, String> {
 	for value in values {
 		if does_field_match(field, value, op, logline)? {
 			return Ok(true);
@@ -104,71 +108,118 @@ fn any(field: &FieldType, values: &[Value], op: &Operator, logline: &LogEntry) -
 	Ok(false)
 }
 
-fn does_field_match(field: &FieldType, value: &Value, operator: &Operator, logline: &LogEntry) -> Result<bool, String> {
+fn does_field_match(
+	field: &FieldType,
+	value: &Value,
+	operator: &Operator,
+	logline: &LogEntry,
+) -> Result<bool, String> {
 	match (field, value, operator) {
-		(FieldType::Msg, Value::String(val), Operator::Like) => Ok(logline.msg.to_lowercase().contains(&val.to_lowercase())),
-		(FieldType::Msg, Value::String(val), Operator::NotLike) => Ok(!logline.msg.to_lowercase().contains(&val.to_lowercase())),
+		(FieldType::Msg, Value::String(val), Operator::Like) => {
+			Ok(logline.msg.to_lowercase().contains(&val.to_lowercase()))
+		}
+		(FieldType::Msg, Value::String(val), Operator::NotLike) => {
+			Ok(!logline.msg.to_lowercase().contains(&val.to_lowercase()))
+		}
 		(FieldType::Timestamp, Value::Date(val), op) => Ok(magic_cmp(logline.timestamp, *val, op)),
-		(FieldType::Timestamp, _ , _) => Err(format!("Invalid value for timestamp {:?}", value)),
-		(FieldType::Level, Value::String(val), op) => Ok(magic_cmp(&logline.level, &LogLevel::from_string(&val), op)),
+		(FieldType::Timestamp, _, _) => Err(format!("Invalid value for timestamp {:?}", value)),
+		(FieldType::Level, Value::String(val), op) => {
+			Ok(magic_cmp(&logline.level, &LogLevel::from_string(&val), op))
+		}
 		(FieldType::Level, Value::Date(d), _) => Err(format!("Invalid value for level {:?}", d)),
-		(FieldType::Level, Value::Number(l), op) => Ok(magic_cmp(&logline.level, &LogLevel::from_i64(*l), op)),
+		(FieldType::Level, Value::Number(l), op) => {
+			Ok(magic_cmp(&logline.level, &LogLevel::from_i64(*l), op))
+		}
 		(FieldType::Msg, Value::String(val), op) => Ok(cmp_semver_or_string(&logline.msg, val, op)),
 		(FieldType::Msg, Value::Number(n), op) => Ok(magic_cmp(&logline.msg, &n.to_string(), op)),
 		(FieldType::Msg, Value::Date(d), _) => Err(format!("Invalid value for msg {:?}", d)),
-		(FieldType::Prop(_, val1), Value::String(val2), Operator::Like) => Ok(val1.contains(&val2.to_string())),
-		(FieldType::Prop(_, val1), Value::String(val2), Operator::NotLike) => Ok(!val1.contains(&val2.to_string())),
-		(FieldType::Prop(_, val1), Value::String(val2), op) => Ok(cmp_semver_or_string(val1, val2, op)),
-		(FieldType::Prop(_, val1), Value::Number(val2), op) => Ok(magic_cmp(val1, &val2.to_string(), op)),
+		(FieldType::Prop(_, val1), Value::String(val2), Operator::Like) => {
+			Ok(val1.contains(&val2.to_string()))
+		}
+		(FieldType::Prop(_, val1), Value::String(val2), Operator::NotLike) => {
+			Ok(!val1.contains(&val2.to_string()))
+		}
+		(FieldType::Prop(_, val1), Value::String(val2), op) => {
+			Ok(cmp_semver_or_string(val1, val2, op))
+		}
+		(FieldType::Prop(_, val1), Value::Number(val2), op) => {
+			Ok(magic_cmp(val1, &val2.to_string(), op))
+		}
 		(FieldType::Prop(_, _), Value::Date(_), _) => todo!(),
-		(field_type, Value::List(vec), Operator::In) => any(field_type, vec, &Operator::Equal, logline),
-		(field_type, Value::List(vec), Operator::NotIn) => Ok(!any(field_type, vec, &Operator::Equal, logline)?),
-		_ => Err(format!("Invalid comparison {:?} {:?} {:?}", field, value, operator))
+		(field_type, Value::List(vec), Operator::In) => {
+			any(field_type, vec, &Operator::Equal, logline)
+		}
+		(field_type, Value::List(vec), Operator::NotIn) => {
+			Ok(!any(field_type, vec, &Operator::Equal, logline)?)
+		}
+		_ => Err(format!(
+			"Invalid comparison {:?} {:?} {:?}",
+			field, value, operator
+		)),
 	}
 }
 
-fn check_field_access(field_access: &FieldAccess, right: &Expr, op: &Operator, logline: &LogEntry) -> Result<bool, String> {
+fn check_field_access(
+	field_access: &FieldAccess,
+	right: &Expr,
+	op: &Operator,
+	logline: &LogEntry,
+) -> Result<bool, String> {
 	match field_access.expr.as_ref() {
-		Expr::Value(Value::String(obj)) => {
-			match obj.as_str() {
-				"timestamp" => {
-					let num = match right {
-						Expr::Value(Value::Number(num)) => *num as i32,
-						_ => return Err("Invalid value for timestamp field".to_string())
-					};
+		Expr::Value(Value::String(obj)) => match obj.as_str() {
+			"timestamp" => {
+				let num = match right {
+					Expr::Value(Value::Number(num)) => *num as i32,
+					_ => return Err("Invalid value for timestamp field".to_string()),
+				};
 
-					match field_access.field.as_str() {
-						"year" => Ok(magic_cmp(logline.timestamp.year(), num, op)),
-						"month" => Ok(magic_cmp(logline.timestamp.month(), num as u32, op)),
-						"day" => Ok(magic_cmp(logline.timestamp.day(), num as u32, op)),
-						"hour" => Ok(magic_cmp(logline.timestamp.hour(), num as u32, op)),
-						"minute" => Ok(magic_cmp(logline.timestamp.minute(), num as u32, op)),
-						"second" => Ok(magic_cmp(logline.timestamp.second(), num as u32, op)),
-						_ => Err(format!("Field not found: {}", field_access.field))
-					}
-				},
-				_ => Err(format!("does not have fields: {}", obj))
+				match field_access.field.as_str() {
+					"year" => Ok(magic_cmp(logline.timestamp.year(), num, op)),
+					"month" => Ok(magic_cmp(logline.timestamp.month(), num as u32, op)),
+					"day" => Ok(magic_cmp(logline.timestamp.day(), num as u32, op)),
+					"hour" => Ok(magic_cmp(logline.timestamp.hour(), num as u32, op)),
+					"minute" => Ok(magic_cmp(logline.timestamp.minute(), num as u32, op)),
+					"second" => Ok(magic_cmp(logline.timestamp.second(), num as u32, op)),
+					_ => Err(format!("Field not found: {}", field_access.field)),
+				}
 			}
+			_ => Err(format!("does not have fields: {}", obj)),
 		},
-		_ => Err(format!("unsupported field access: {:?}", field_access))
+		_ => Err(format!("unsupported field access: {:?}", field_access)),
 	}
 }
 
 fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String> {
-	fn match_field(field: &str, val: &Value, op: &Operator, logline: &LogEntry) -> Result<bool, String> {
+	fn match_field(
+		field: &str,
+		val: &Value,
+		op: &Operator,
+		logline: &LogEntry,
+	) -> Result<bool, String> {
 		match find_field(field, logline) {
 			Some(field) => does_field_match(&field, val, op, logline),
-			None => Ok(false)
+			None => Ok(false),
 		}
 	}
 	match (cond.left.as_ref(), cond.right.as_ref(), &cond.operator) {
-		(Expr::Value(Value::String(left)), Expr::Value(val), op) => match_field(left, val, op, logline),
-		(Expr::Value(val), Expr::Value(Value::String(right)), op) => match_field(right, val, op, logline),
-		(Expr::Value(Value::String(left)), Expr::Empty, Operator::Exists) => Ok(find_field(left, logline).is_some()),
-		(Expr::Value(Value::String(left)), Expr::Empty, Operator::NotExists) => Ok(find_field(left, logline).is_none()), 
+		(Expr::Value(Value::String(left)), Expr::Value(val), op) => {
+			match_field(left, val, op, logline)
+		}
+		(Expr::Value(val), Expr::Value(Value::String(right)), op) => {
+			match_field(right, val, op, logline)
+		}
+		(Expr::Value(Value::String(left)), Expr::Empty, Operator::Exists) => {
+			Ok(find_field(left, logline).is_some())
+		}
+		(Expr::Value(Value::String(left)), Expr::Empty, Operator::NotExists) => {
+			Ok(find_field(left, logline).is_none())
+		}
 		(Expr::FieldAccess(field), right, op) => check_field_access(field, right, op, logline),
 		(left, Expr::FieldAccess(field), op) => check_field_access(field, left, op, logline),
-		_ => panic!("Nothing makes sense anymore {:?} logline: {:?}", cond, logline)
+		_ => panic!(
+			"Nothing makes sense anymore {:?} logline: {:?}",
+			cond, logline
+		),
 	}
 }
 
@@ -181,7 +232,7 @@ pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 			Value::String(value) => Ok(value != ""),
 			Value::Number(value) => Ok(*value > 0),
 			Value::Date(value) => Ok(true),
-			Value::List(_) => Err("This is not javascript".to_string())
+			Value::List(_) => Err("This is not javascript".to_string()),
 		},
 		Expr::Empty => Ok(true),
 		_ => todo!("expr {:?} not supported yet", expr),
@@ -190,43 +241,52 @@ pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 
 pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 	fn check_condition(cond: &Condition, props: &[Prop]) -> Result<bool, String> {
-				fn compare(prop_val: &String, query_val: &Value, op: &Operator) -> Result<bool, String> {
-						match (query_val, prop_val, op) {
-								(Value::String(query_str), prop_val, op) => Ok(cmp_semver_or_string(prop_val, query_str, op)),
-								(Value::Number(num), prop_val, op) => Ok(magic_cmp(prop_val, &num.to_string(), op)),
-								(Value::List(list), right, Operator::In) => any(list, right, &Operator::Equal),
-								(_, _, _) => Ok(false)
-						}
+		fn compare(prop_val: &String, query_val: &Value, op: &Operator) -> Result<bool, String> {
+			match (query_val, prop_val, op) {
+				(Value::String(query_str), prop_val, op) => {
+					Ok(cmp_semver_or_string(prop_val, query_str, op))
 				}
-	
-		fn match_field(field: &String, val: &Value, op: &Operator, props: &[Prop]) -> Result<bool, String> {
+				(Value::Number(num), prop_val, op) => Ok(magic_cmp(prop_val, &num.to_string(), op)),
+				(Value::List(list), right, Operator::In) => any(list, right, &Operator::Equal),
+				(_, _, _) => Ok(false),
+			}
+		}
+
+		fn match_field(
+			field: &String,
+			val: &Value,
+			op: &Operator,
+			props: &[Prop],
+		) -> Result<bool, String> {
 			if field == "msg" || field == "timestamp" {
-				return Ok(true)
+				return Ok(true);
 			}
 			for prop in props {
 				if prop.key != *field {
-					continue
+					continue;
 				}
 
 				if compare(&prop.value, val, op)? {
-					return Ok(true)
+					return Ok(true);
 				}
 			}
-			return Ok(false)
+			return Ok(false);
 		}
-	
+
 		fn any(list: &[Value], left: &String, op: &Operator) -> Result<bool, String> {
 			for value in list {
 				if compare(left, value, op)? {
-					return Ok(true)
+					return Ok(true);
 				}
 			}
-			return Ok(false)
+			return Ok(false);
 		}
-	
+
 		match (cond.left.as_ref(), cond.right.as_ref(), &cond.operator) {
-			(Expr::Value(Value::String(left)), Expr::Value(val), op) => match_field(left, val, op, props),
-			_ => Ok(false)
+			(Expr::Value(Value::String(left)), Expr::Value(val), op) => {
+				match_field(left, val, op, props)
+			}
+			_ => Ok(false),
 		}
 	}
 
@@ -238,7 +298,7 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 			Value::String(value) => Ok(value != ""),
 			Value::Number(value) => Ok(*value > 0),
 			Value::Date(value) => Ok(true),
-			Value::List(_) => Err("This is not javascript".to_string())
+			Value::List(_) => Err("This is not javascript".to_string()),
 		},
 		Expr::Empty => Ok(true),
 		_ => todo!("expr {:?} not supported yet", expr),
@@ -247,23 +307,32 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-	use chrono::DateTime;
-	use chrono::Utc;
+	use super::*;
 	use crate::FieldAccess;
 	use crate::Prop;
-	use super::*;
+	use chrono::DateTime;
+	use chrono::Utc;
 
 	#[test]
 	fn matches_props() {
 		let props = vec![
-			Prop { key: "service".to_string(), value: "auth".to_string() },
-			Prop { key: "user_id".to_string(), value: "123".to_string() },
-			Prop { key: "duration_ms".to_string(), value: "150".to_string() },
+			Prop {
+				key: "service".to_string(),
+				value: "auth".to_string(),
+			},
+			Prop {
+				key: "user_id".to_string(),
+				value: "123".to_string(),
+			},
+			Prop {
+				key: "duration_ms".to_string(),
+				value: "150".to_string(),
+			},
 		];
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::String("auth".to_string())))
+			right: Box::new(Expr::Value(Value::String("auth".to_string()))),
 		});
 		assert!(check_props(&expr, &props).unwrap());
 	}
@@ -271,15 +340,27 @@ mod tests {
 	#[test]
 	fn matches_props_with_many_same_kesy() {
 		let props = vec![
-			Prop { key: "service".to_string(), value: "auth".to_string() },
-			Prop { key: "user_id".to_string(), value: "123".to_string() },
-			Prop { key: "duration_ms".to_string(), value: "150".to_string() },
-			Prop { key: "service".to_string(), value: "auth2".to_string() },
+			Prop {
+				key: "service".to_string(),
+				value: "auth".to_string(),
+			},
+			Prop {
+				key: "user_id".to_string(),
+				value: "123".to_string(),
+			},
+			Prop {
+				key: "duration_ms".to_string(),
+				value: "150".to_string(),
+			},
+			Prop {
+				key: "service".to_string(),
+				value: "auth2".to_string(),
+			},
 		];
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::String("auth2".to_string())))
+			right: Box::new(Expr::Value(Value::String("auth2".to_string()))),
 		});
 		assert!(check_props(&expr, &props).unwrap());
 	}
@@ -287,14 +368,23 @@ mod tests {
 	#[test]
 	fn matches_number_props() {
 		let props = vec![
-			Prop { key: "service".to_string(), value: "auth".to_string() },
-			Prop { key: "user_id".to_string(), value: "123".to_string() },
-			Prop { key: "duration_ms".to_string(), value: "150".to_string() },
+			Prop {
+				key: "service".to_string(),
+				value: "auth".to_string(),
+			},
+			Prop {
+				key: "user_id".to_string(),
+				value: "123".to_string(),
+			},
+			Prop {
+				key: "duration_ms".to_string(),
+				value: "150".to_string(),
+			},
 		];
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("duration_ms".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::Number(150)))
+			right: Box::new(Expr::Value(Value::Number(150))),
 		});
 		assert!(check_props(&expr, &props).unwrap());
 	}
@@ -302,14 +392,23 @@ mod tests {
 	#[test]
 	fn does_not_match_props() {
 		let props = vec![
-			Prop { key: "service".to_string(), value: "auth".to_string() },
-			Prop { key: "user_id".to_string(), value: "123".to_string() },
-			Prop { key: "duration_ms".to_string(), value: "150".to_string() },
+			Prop {
+				key: "service".to_string(),
+				value: "auth".to_string(),
+			},
+			Prop {
+				key: "user_id".to_string(),
+				value: "123".to_string(),
+			},
+			Prop {
+				key: "duration_ms".to_string(),
+				value: "150".to_string(),
+			},
 		];
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::String("wrong_service".to_string())))
+			right: Box::new(Expr::Value(Value::String("wrong_service".to_string()))),
 		});
 		assert!(!check_props(&expr, &props).unwrap());
 	}
@@ -317,21 +416,30 @@ mod tests {
 	#[test]
 	fn matches_and_with_props() {
 		let props = vec![
-			Prop { key: "service".to_string(), value: "auth".to_string() },
-			Prop { key: "user_id".to_string(), value: "123".to_string() },
-			Prop { key: "duration_ms".to_string(), value: "150".to_string() },
+			Prop {
+				key: "service".to_string(),
+				value: "auth".to_string(),
+			},
+			Prop {
+				key: "user_id".to_string(),
+				value: "123".to_string(),
+			},
+			Prop {
+				key: "duration_ms".to_string(),
+				value: "150".to_string(),
+			},
 		];
 		let expr = Expr::And(
 			Box::new(Expr::Condition(Condition {
 				left: Box::new(Expr::Value(Value::String("service".to_string()))),
 				operator: Operator::Equal,
-				right: Box::new(Expr::Value(Value::String("auth".to_string())))
+				right: Box::new(Expr::Value(Value::String("auth".to_string()))),
 			})),
 			Box::new(Expr::Condition(Condition {
 				left: Box::new(Expr::Value(Value::String("user_id".to_string()))),
 				operator: Operator::Equal,
-				right: Box::new(Expr::Value(Value::String("123".to_string())))
-			}))
+				right: Box::new(Expr::Value(Value::String("123".to_string()))),
+			})),
 		);
 		assert!(check_props(&expr, &props).unwrap());
 	}
@@ -341,7 +449,10 @@ mod tests {
 		let logline = LogEntry {
 			timestamp: Utc::now(),
 			level: LogLevel::Info,
-			props: vec![Prop { key: "key".to_string(), value: "value".to_string() }],
+			props: vec![Prop {
+				key: "key".to_string(),
+				value: "value".to_string(),
+			}],
 			msg: "Hello, world!".to_string(),
 			..Default::default()
 		};
@@ -349,7 +460,7 @@ mod tests {
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::String("Hello".to_string())))
+			right: Box::new(Expr::Value(Value::String("Hello".to_string()))),
 		});
 		assert!(!check_expr(&expr, &logline).unwrap());
 	}
@@ -359,7 +470,10 @@ mod tests {
 		let logline = LogEntry {
 			timestamp: Utc::now(),
 			level: LogLevel::Info,
-			props: vec![Prop { key: "key".to_string(), value: "value".to_string() }],
+			props: vec![Prop {
+				key: "key".to_string(),
+				value: "value".to_string(),
+			}],
 			msg: "Hello, world!".to_string(),
 			..Default::default()
 		};
@@ -367,7 +481,7 @@ mod tests {
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::String("Hello, world!".to_string())))
+			right: Box::new(Expr::Value(Value::String("Hello, world!".to_string()))),
 		});
 		assert!(check_expr(&expr, &logline).unwrap());
 	}
@@ -377,9 +491,18 @@ mod tests {
 			timestamp: Utc::now(),
 			level: LogLevel::Info,
 			props: vec![
-				Prop { key: "service".to_string(), value: "auth".to_string() },
-				Prop { key: "user_id".to_string(), value: "123".to_string() },
-				Prop { key: "duration_ms".to_string(), value: "150".to_string() },
+				Prop {
+					key: "service".to_string(),
+					value: "auth".to_string(),
+				},
+				Prop {
+					key: "user_id".to_string(),
+					value: "123".to_string(),
+				},
+				Prop {
+					key: "duration_ms".to_string(),
+					value: "150".to_string(),
+				},
 			],
 			msg: "User login successful".to_string(),
 			..Default::default()
@@ -389,18 +512,21 @@ mod tests {
 	#[test]
 	fn test_match_field() {
 		let log = create_test_log_entry();
-		
-		assert!(matches!(find_field("timestamp", &log), Some(FieldType::Timestamp)));
+
+		assert!(matches!(
+			find_field("timestamp", &log),
+			Some(FieldType::Timestamp)
+		));
 		assert!(matches!(find_field("level", &log), Some(FieldType::Level)));
 		assert!(matches!(find_field("msg", &log), Some(FieldType::Msg)));
-		
+
 		if let Some(FieldType::Prop(key, val)) = find_field("service", &log) {
 			assert_eq!(key, "service");
 			assert_eq!(val, "auth");
 		} else {
 			panic!("Expected Prop field type for 'service'");
 		}
-		
+
 		assert!(find_field("nonexistent", &log).is_none());
 	}
 
@@ -411,7 +537,7 @@ mod tests {
 		assert!(magic_cmp(5, 5, &Operator::GreaterThanOrEqual));
 		assert!(magic_cmp(4, 5, &Operator::LessThan));
 		assert!(magic_cmp(5, 5, &Operator::LessThanOrEqual));
-		
+
 		assert!(!magic_cmp(5, 6, &Operator::Equal));
 		assert!(!magic_cmp(5, 6, &Operator::GreaterThan));
 	}
@@ -419,18 +545,18 @@ mod tests {
 	#[test]
 	fn test_level_comparison() {
 		let log = create_test_log_entry();
-		
+
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("level".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::String("INFO".to_string())))
+			right: Box::new(Expr::Value(Value::String("INFO".to_string()))),
 		});
 		assert!(check_expr(&expr, &log).unwrap());
-		
+
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("level".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::String("ERROR".to_string())))
+			right: Box::new(Expr::Value(Value::String("ERROR".to_string()))),
 		});
 		assert!(!check_expr(&expr, &log).unwrap());
 	}
@@ -438,32 +564,32 @@ mod tests {
 	#[test]
 	fn test_property_matching() {
 		let log = create_test_log_entry();
-		
+
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::String("auth".to_string())))
+			right: Box::new(Expr::Value(Value::String("auth".to_string()))),
 		});
 		assert!(check_expr(&expr, &log).unwrap());
-		
+
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("duration_ms".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::Number(150)))
+			right: Box::new(Expr::Value(Value::Number(150))),
 		});
 		assert!(check_expr(&expr, &log).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::NotEqual,
-			right: Box::new(Expr::Value(Value::String("auth".to_string())))
+			right: Box::new(Expr::Value(Value::String("auth".to_string()))),
 		});
 		assert!(!check_expr(&expr, &log).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("duration_ms".to_string()))),
 			operator: Operator::NotEqual,
-			right: Box::new(Expr::Value(Value::Number(200)))
+			right: Box::new(Expr::Value(Value::Number(200))),
 		});
 		assert!(check_expr(&expr, &log).unwrap());
 	}
@@ -471,66 +597,65 @@ mod tests {
 	#[test]
 	fn test_message_like_operator() {
 		let log = create_test_log_entry();
-		
+
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
 			operator: Operator::Like,
-			right: Box::new(Expr::Value(Value::String("login".to_string())))
+			right: Box::new(Expr::Value(Value::String("login".to_string()))),
 		});
 		assert!(check_expr(&expr, &log).unwrap());
-		
+
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
 			operator: Operator::Like,
-			right: Box::new(Expr::Value(Value::String("logout".to_string())))
+			right: Box::new(Expr::Value(Value::String("logout".to_string()))),
 		});
 		assert!(!check_expr(&expr, &log).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
 			operator: Operator::NotLike,
-			right: Box::new(Expr::Value(Value::String("login".to_string())))
+			right: Box::new(Expr::Value(Value::String("login".to_string()))),
 		});
 		assert!(!check_expr(&expr, &log).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
 			operator: Operator::NotLike,
-			right: Box::new(Expr::Value(Value::String("logout".to_string())))
+			right: Box::new(Expr::Value(Value::String("logout".to_string()))),
 		});
 		assert!(check_expr(&expr, &log).unwrap());
-
 	}
 
 	#[test]
 	fn test_prop_like_operator() {
 		let log = create_test_log_entry();
-		
+
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::Like,
-			right: Box::new(Expr::Value(Value::String("au".to_string())))
+			right: Box::new(Expr::Value(Value::String("au".to_string()))),
 		});
 		assert!(check_expr(&expr, &log).unwrap());
-		
+
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::Like,
-			right: Box::new(Expr::Value(Value::String("asdf".to_string())))
+			right: Box::new(Expr::Value(Value::String("asdf".to_string()))),
 		});
 		assert!(!check_expr(&expr, &log).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::NotLike,
-			right: Box::new(Expr::Value(Value::String("au".to_string())))
+			right: Box::new(Expr::Value(Value::String("au".to_string()))),
 		});
 		assert!(!check_expr(&expr, &log).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::NotLike,
-			right: Box::new(Expr::Value(Value::String("asdf".to_string())))
+			right: Box::new(Expr::Value(Value::String("asdf".to_string()))),
 		});
 		assert!(check_expr(&expr, &log).unwrap());
 	}
@@ -538,34 +663,34 @@ mod tests {
 	#[test]
 	fn test_compound_expressions() {
 		let log = create_test_log_entry();
-		
+
 		// Test AND expression
 		let expr = Expr::And(
 			Box::new(Expr::Condition(Condition {
 				left: Box::new(Expr::Value(Value::String("service".to_string()))),
 				operator: Operator::Equal,
-				right: Box::new(Expr::Value(Value::String("auth".to_string())))
+				right: Box::new(Expr::Value(Value::String("auth".to_string()))),
 			})),
 			Box::new(Expr::Condition(Condition {
 				left: Box::new(Expr::Value(Value::String("user_id".to_string()))),
 				operator: Operator::Equal,
-				right: Box::new(Expr::Value(Value::String("123".to_string())))
-			}))
+				right: Box::new(Expr::Value(Value::String("123".to_string()))),
+			})),
 		);
 		assert!(check_expr(&expr, &log).unwrap());
-		
+
 		// Test OR expression
 		let expr = Expr::Or(
 			Box::new(Expr::Condition(Condition {
 				left: Box::new(Expr::Value(Value::String("service".to_string()))),
 				operator: Operator::Equal,
-				right: Box::new(Expr::Value(Value::String("wrong".to_string())))
+				right: Box::new(Expr::Value(Value::String("wrong".to_string()))),
 			})),
 			Box::new(Expr::Condition(Condition {
 				left: Box::new(Expr::Value(Value::String("user_id".to_string()))),
 				operator: Operator::Equal,
-				right: Box::new(Expr::Value(Value::String("123".to_string())))
-			}))
+				right: Box::new(Expr::Value(Value::String("123".to_string()))),
+			})),
 		);
 		assert!(check_expr(&expr, &log).unwrap());
 	}
@@ -573,20 +698,20 @@ mod tests {
 	#[test]
 	fn test_invalid_comparisons() {
 		let log = create_test_log_entry();
-		
+
 		// Test invalid level comparison
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("level".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::Date(Utc::now())))
+			right: Box::new(Expr::Value(Value::Date(Utc::now()))),
 		});
 		assert!(check_expr(&expr, &log).is_err());
-		
+
 		// Test invalid message comparison
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::Date(Utc::now())))
+			right: Box::new(Expr::Value(Value::Date(Utc::now()))),
 		});
 		assert!(check_expr(&expr, &log).is_err());
 	}
@@ -594,7 +719,7 @@ mod tests {
 	#[test]
 	fn test_empty_and_value_expressions() {
 		let log = create_test_log_entry();
-		
+
 		assert!(check_expr(&Expr::Empty, &log).unwrap());
 		assert!(check_expr(&Expr::Value(Value::String("nonempty".to_string())), &log).unwrap());
 		assert!(!check_expr(&Expr::Value(Value::String("".to_string())), &log).unwrap());
@@ -603,24 +728,26 @@ mod tests {
 		assert!(check_expr(&Expr::Value(Value::Date(Utc::now())), &log).unwrap());
 	}
 
-
 	#[test]
 	fn test_in_eval() {
 		let logline = LogEntry {
 			timestamp: Utc::now(),
 			level: LogLevel::Info,
-			props: vec![Prop { key: "key".to_string(), value: "value".to_string() }],
+			props: vec![Prop {
+				key: "key".to_string(),
+				value: "value".to_string(),
+			}],
 			msg: "Hello, world!".to_string(),
 			..Default::default()
 		};
-		
+
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("level".to_string()))),
 			operator: Operator::In,
 			right: Box::new(Expr::Value(Value::List(vec![
 				Value::String("info".to_string()),
-				Value::String("debug".to_string())
-			])))
+				Value::String("debug".to_string()),
+			]))),
 		});
 		assert!(check_expr(&expr, &logline).unwrap());
 
@@ -629,8 +756,8 @@ mod tests {
 			operator: Operator::In,
 			right: Box::new(Expr::Value(Value::List(vec![
 				Value::String("error".to_string()),
-				Value::String("warn".to_string())
-			])))
+				Value::String("warn".to_string()),
+			]))),
 		});
 		assert!(!check_expr(&expr, &logline).unwrap());
 	}
@@ -640,130 +767,145 @@ mod tests {
 		let logline = LogEntry {
 			timestamp: Utc::now(),
 			level: LogLevel::Info,
-			props: vec![Prop { key: "key".to_string(), value: "value".to_string() }],
+			props: vec![Prop {
+				key: "key".to_string(),
+				value: "value".to_string(),
+			}],
 			msg: "Hello, world!".to_string(),
 			..Default::default()
 		};
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("key".to_string()))),
 			operator: Operator::Exists,
-			right: Box::new(Expr::Empty)
+			right: Box::new(Expr::Empty),
 		});
 		assert!(check_expr(&expr, &logline).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("nonexistent".to_string()))),
 			operator: Operator::Exists,
-			right: Box::new(Expr::Empty)
+			right: Box::new(Expr::Empty),
 		});
 		assert!(!check_expr(&expr, &logline).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("nonexistent".to_string()))),
 			operator: Operator::NotExists,
-			right: Box::new(Expr::Empty)
+			right: Box::new(Expr::Empty),
 		});
 		assert!(check_expr(&expr, &logline).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("key".to_string()))),
 			operator: Operator::NotExists,
-			right: Box::new(Expr::Empty)
+			right: Box::new(Expr::Empty),
 		});
 		assert!(!check_expr(&expr, &logline).unwrap());
 	}
 
 	#[test]
-		fn test_timestamp_fields() {
+	fn test_timestamp_fields() {
 		let logline = LogEntry {
-			timestamp: DateTime::from_utc(chrono::NaiveDate::from_ymd_opt(2024, 5, 15).unwrap().and_hms_opt(0, 0, 0).unwrap(), Utc),
+			timestamp: DateTime::from_utc(
+				chrono::NaiveDate::from_ymd_opt(2024, 5, 15)
+					.unwrap()
+					.and_hms_opt(0, 0, 0)
+					.unwrap(),
+				Utc,
+			),
 			level: LogLevel::Info,
-			props: vec![Prop { key: "key".to_string(), value: "value".to_string() }],
+			props: vec![Prop {
+				key: "key".to_string(),
+				value: "value".to_string(),
+			}],
 			msg: "Hello, world!".to_string(),
 			..Default::default()
 		};
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::FieldAccess(FieldAccess {
 				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
-				field: "year".to_string()
+				field: "year".to_string(),
 			})),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::Number(2024)))
+			right: Box::new(Expr::Value(Value::Number(2024))),
 		});
 		assert!(check_expr(&expr, &logline).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::FieldAccess(FieldAccess {
 				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
-				field: "month".to_string()
+				field: "month".to_string(),
 			})),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::Number(5)))
+			right: Box::new(Expr::Value(Value::Number(5))),
 		});
 		assert!(check_expr(&expr, &logline).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::FieldAccess(FieldAccess {
 				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
-				field: "day".to_string()
+				field: "day".to_string(),
 			})),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::Number(15)))
+			right: Box::new(Expr::Value(Value::Number(15))),
 		});
 		assert!(check_expr(&expr, &logline).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::FieldAccess(FieldAccess {
 				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
-				field: "hour".to_string()
+				field: "hour".to_string(),
 			})),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::Number(0)))
+			right: Box::new(Expr::Value(Value::Number(0))),
 		});
 		assert!(check_expr(&expr, &logline).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::FieldAccess(FieldAccess {
 				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
-				field: "minute".to_string()
+				field: "minute".to_string(),
 			})),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::Number(0)))
+			right: Box::new(Expr::Value(Value::Number(0))),
 		});
 		assert!(check_expr(&expr, &logline).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::FieldAccess(FieldAccess {
 				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
-				field: "second".to_string()
+				field: "second".to_string(),
 			})),
 			operator: Operator::Equal,
-			right: Box::new(Expr::Value(Value::Number(0)))
+			right: Box::new(Expr::Value(Value::Number(0))),
 		});
-				assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline).unwrap());
 	}
 
 	#[test]
 	fn test_semver_comparison() {
-			let logline = LogEntry {
-					timestamp: Utc::now(),
-					level: LogLevel::Info,
-					props: vec![Prop { key: "version".to_string(), value: "1.10.0".to_string() }],
-					msg: "".to_string(),
-					..Default::default()
-			};
+		let logline = LogEntry {
+			timestamp: Utc::now(),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "version".to_string(),
+				value: "1.10.0".to_string(),
+			}],
+			msg: "".to_string(),
+			..Default::default()
+		};
 
-			let expr = Expr::Condition(Condition {
-					left: Box::new(Expr::Value(Value::String("version".to_string()))),
-					operator: Operator::GreaterThan,
-					right: Box::new(Expr::Value(Value::String("1.2.0".to_string())))
-			});
-			assert!(check_expr(&expr, &logline).unwrap());
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("version".to_string()))),
+			operator: Operator::GreaterThan,
+			right: Box::new(Expr::Value(Value::String("1.2.0".to_string()))),
+		});
+		assert!(check_expr(&expr, &logline).unwrap());
 
-			let expr = Expr::Condition(Condition {
-					left: Box::new(Expr::Value(Value::String("version".to_string()))),
-					operator: Operator::LessThan,
-					right: Box::new(Expr::Value(Value::String("2.0.0".to_string())))
-			});
-			assert!(check_expr(&expr, &logline).unwrap());
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("version".to_string()))),
+			operator: Operator::LessThan,
+			right: Box::new(Expr::Value(Value::String("2.0.0".to_string()))),
+		});
+		assert!(check_expr(&expr, &logline).unwrap());
 
-			let expr = Expr::Condition(Condition {
-					left: Box::new(Expr::Value(Value::String("version".to_string()))),
-					operator: Operator::Equal,
-					right: Box::new(Expr::Value(Value::String("1.10.0".to_string())))
-			});
-			assert!(check_expr(&expr, &logline).unwrap());
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("version".to_string()))),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::String("1.10.0".to_string()))),
+		});
+		assert!(check_expr(&expr, &logline).unwrap());
 	}
 }

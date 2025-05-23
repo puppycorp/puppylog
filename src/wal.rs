@@ -1,10 +1,10 @@
+use crate::config::log_path;
+use puppylog::LogEntry;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
-use puppylog::LogEntry;
-use crate::config::log_path;
 
 fn wal_path() -> PathBuf {
 	log_path().join("wal.log")
@@ -12,12 +12,12 @@ fn wal_path() -> PathBuf {
 
 enum Cmd {
 	WriteLog(LogEntry),
-	Clear
+	Clear,
 }
 
 #[derive(Debug)]
 pub struct Wal {
-	tx: mpsc::Sender<Cmd>
+	tx: mpsc::Sender<Cmd>,
 }
 
 impl Wal {
@@ -26,10 +26,7 @@ impl Wal {
 		thread::spawn(move || {
 			let path = wal_path();
 			log::info!("trying to open wal file: {:?}", path);
-			let mut wal_file = match OpenOptions::new()
-				.append(true)
-				.create(true)
-				.open(path) {
+			let mut wal_file = match OpenOptions::new().append(true).create(true).open(path) {
 				Ok(file) => file,
 				Err(err) => {
 					log::error!("Failed to open wal file: {}", err);
@@ -40,7 +37,7 @@ impl Wal {
 				match cmd {
 					Cmd::WriteLog(log) => {
 						log.serialize(&mut wal_file).unwrap();
-					},
+					}
 					Cmd::Clear => {
 						log::info!("clearing logs from wal");
 						if let Err(err) = wal_file.set_len(0) {
@@ -50,9 +47,7 @@ impl Wal {
 				}
 			}
 		});
-		Self {
-			tx
-		}
+		Self { tx }
 	}
 
 	pub fn write(&self, log: LogEntry) {
@@ -84,13 +79,17 @@ pub fn load_logs_from_wal() -> Vec<LogEntry> {
 			Ok(log) => logs.push(log),
 			Err(puppylog::LogentryDeserializerError::NotEnoughData) => {
 				break;
-			},
+			}
 			Err(e) => {
 				log::error!("Error deserializing log entry: {:?}", e);
 				continue;
 			}
 		};
 	}
-	log::info!("Loaded {} logs from wal in {:?}", logs.len(), timer.elapsed());
+	log::info!(
+		"Loaded {} logs from wal in {:?}",
+		logs.len(),
+		timer.elapsed()
+	);
 	logs
 }

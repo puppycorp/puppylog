@@ -7,7 +7,6 @@ use tokio::sync::Mutex;
 
 use crate::config::settings_path;
 
-
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SettingsInner {
 	pub collection_query: String,

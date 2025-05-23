@@ -5,7 +5,10 @@ pub struct UploadGuard<'a> {
 }
 
 impl<'a> UploadGuard<'a> {
-	pub fn new(counter: &'a std::sync::atomic::AtomicUsize, max: usize) -> Result<Self, &'static str> {
+	pub fn new(
+		counter: &'a std::sync::atomic::AtomicUsize,
+		max: usize,
+	) -> Result<Self, &'static str> {
 		let prev = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |curr| {
 			if curr >= max {
 				None
@@ -15,7 +18,7 @@ impl<'a> UploadGuard<'a> {
 		});
 		match prev {
 			Ok(_) => Ok(Self { counter }),
-			Err(_) => Err("Too many concurrent uploads")
+			Err(_) => Err("Too many concurrent uploads"),
 		}
 	}
 }

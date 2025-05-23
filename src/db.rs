@@ -1,4 +1,3 @@
-use std::fs::create_dir_all;
 use chrono::DateTime;
 use chrono::Utc;
 use puppylog::check_props;
@@ -9,6 +8,7 @@ use rusqlite::Connection;
 use rusqlite::ToSql;
 use serde::Deserialize;
 use serde::Serialize;
+use std::fs::create_dir_all;
 use tokio::sync::Mutex;
 
 use crate::config::db_path;
@@ -18,16 +18,16 @@ use crate::types::SortDir;
 use std::collections::HashMap;
 
 struct Migration {
-    id: u32,
-    name: &'static str,
-    sql: &'static str,
+	id: u32,
+	name: &'static str,
+	sql: &'static str,
 }
 
 const MIGRATIONS: &[Migration] = &[
-    Migration {
-        id: 20250212,
-        name: "init_database",
-        sql: r#"
+	Migration {
+		id: 20250212,
+		name: "init_database",
+		sql: r#"
             CREATE TABLE devices (
                 id TEXT PRIMARY KEY,
                 send_logs BOOLEAN NOT NULL DEFAULT false,
@@ -47,12 +47,12 @@ const MIGRATIONS: &[Migration] = &[
                 logs_count INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        "#
-    },
-    Migration {
-        id: 20250226,
-        name: "add_send_interval_and_metadata",
-        sql: r#"
+        "#,
+	},
+	Migration {
+		id: 20250226,
+		name: "add_send_interval_and_metadata",
+		sql: r#"
             ALTER TABLE devices ADD COLUMN send_interval INTEGER NOT NULL DEFAULT 60;
             CREATE TABLE IF NOT EXISTS device_props (
                 device_id TEXT NOT NULL,
@@ -61,8 +61,8 @@ const MIGRATIONS: &[Migration] = &[
                 PRIMARY KEY (device_id, key, value),
                 FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
             );
-        "#
-    },
+        "#,
+	},
 	Migration {
 		id: 20250321,
 		name: "segment_props",
@@ -74,8 +74,8 @@ const MIGRATIONS: &[Migration] = &[
 				PRIMARY KEY (segment_id, key, value),
 				FOREIGN KEY (segment_id) REFERENCES log_segments(id)
 			);
-		"#
-	}
+		"#,
+	},
 ];
 
 pub fn open_db() -> Connection {
@@ -97,14 +97,14 @@ pub struct NewSegmentArgs {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Device {
-    pub id: String,
-    pub send_logs: bool,
-    pub filter_level: LogLevel,
-    pub send_interval: u32,
-    pub logs_size: usize,
-    pub logs_count: usize,
-    pub created_at: DateTime<Utc>,
-    pub last_upload_at: Option<DateTime<Utc>>,
+	pub id: String,
+	pub send_logs: bool,
+	pub filter_level: LogLevel,
+	pub send_interval: u32,
+	pub logs_size: usize,
+	pub logs_count: usize,
+	pub created_at: DateTime<Utc>,
+	pub last_upload_at: Option<DateTime<Utc>>,
 	pub props: Vec<MetaProp>,
 }
 
@@ -119,7 +119,7 @@ pub struct UpdateDevicesSettings {
 	pub filter_props: Vec<MetaProp>,
 	pub send_logs: bool,
 	pub send_interval: u32,
-	pub level: LogLevel
+	pub level: LogLevel,
 }
 
 #[derive(Deserialize, Debug)]
@@ -139,8 +139,12 @@ pub struct SegmentsMetadata {
 	pub logs_count: u64,
 }
 
-fn load_device_metadata_locked(conn: &Connection, device_id: &str) -> anyhow::Result<Vec<MetaProp>> {
-	let mut stmt = conn.prepare(r#"SELECT key, value FROM device_props WHERE device_id = ?1 ORDER BY key"#)?;
+fn load_device_metadata_locked(
+	conn: &Connection,
+	device_id: &str,
+) -> anyhow::Result<Vec<MetaProp>> {
+	let mut stmt =
+		conn.prepare(r#"SELECT key, value FROM device_props WHERE device_id = ?1 ORDER BY key"#)?;
 	let mut rows = stmt.query([device_id])?;
 	let mut props = Vec::new();
 	while let Some(row) = rows.next()? {
@@ -165,7 +169,12 @@ impl DB {
 		}
 	}
 
-	pub async fn update_device_stats(&self, device_id: &str, logs_size: usize, logs_count: usize) -> anyhow::Result<()> {
+	pub async fn update_device_stats(
+		&self,
+		device_id: &str,
+		logs_size: usize,
+		logs_count: usize,
+	) -> anyhow::Result<()> {
 		let conn = &mut self.conn.lock().await;
 		let tx = conn.transaction()?;
 		{
@@ -175,18 +184,22 @@ impl DB {
 				 ON CONFLICT(id) DO UPDATE SET
 					 logs_size = devices.logs_size + ?2,
 					 logs_count = devices.logs_count + ?3,
-					 last_upload_at = current_timestamp"
+					 last_upload_at = current_timestamp",
 			)?;
-			stmt.execute([&device_id as &dyn ToSql, &logs_size as &dyn ToSql, &logs_count as &dyn ToSql])?;
+			stmt.execute([
+				&device_id as &dyn ToSql,
+				&logs_size as &dyn ToSql,
+				&logs_count as &dyn ToSql,
+			])?;
 		}
 		tx.commit()?;
 		Ok(())
 	}
 
-    pub async fn get_devices(&self) -> anyhow::Result<Vec<Device>> {
-        let conn = self.conn.lock().await;
-        let mut stmt = conn.prepare(
-            r#"
+	pub async fn get_devices(&self) -> anyhow::Result<Vec<Device>> {
+		let conn = self.conn.lock().await;
+		let mut stmt = conn.prepare(
+			r#"
             SELECT
                 id,
                 send_logs,
@@ -198,31 +211,31 @@ impl DB {
                 send_interval
             FROM devices
             "#,
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut list = Vec::new();
-        while let Some(row) = rows.next()? {
-            let device_id: String = row.get(0)?;
-            let props = load_device_metadata_locked(&conn, &device_id)?;
-            list.push(Device {
-                id: device_id,
-                send_logs: row.get(1)?,
-                filter_level: LogLevel::from_i64(row.get(2)?),
-                logs_size: row.get(3)?,
-                logs_count: row.get(4)?,
-                created_at: row.get(5)?,
-                last_upload_at: row.get(6)?,
-                send_interval: row.get(7)?,
-                props,
-            });
-        }
-        Ok(list)
-    }
+		)?;
+		let mut rows = stmt.query([])?;
+		let mut list = Vec::new();
+		while let Some(row) = rows.next()? {
+			let device_id: String = row.get(0)?;
+			let props = load_device_metadata_locked(&conn, &device_id)?;
+			list.push(Device {
+				id: device_id,
+				send_logs: row.get(1)?,
+				filter_level: LogLevel::from_i64(row.get(2)?),
+				logs_size: row.get(3)?,
+				logs_count: row.get(4)?,
+				created_at: row.get(5)?,
+				last_upload_at: row.get(6)?,
+				send_interval: row.get(7)?,
+				props,
+			});
+		}
+		Ok(list)
+	}
 
 	pub async fn get_or_create_device(&self, device_id: &str) -> anyhow::Result<Device> {
 		let conn = self.conn.lock().await;
 		let now = chrono::Utc::now();
-	
+
 		let mut stmt = conn.prepare(
 			"INSERT INTO devices 
 			  (id, send_logs, filter_level, logs_size, logs_count, created_at, last_upload_at, send_interval)
@@ -232,13 +245,13 @@ impl DB {
 			  id = id
 			 RETURNING id, send_logs, filter_level, send_interval, logs_size, logs_count, created_at, last_upload_at"
 		)?;
-	
+
 		let default_send_logs = false;
 		let default_filter_level = LogLevel::Info.to_u8();
 		let default_send_interval = 60;
 		let default_logs_size = 0;
 		let default_logs_count = 0;
-	
+
 		let mut rows = stmt.query(rusqlite::params![
 			device_id,
 			default_send_logs,
@@ -249,7 +262,7 @@ impl DB {
 			now,
 			default_send_interval,
 		])?;
-	
+
 		if let Some(row) = rows.next()? {
 			Ok(Device {
 				id: row.get(0)?,
@@ -269,33 +282,43 @@ impl DB {
 
 	pub async fn update_device_settings(&self, device_id: &str, payload: &UpdateDeviceSettings) {
 		let conn = &mut self.conn.lock().await;
-		let mut stmt = conn.prepare(
-			"INSERT INTO devices (id, send_logs, filter_level, send_interval)
+		let mut stmt = conn
+			.prepare(
+				"INSERT INTO devices (id, send_logs, filter_level, send_interval)
 			VALUES (?1, ?2, ?3, ?4)
 			ON CONFLICT(id) DO UPDATE SET
 				send_logs = ?2,
 				filter_level = ?3,
-				send_interval = ?4"
-		).unwrap();
+				send_interval = ?4",
+			)
+			.unwrap();
 		stmt.execute([
 			&device_id as &dyn ToSql,
 			&payload.send_logs as &dyn ToSql,
 			&payload.filter_level.to_u8() as &dyn ToSql,
 			&payload.send_interval as &dyn ToSql,
-		]).unwrap();
+		])
+		.unwrap();
 	}
 
-	pub async fn update_device_metadata(&self, device_id: &str, metadata: &[MetaProp]) -> anyhow::Result<()> {
+	pub async fn update_device_metadata(
+		&self,
+		device_id: &str,
+		metadata: &[MetaProp],
+	) -> anyhow::Result<()> {
 		let conn = self.conn.lock().await;
 		let tx = conn.unchecked_transaction()?;
 		{
-			tx.execute("INSERT OR IGNORE INTO devices (id) VALUES (?1)", [device_id])?;
+			tx.execute(
+				"INSERT OR IGNORE INTO devices (id) VALUES (?1)",
+				[device_id],
+			)?;
 			tx.execute("DELETE FROM device_props WHERE device_id = ?1", [device_id])?;
 			let mut ins_stmt = tx.prepare(
 				r#"
 				INSERT INTO device_props (device_id, key, value)
 				VALUES (?1, ?2, ?3)
-				"#
+				"#,
 			)?;
 			for prop in metadata {
 				ins_stmt.execute(rusqlite::params![device_id, prop.key, prop.value])?;
@@ -305,40 +328,40 @@ impl DB {
 		Ok(())
 	}
 
-    // ------------------------------------------------------------------------
-    // Bulk Update Example in a Single Query
-    // ------------------------------------------------------------------------
+	// ------------------------------------------------------------------------
+	// Bulk Update Example in a Single Query
+	// ------------------------------------------------------------------------
 
-    /// Update multiple devices at once (send_logs, filter_level, send_interval),
-    /// but **only** those that match **all** of the given key-value `filter_props`.
-    ///
-    /// Implements it as **one single UPDATE statement** using `EXISTS` subqueries.
-    /// 
-    /// **Explanation**: For each `MetaProp`, we append an `AND EXISTS(...)` condition.
-    /// This ensures the device has that (key,value) pair in `device_props`.
-    /// If `filter_props` is empty, we simply update all devices (no filter).
-    pub async fn update_devices_settings(
-        &self,
-        payload: &UpdateDevicesSettings,
-    ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().await;
-        let mut query = r#"
+	/// Update multiple devices at once (send_logs, filter_level, send_interval),
+	/// but **only** those that match **all** of the given key-value `filter_props`.
+	///
+	/// Implements it as **one single UPDATE statement** using `EXISTS` subqueries.
+	///
+	/// **Explanation**: For each `MetaProp`, we append an `AND EXISTS(...)` condition.
+	/// This ensures the device has that (key,value) pair in `device_props`.
+	/// If `filter_props` is empty, we simply update all devices (no filter).
+	pub async fn update_devices_settings(
+		&self,
+		payload: &UpdateDevicesSettings,
+	) -> anyhow::Result<()> {
+		let conn = self.conn.lock().await;
+		let mut query = r#"
             UPDATE devices
                SET send_logs    = ?1,
                    send_interval= ?2,
                    filter_level = ?3
                WHERE 1
         "#
-        .to_string();
+		.to_string();
 
-        let mut params: Vec<Box<dyn ToSql>> = Vec::new();
-        params.push(Box::new(payload.send_logs));
-        params.push(Box::new(payload.send_interval as i32));
-        params.push(Box::new(payload.level.to_u8()));
+		let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+		params.push(Box::new(payload.send_logs));
+		params.push(Box::new(payload.send_interval as i32));
+		params.push(Box::new(payload.level.to_u8()));
 
-        for prop in &payload.filter_props {
-            query.push_str(
-                r#"
+		for prop in &payload.filter_props {
+			query.push_str(
+				r#"
                   AND EXISTS (
                     SELECT 1 FROM device_props dp
                     WHERE dp.device_id = devices.id
@@ -346,15 +369,15 @@ impl DB {
                       AND dp.value = ?
                   )
                 "#,
-            );
-            params.push(Box::new(prop.key.clone()));
-            params.push(Box::new(prop.value.clone()));
-        }
+			);
+			params.push(Box::new(prop.key.clone()));
+			params.push(Box::new(prop.value.clone()));
+		}
 
-        let mut stmt = conn.prepare(&query)?;
-        stmt.execute(rusqlite::params_from_iter(params.iter().map(|p| &**p)))?;
-        Ok(())
-    }
+		let mut stmt = conn.prepare(&query)?;
+		stmt.execute(rusqlite::params_from_iter(params.iter().map(|p| &**p)))?;
+		Ok(())
+	}
 
 	pub async fn new_segment(&self, args: NewSegmentArgs) -> anyhow::Result<u32> {
 		let mut conn = self.conn.lock().await;
@@ -377,61 +400,64 @@ impl DB {
 		Ok(new_id as u32)
 	}
 
-	pub async fn find_segments(&self, query: &GetSegmentsQuery) -> anyhow::Result<Vec<SegmentMeta>> {
-        let conn = self.conn.lock().await;
-        let mut sql = String::from(
-            "SELECT id, first_timestamp, last_timestamp, \
+	pub async fn find_segments(
+		&self,
+		query: &GetSegmentsQuery,
+	) -> anyhow::Result<Vec<SegmentMeta>> {
+		let conn = self.conn.lock().await;
+		let mut sql = String::from(
+			"SELECT id, first_timestamp, last_timestamp, \
              original_size, compressed_size, logs_count, created_at \
-             FROM log_segments"
-        );
+             FROM log_segments",
+		);
 		let mut conditions: Vec<&str> = Vec::new();
 		let mut params: Vec<&dyn ToSql> = Vec::new();
 		let mut limit_param: i64 = 0;
 
-        if let Some(start) = &query.start {
-            conditions.push("first_timestamp >= ?");
-            params.push(start);
-        }
-        if let Some(end) = &query.end {
-            conditions.push("last_timestamp <= ?");
-            params.push(end);
-        }
+		if let Some(start) = &query.start {
+			conditions.push("first_timestamp >= ?");
+			params.push(start);
+		}
+		if let Some(end) = &query.end {
+			conditions.push("last_timestamp <= ?");
+			params.push(end);
+		}
 
-        if !conditions.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&conditions.join(" AND "));
-        }
+		if !conditions.is_empty() {
+			sql.push_str(" WHERE ");
+			sql.push_str(&conditions.join(" AND "));
+		}
 
-        let dir = match query.sort {
-            Some(SortDir::Asc)  => "ASC",
-            Some(SortDir::Desc) => "DESC",
-            None                => "DESC",
-        };
-        sql.push_str(" ORDER BY last_timestamp ");
-        sql.push_str(dir);
+		let dir = match query.sort {
+			Some(SortDir::Asc) => "ASC",
+			Some(SortDir::Desc) => "DESC",
+			None => "DESC",
+		};
+		sql.push_str(" ORDER BY last_timestamp ");
+		sql.push_str(dir);
 		if let Some(cnt) = query.count {
 			sql.push_str(" LIMIT ?");
 			limit_param = cnt as i64;
 			params.push(&limit_param);
 		}
 
-        let mut stmt = conn.prepare(&sql)?;
-        let mut rows = stmt.query(params.as_slice())?;
-        let mut metas = Vec::new();
-        while let Some(row) = rows.next()? {
-            metas.push(SegmentMeta {
-                id:              row.get(0)?,
-                first_timestamp: row.get(1)?,
-                last_timestamp:  row.get(2)?,
-                original_size:   row.get(3)?,
-                compressed_size: row.get(4)?,
-                logs_count:      row.get(5)?,
-                created_at:      row.get(6)?,
-            });
-        }
+		let mut stmt = conn.prepare(&sql)?;
+		let mut rows = stmt.query(params.as_slice())?;
+		let mut metas = Vec::new();
+		while let Some(row) = rows.next()? {
+			metas.push(SegmentMeta {
+				id: row.get(0)?,
+				first_timestamp: row.get(1)?,
+				last_timestamp: row.get(2)?,
+				original_size: row.get(3)?,
+				compressed_size: row.get(4)?,
+				logs_count: row.get(5)?,
+				created_at: row.get(6)?,
+			});
+		}
 
-        Ok(metas)
-    }
+		Ok(metas)
+	}
 
 	pub async fn fetch_segment(&self, segment: u32) -> anyhow::Result<SegmentMeta> {
 		let conn = self.conn.lock().await;
@@ -477,11 +503,17 @@ impl DB {
 		})
 	}
 
-	pub async fn upsert_segment_props(&self, segment: u32, props: impl Iterator<Item = &Prop>) -> anyhow::Result<()> {
+	pub async fn upsert_segment_props(
+		&self,
+		segment: u32,
+		props: impl Iterator<Item = &Prop>,
+	) -> anyhow::Result<()> {
 		let mut conn = self.conn.lock().await;
 		let tx = conn.transaction()?;
 		{
-			let mut ins_stmt = tx.prepare("INSERT OR IGNORE INTO segment_props (segment_id, key, value) VALUES (?1, ?2, ?3)")?;
+			let mut ins_stmt = tx.prepare(
+				"INSERT OR IGNORE INTO segment_props (segment_id, key, value) VALUES (?1, ?2, ?3)",
+			)?;
 			for prop in props {
 				ins_stmt.execute(rusqlite::params![segment, prop.key, prop.value])?;
 			}
@@ -492,7 +524,8 @@ impl DB {
 
 	pub async fn fetch_segment_props(&self, segment: u32) -> anyhow::Result<Vec<Prop>> {
 		let conn = self.conn.lock().await;
-		let mut stmt = conn.prepare("SELECT key, value FROM segment_props WHERE segment_id = ?1")?;
+		let mut stmt =
+			conn.prepare("SELECT key, value FROM segment_props WHERE segment_id = ?1")?;
 		let mut rows = stmt.query([segment])?;
 		let mut props = Vec::new();
 		while let Some(row) = rows.next()? {
@@ -514,17 +547,18 @@ impl DB {
 		}
 
 		// build a placeholder string like "?, ?, ?"
-		let placeholders = segment_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+		let placeholders = segment_ids
+			.iter()
+			.map(|_| "?")
+			.collect::<Vec<_>>()
+			.join(", ");
 		let sql = format!(
 			"SELECT segment_id, key, value FROM segment_props WHERE segment_id IN ({})",
 			placeholders
 		);
 
 		let mut stmt = conn.prepare(&sql)?;
-		let params: Vec<&dyn ToSql> = segment_ids
-			.iter()
-			.map(|id| id as &dyn ToSql)
-			.collect();
+		let params: Vec<&dyn ToSql> = segment_ids.iter().map(|id| id as &dyn ToSql).collect();
 		let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
 
 		let mut map: HashMap<u32, Vec<Prop>> = HashMap::new();
@@ -540,10 +574,14 @@ impl DB {
 		Ok(map)
 	}
 
-	pub async fn find_segments_with_query(&self, query: &QueryAst) -> anyhow::Result<Vec<SegmentMeta>> {
+	pub async fn find_segments_with_query(
+		&self,
+		query: &QueryAst,
+	) -> anyhow::Result<Vec<SegmentMeta>> {
 		let conn = self.conn.lock().await;
 		let mut stmt = conn.prepare("SELECT id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE first_timestamp <= ? ORDER BY last_timestamp DESC LIMIT ?")?;
-		let mut get_props_query = conn.prepare("SELECT key, value FROM segment_props WHERE segment_id = ?1")?;
+		let mut get_props_query =
+			conn.prepare("SELECT key, value FROM segment_props WHERE segment_id = ?1")?;
 		let mut rows = stmt.query(rusqlite::params![query.end_date, 50])?;
 		let mut metas = Vec::new();
 		while let Some(row) = rows.next()? {
@@ -569,13 +607,13 @@ impl DB {
 				continue;
 			}
 			metas.push(SegmentMeta {
-				id:               meta.id,
-				first_timestamp:  meta.first_timestamp,
-				last_timestamp:   meta.last_timestamp,
-				original_size:    meta.original_size,
-				compressed_size:  meta.compressed_size,
-				logs_count:       meta.logs_count,
-				created_at:       meta.created_at,
+				id: meta.id,
+				first_timestamp: meta.first_timestamp,
+				last_timestamp: meta.last_timestamp,
+				original_size: meta.original_size,
+				compressed_size: meta.compressed_size,
+				logs_count: meta.logs_count,
+				created_at: meta.created_at,
 			});
 		}
 		Ok(metas)
@@ -584,34 +622,38 @@ impl DB {
 
 pub fn run_migrations(conn: &mut Connection) -> anyhow::Result<()> {
 	log::info!("running migrations");
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS migrations (
+	conn.execute(
+		"CREATE TABLE IF NOT EXISTS migrations (
             id INTEGER PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
             applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )",
-        (),
-    )?;
-    let applied_migrations: Vec<u32> = {
-        let mut stmt = conn.prepare("SELECT id FROM migrations")?;
-        let m = stmt.query_map((), |row| row.get(0))?;
-    	m.filter_map(Result::ok).collect()
-    };
-    let mut pending_migrations: Vec<&Migration> = MIGRATIONS.iter()
-        .filter(|migration| !applied_migrations.contains(&migration.id))
-        .collect();
-    pending_migrations.sort_by_key(|migration| migration.id);
-    if !pending_migrations.is_empty() {
-        for migration in &pending_migrations {
-            log::info!("applying migration {}: {}", migration.id, migration.name);
-            let tx = conn.transaction()?;
-            tx.execute_batch(migration.sql)?;
-            tx.execute("INSERT INTO migrations (id, name) VALUES (?1, ?2)", [&migration.id as &dyn ToSql, &migration.name as &dyn ToSql])?;
-            tx.commit()?;
-            log::info!("migration {} applied successfully.", migration.id);
-        }
-    } else {
-        log::info!("No new migrations to apply.");
-    }
-    Ok(())
+		(),
+	)?;
+	let applied_migrations: Vec<u32> = {
+		let mut stmt = conn.prepare("SELECT id FROM migrations")?;
+		let m = stmt.query_map((), |row| row.get(0))?;
+		m.filter_map(Result::ok).collect()
+	};
+	let mut pending_migrations: Vec<&Migration> = MIGRATIONS
+		.iter()
+		.filter(|migration| !applied_migrations.contains(&migration.id))
+		.collect();
+	pending_migrations.sort_by_key(|migration| migration.id);
+	if !pending_migrations.is_empty() {
+		for migration in &pending_migrations {
+			log::info!("applying migration {}: {}", migration.id, migration.name);
+			let tx = conn.transaction()?;
+			tx.execute_batch(migration.sql)?;
+			tx.execute(
+				"INSERT INTO migrations (id, name) VALUES (?1, ?2)",
+				[&migration.id as &dyn ToSql, &migration.name as &dyn ToSql],
+			)?;
+			tx.commit()?;
+			log::info!("migration {} applied successfully.", migration.id);
+		}
+	} else {
+		log::info!("No new migrations to apply.");
+	}
+	Ok(())
 }
