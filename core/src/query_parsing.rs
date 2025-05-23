@@ -27,6 +27,7 @@ pub enum Operator {
 pub enum Value {
 	Date(DateTime<Utc>),
 	String(String),
+	Regex(String),
 	Number(i64),
 	List(Vec<Value>),
 }
@@ -150,6 +151,18 @@ fn tokenize(input: &str) -> Result<Vec<Token>, String> {
 					}
 				}
 				tokens.push(Token::Value(Value::String(value)));
+			}
+			'/' => {
+				chars.next(); // consume opening slash
+				let mut pattern = String::new();
+				while let Some(c) = chars.next() {
+					if c == '/' {
+						break;
+					} else {
+						pattern.push(c);
+					}
+				}
+				tokens.push(Token::Value(Value::Regex(pattern)));
 			}
 			_ => {
 				let mut word = String::new();
@@ -926,7 +939,7 @@ mod tests {
 
 	#[test]
 	fn parse_matches() {
-		let query = r#"deviceId matches ^device-[0-9]+$"#;
+		let query = r#"deviceId matches /^device-[0-9]+$/"#;
 		let ast = parse_log_query(query).unwrap();
 		match ast.root {
 			Expr::Condition(c) => {
@@ -937,12 +950,12 @@ mod tests {
 				assert_eq!(c.operator, Operator::Matches);
 				assert_eq!(
 					c.right,
-					Box::new(Expr::Value(Value::String("^device-[0-9]+$".to_string())))
+					Box::new(Expr::Value(Value::Regex("^device-[0-9]+$".to_string())))
 				);
 			}
 			_ => panic!("Expected Condition"),
 		}
-		let query = r#"deviceId not matches ^device-[0-9]+$"#;
+		let query = r#"deviceId not matches /^device-[0-9]+$/"#;
 		let ast = parse_log_query(query).unwrap();
 		match ast.root {
 			Expr::Condition(c) => {
@@ -953,7 +966,7 @@ mod tests {
 				assert_eq!(c.operator, Operator::NotMatches);
 				assert_eq!(
 					c.right,
-					Box::new(Expr::Value(Value::String("^device-[0-9]+$".to_string())))
+					Box::new(Expr::Value(Value::Regex("^device-[0-9]+$".to_string())))
 				);
 			}
 			_ => panic!("Expected Condition"),
