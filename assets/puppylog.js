@@ -1027,9 +1027,19 @@ var logsSearchPage = (args) => {
   const settingsButton = document.createElement("button");
   settingsButton.innerHTML = settingsSvg;
   settingsButton.onclick = () => navigate("/settings");
+  const saveButton = document.createElement("button");
+  saveButton.textContent = "Save";
+  saveButton.onclick = () => {
+    const query = searchTextarea.value.trim();
+    if (!query)
+      return;
+    const name = prompt("Query name", query);
+    if (name)
+      saveQuery({ name, query });
+  };
   const searchButton = document.createElement("button");
   searchButton.innerHTML = searchSvg;
-  optionsRightPanel.append(settingsButton, searchButton);
+  optionsRightPanel.append(settingsButton, saveButton, searchButton);
   const logsList = document.createElement("div");
   logsList.className = "logs-list";
   args.root.appendChild(logsList);
@@ -1562,9 +1572,47 @@ var settingsPage = (root) => {
   const linkList = new LinkList([
     { href: "/logs", text: "Logs" },
     { href: "/devices", text: "Devices" },
-    { href: "/segments", text: "Segments" }
+    { href: "/segments", text: "Segments" },
+    { href: "/queries", text: "Saved Queries" }
   ]);
   root.add(linkList);
+};
+
+// ts/queries.ts
+var loadSavedQueries = () => {
+  try {
+    const raw = localStorage.getItem("savedQueries");
+    if (!raw)
+      return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+};
+var saveQuery = (item) => {
+  const items = loadSavedQueries();
+  items.push(item);
+  localStorage.setItem("savedQueries", JSON.stringify(items));
+};
+var queriesPage = (root) => {
+  root.innerHTML = "";
+  const header = new Header({ title: "Saved Queries" });
+  root.appendChild(header.root);
+  const list = document.createElement("div");
+  list.style.display = "flex";
+  list.style.flexDirection = "column";
+  list.style.gap = "10px";
+  list.style.padding = "16px";
+  root.appendChild(list);
+  const items = loadSavedQueries();
+  items.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "list-row";
+    row.textContent = item.name;
+    row.onclick = () => navigate(`/?query=${encodeURIComponent(item.query)}`);
+    list.appendChild(row);
+  });
+  return root;
 };
 
 // ts/app.ts
@@ -1579,6 +1627,7 @@ window.onload = () => {
     "/settings": () => settingsPage(container),
     "/devices": () => devicesPage(body),
     "/segments": () => segmentsPage(container),
+    "/queries": () => queriesPage(body),
     "/segment/:segmentId": (params) => segmentPage(body, params.segmentId),
     "/pivot": () => PivotPage(body),
     "/*": () => mainPage(body)
