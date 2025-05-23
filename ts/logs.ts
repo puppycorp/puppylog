@@ -2,6 +2,7 @@ import { showModal } from "./common"
 import { formatLogMsg } from "./logmsg"
 import { navigate } from "./router"
 import { Button } from "./ui"
+import { saveQuery } from "./queries"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
@@ -85,14 +86,23 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	optionsRightPanel.className = "logs-options-right-panel"
 	logsOptions.appendChild(optionsRightPanel)
 
-	const settingsButton = document.createElement("button")
-	settingsButton.innerHTML = settingsSvg
-	settingsButton.onclick = () => navigate("/settings")
+    const settingsButton = document.createElement("button")
+    settingsButton.innerHTML = settingsSvg
+    settingsButton.onclick = () => navigate("/settings")
 
-	const searchButton = document.createElement("button")
-	searchButton.innerHTML = searchSvg
+    const saveButton = document.createElement("button")
+    saveButton.textContent = "Save"
+    saveButton.onclick = () => {
+            const query = searchTextarea.value.trim()
+            if (!query) return
+            const name = prompt("Query name", query)
+            if (name) saveQuery({ name, query })
+    }
 
-	optionsRightPanel.append(settingsButton, searchButton)
+    const searchButton = document.createElement("button")
+    searchButton.innerHTML = searchSvg
+
+    optionsRightPanel.append(settingsButton, saveButton, searchButton)
 	const logsList = document.createElement("div")
 	logsList.className = "logs-list"
 	args.root.appendChild(logsList)
