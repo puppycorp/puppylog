@@ -108,18 +108,17 @@ Logbatch is a binary structure which stores multiple loglines. Logbatch is compr
 
 ## API
 
-### GET /api/v1/logs
+### GET /api/logs
 
 Search logs with PQL query. Returns logs in json format. 
 
 #### Query
 
-| Field     | DataType | Description                           |
-| --------- | -------- | --------------------------------------|
-| offset	| int      | Offset of the logs                    |
-| count     | int      | Number of logs to return (default 200)|
-| query     | string   | Query string in PQL format            |
-
+| Field   | DataType | Description                                  |
+| ------- | -------- | -------------------------------------------- |
+| count   | int      | Number of logs to return (default 200)        |
+| query   | string   | Query string in PQL format                    |
+| endDate | string   | Only include logs before this timestamp (ISO) |
 #### Response
 
 ```json
@@ -139,13 +138,15 @@ Search logs with PQL query. Returns logs in json format.
 ]
 ```
 
-### GET /api/v1/logs/stream
+### GET /api/logs/stream
 
 #### Query
 
-| Field     | DataType | Description                       |
-| --------- | -------- | --------------------------------- |
-| query     | string   | Query string in PQL format        |
+| Field   | DataType | Description                                  |
+| ------- | -------- | -------------------------------------------- |
+| query   | string   | Query string in PQL format                    |
+| count   | int      | Optional limit of logs to read initially      |
+| endDate | string   | Start streaming from logs before this time    |
 
 #### Response
 Returns EventStream of json objects like this.
@@ -166,33 +167,25 @@ data:
 }
 ```
 
-### POST /api/v1/devices/settings
+### POST /api/v1/device/settings
 Apply settings to many devices at once. Devices are matched based on metadata uploaded by devices.
 
 **application/json**
 ```json
 {
-	"query": "PGL query string",
-	"minInterval": 60,
-	"maxInterval": 3600,
-	"level": "LogLevel" | null,
+        "filter_props": [
+                {
+                        "key": "model",
+                        "value": "x123"
+                }
+        ],
+        "send_logs": true,
+        "send_interval": 60,
+        "level": "LogLevel"
 }
 ```
 
 
-### WS /api/v1/device/:deviceId/ws
-
-**Binary**
-Client will send `LogBatch` in binary format to server and when server has processed it will send ack back to client with sequence number. After ack is recevided client can remove batch from it's memory.
-
-**application/json**
-Server send json encoded mesages to client in one of these formats:
-```json
-{
-	"type": "settings",
-	"settings": "SettingsObject"
-}
-```
 
 
 ### GET /api/v1/device/:deviceId/status
@@ -214,26 +207,21 @@ Device sends logs to server in LogBatch format and server will send ack back to 
 Transfer-Encoding: chunked // If streaming logs
 Content-Encoding: gzip, zstd, none
 
-### /api/v1/settings
+### POST /api/v1/settings
+Set query used for collecting logs.
 
-**application/json**
-```json
-{
-	"query": "PGL query string",
-	"minInterval": 60,
-	"maxInterval": 3600,
-	"level": "LogLevel" | null,
-	"max_logfile_size": 1000000, // 1MB
-	"max_logfile_count": 5,
-}
+**text/plain**
+```
+level > warning
 ```
 
-Post will set settings and get will get settings.
+### GET /api/v1/settings
+Returns current collection query as plain text.
 
-## POST /api/v1/dvice/:deviceId/metadata
+### POST /api/v1/device/:deviceId/metadata
 
-Devices can upload metadata metadata of them to server. When metadata is uploaded it replaces the old metadata.
-This metadata is used for finding devices and also usefull when sending fleet commands to devices.
+Devices can upload metadata about themselves to the server. When metadata is uploaded it replaces the old metadata.
+This metadata is used for finding devices and is also useful when sending fleet commands to devices.
 
 **application/json**
 ```json
@@ -244,6 +232,43 @@ This metadata is used for finding devices and also usefull when sending fleet co
 	}
 ]
 ```
+
+### POST /api/v1/device/:deviceId/settings
+Update settings for a single device.
+
+**application/json**
+```json
+{
+        "sendLogs": true,
+        "filterLevel": "LogLevel",
+        "sendInterval": 60
+}
+```
+
+### POST /api/v1/device/bulkedit
+Bulk edit settings for multiple devices identified by their ids.
+
+**application/json**
+```json
+{
+        "filterLevel": "LogLevel",
+        "sendLogs": true,
+        "sendInterval": 60,
+        "deviceIds": ["123", "456"]
+}
+```
+
+### GET /api/v1/devices
+Returns list of known devices in json format.
+
+### GET /api/v1/validate_query
+Validate a PQL query string. Returns `200` if valid otherwise `400` with error.
+
+#### Query
+
+| Field | DataType | Description |
+| ----- | -------- | ----------- |
+| query | string   | Query string in PQL format |
 
 
 ## Install
