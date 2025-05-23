@@ -381,9 +381,9 @@ export class Collapsible extends UiComponent<HTMLDivElement> {
         // Create a container for the content with absolute positioning
         this.contentContainer = document.createElement("div")
         this.contentContainer.style.position = "absolute"
-        // Default to the right side
-        this.contentContainer.style.top = "0"
-        this.contentContainer.style.left = "100%"
+        // Place content below the button by default
+        this.contentContainer.style.top = "100%"
+        this.contentContainer.style.left = "0"
         this.contentContainer.style.zIndex = "1000"
         // Hide by default
         this.contentContainer.style.display = "none"
@@ -415,18 +415,6 @@ export class Collapsible extends UiComponent<HTMLDivElement> {
     private show(): void {
         this.isOpen = true
         this.contentContainer.style.display = "block"
-
-        // Reset to default (open on right)
-        this.contentContainer.style.left = "100%"
-        this.contentContainer.style.right = "auto"
-
-        // Measure if it goes offscreen
-        const rect = this.contentContainer.getBoundingClientRect()
-        if (rect.right > window.innerWidth) {
-            // Flip to open on the left
-            this.contentContainer.style.left = "auto"
-            this.contentContainer.style.right = "100%"
-        }
     }
 
     private hide(): void {
