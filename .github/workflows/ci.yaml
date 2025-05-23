@@ -12,7 +12,13 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+          override: true
       - name: Build
         run: cargo build --verbose
+      - name: Format Check
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
       - name: Test
         run: cargo test --verbose --all
+
