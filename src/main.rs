@@ -77,6 +77,14 @@ struct GetLogsQuery {
 	pub end_date: Option<DateTime<Utc>>,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct GetHistogramQuery {
+	pub query: Option<String>,
+	pub bucket_secs: Option<u64>,
+	pub end_date: Option<DateTime<Utc>>,
+}
+
 #[tokio::main]
 async fn main() {
 	SimpleLogger::new()
@@ -124,6 +132,8 @@ async fn main() {
 		.with_state(ctx.clone())
 		.route("/api/v1/validate_query", get(validate_query))
 		.route("/api/v1/logs/stream", get(stream_logs))
+		.layer(cors.clone())
+		.route("/api/v1/logs/histogram", get(get_histogram))
 		.layer(cors.clone())
 		.route("/api/v1/device/settings", post(update_devices_settings))
 		.with_state(ctx.clone())
@@ -656,6 +666,67 @@ async fn stream_logs(
 	let rx = ctx.subscriber.subscribe(query).await;
 	let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(|p| {
 		let data = to_string(&logentry_to_json(&p)).unwrap();
+		Ok(Event::default().data(data))
+	});
+	Ok(Sse::new(stream))
+}
+
+async fn get_histogram(
+	State(ctx): State<Arc<Context>>,
+	Query(params): Query<GetHistogramQuery>,
+) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, BadRequestError> {
+	log::info!("get histogram {:?}", params);
+	let bucket_secs = params.bucket_secs.unwrap_or(60);
+	let query = match params.query {
+		Some(ref q) => match parse_log_query(q) {
+			Ok(q) => q,
+			Err(err) => return Err(BadRequestError(err.to_string())),
+		},
+		None => QueryAst::default(),
+	};
+	let (tx, rx) = mpsc::channel(100);
+	let ctx_clone = Arc::clone(&ctx);
+	let producer_query = query.clone();
+	spawn_blocking(move || {
+		let mut current_bucket: Option<i64> = None;
+		let mut count: u64 = 0;
+		block_on(ctx_clone.find_logs(producer_query, |entry| {
+			let ts = entry.timestamp.timestamp();
+			let bucket = ts - ts % bucket_secs as i64;
+			if let Some(cb) = current_bucket {
+				if bucket != cb {
+					if tx.is_closed() {
+						return false;
+					}
+					let item = json!({
+					"timestamp": DateTime::<Utc>::from_timestamp(cb, 0).unwrap(),
+					"count": count,
+					});
+					if tx.blocking_send(item).is_err() {
+						return false;
+					}
+					current_bucket = Some(bucket);
+					count = 1;
+				} else {
+					count += 1;
+				}
+			} else {
+				current_bucket = Some(bucket);
+				count = 1;
+			}
+			true
+		}));
+		if let Some(cb) = current_bucket {
+			let item = json!({
+			"timestamp": DateTime::<Utc>::from_timestamp(cb, 0).unwrap(),
+			"count": count,
+			});
+			let _ = tx.blocking_send(item);
+		}
+	});
+
+	let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(|item| {
+		let data = to_string(&item).unwrap();
 		Ok(Event::default().data(data))
 	});
 	Ok(Sse::new(stream))

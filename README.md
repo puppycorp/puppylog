@@ -154,9 +154,9 @@ Returns EventStream of json objects like this.
 data:
 ```json
 {
-	"id": "123456789",
-	"timestamp": "2025-01-01T12:00:00",
-	"level": "trace" | "debug" | "info" | "warning" | "error" | "fatal",
+"id": "123456789",
+"timestamp": "2025-01-01T12:00:00",
+"level": "trace" | "debug" | "info" | "warning" | "error" | "fatal",
 	"props": [
 		{
 			"key": "key",
@@ -164,6 +164,27 @@ data:
 		}
 	],
 	"message": "Log message"
+}
+```
+
+### GET /api/v1/logs/histogram
+
+Streams log counts grouped into time buckets as Server-Sent Events.
+
+#### Query
+
+| Field | DataType | Description |
+| ----- | -------- | ----------- |
+| query | string | Query string in PQL format |
+| bucketSecs | int | Bucket size in seconds (default 60) |
+
+#### Response
+Each event contains a JSON object:
+
+```json
+{
+"timestamp": "2025-01-01T12:00:00",
+"count": 1
 }
 ```
 
