@@ -984,6 +984,97 @@ var navigate = (path) => {
   handleRoute(path);
 };
 
+// ts/queries.ts
+var loadSavedQueries = () => {
+  try {
+    const raw = localStorage.getItem("savedQueries");
+    if (!raw)
+      return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+};
+var saveQuery = (item) => {
+  const items = loadSavedQueries();
+  items.push(item);
+  localStorage.setItem("savedQueries", JSON.stringify(items));
+};
+var queriesPage = (root) => {
+  root.innerHTML = "";
+  const header = new Header({ title: "Saved Queries" });
+  root.appendChild(header.root);
+  const list = document.createElement("div");
+  list.style.display = "flex";
+  list.style.flexDirection = "column";
+  list.style.gap = "10px";
+  list.style.padding = "16px";
+  root.appendChild(list);
+  const items = loadSavedQueries();
+  items.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "list-row";
+    row.textContent = item.name;
+    row.onclick = () => navigate(`/?query=${encodeURIComponent(item.query)}`);
+    list.appendChild(row);
+  });
+  return root;
+};
+
+// ts/histogram.ts
+class Histogram {
+  root;
+  canvas;
+  ctx;
+  data = [];
+  zoom = 1;
+  constructor() {
+    this.root = document.createElement("div");
+    this.root.style.overflowX = "auto";
+    this.canvas = document.createElement("canvas");
+    this.canvas.height = 200;
+    this.canvas.width = 600;
+    this.root.appendChild(this.canvas);
+    const ctx = this.canvas.getContext("2d");
+    if (!ctx)
+      throw new Error("canvas 2d context not available");
+    this.ctx = ctx;
+    this.root.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 1.1 : 0.9;
+      this.setZoom(this.zoom * delta);
+    });
+  }
+  clear() {
+    this.data = [];
+    this.draw();
+  }
+  add(item) {
+    this.data.push(item);
+    this.draw();
+  }
+  setZoom(z) {
+    this.zoom = Math.min(5, Math.max(0.5, z));
+    this.draw();
+  }
+  draw() {
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    if (this.data.length === 0)
+      return;
+    const max = Math.max(...this.data.map((d) => d.count));
+    const barWidth = 10 * this.zoom;
+    const width = Math.max(this.canvas.parentElement?.clientWidth || 600, barWidth * this.data.length);
+    this.canvas.width = width;
+    for (let i = 0;i < this.data.length; i++) {
+      const item = this.data[i];
+      const h = item.count / max * this.canvas.height;
+      ctx.fillStyle = "#3B82F6";
+      ctx.fillRect(i * barWidth, this.canvas.height - h, barWidth - 1, h);
+    }
+  }
+}
+
 // ts/logs.ts
 var MAX_LOG_ENTRIES = 1e4;
 var MESSAGE_TRUNCATE_LENGTH = 700;
@@ -1039,7 +1130,56 @@ var logsSearchPage = (args) => {
   };
   const searchButton = document.createElement("button");
   searchButton.innerHTML = searchSvg;
-  optionsRightPanel.append(settingsButton, saveButton, searchButton);
+  const featuresList = new VList;
+  const histogramToggle = document.createElement("label");
+  histogramToggle.style.display = "flex";
+  histogramToggle.style.alignItems = "center";
+  const histogramCheckbox = document.createElement("input");
+  histogramCheckbox.type = "checkbox";
+  histogramToggle.appendChild(histogramCheckbox);
+  histogramToggle.appendChild(document.createTextNode(" Show histogram"));
+  featuresList.root.appendChild(histogramToggle);
+  const featuresDropdown = new Collapsible({
+    buttonText: "Options",
+    content: featuresList
+  });
+  optionsRightPanel.append(settingsButton, saveButton, searchButton, featuresDropdown.root);
+  const histogramContainer = document.createElement("div");
+  histogramContainer.style.display = "none";
+  const histogram = new Histogram;
+  histogramContainer.appendChild(histogram.root);
+  args.root.appendChild(histogramContainer);
+  let histStream = null;
+  const startHistogram = () => {
+    histogramContainer.style.display = "block";
+    histogram.clear();
+    const params = new URLSearchParams;
+    if (searchTextarea.value)
+      params.set("query", searchTextarea.value);
+    params.set("bucketSecs", "60");
+    const url = new URL("/api/v1/logs/histogram", window.location.origin);
+    url.search = params.toString();
+    const es = new EventSource(url);
+    es.onmessage = (ev) => {
+      const item = JSON.parse(ev.data);
+      histogram.add(item);
+    };
+    es.onerror = () => es.close();
+    histStream = () => es.close();
+  };
+  const stopHistogram = () => {
+    if (histStream)
+      histStream();
+    histStream = null;
+    histogramContainer.style.display = "none";
+    histogram.clear();
+  };
+  histogramCheckbox.onchange = () => {
+    if (histogramCheckbox.checked)
+      startHistogram();
+    else
+      stopHistogram();
+  };
   const logsList = document.createElement("div");
   logsList.className = "logs-list";
   args.root.appendChild(logsList);
@@ -1132,6 +1272,10 @@ var logsSearchPage = (args) => {
     lastEndDate = endDate;
     if (clear)
       clearLogs();
+    if (histogramCheckbox.checked) {
+      stopHistogram();
+      startHistogram();
+    }
     if (currentStream)
       currentStream();
     currentStream = args.streamLogs({ query, count: 200, endDate }, (log) => {
@@ -1576,43 +1720,6 @@ var settingsPage = (root) => {
     { href: "/queries", text: "Saved Queries" }
   ]);
   root.add(linkList);
-};
-
-// ts/queries.ts
-var loadSavedQueries = () => {
-  try {
-    const raw = localStorage.getItem("savedQueries");
-    if (!raw)
-      return [];
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-};
-var saveQuery = (item) => {
-  const items = loadSavedQueries();
-  items.push(item);
-  localStorage.setItem("savedQueries", JSON.stringify(items));
-};
-var queriesPage = (root) => {
-  root.innerHTML = "";
-  const header = new Header({ title: "Saved Queries" });
-  root.appendChild(header.root);
-  const list = document.createElement("div");
-  list.style.display = "flex";
-  list.style.flexDirection = "column";
-  list.style.gap = "10px";
-  list.style.padding = "16px";
-  root.appendChild(list);
-  const items = loadSavedQueries();
-  items.forEach((item) => {
-    const row = document.createElement("div");
-    row.className = "list-row";
-    row.textContent = item.name;
-    row.onclick = () => navigate(`/?query=${encodeURIComponent(item.query)}`);
-    list.appendChild(row);
-  });
-  return root;
 };
 
 // ts/app.ts
