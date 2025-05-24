@@ -26,6 +26,10 @@ rand = "0.9"
 rusqlite = { version =  "0.33", features = ["bundled", "chrono"] }
 tokio-util = { version = "0.7", features = ["io"] }
 
+[dev-dependencies]
+tempfile = "3"
+tower = "0.5"
+
 [workspace.dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 

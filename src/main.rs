@@ -77,6 +77,14 @@ struct GetLogsQuery {
 	pub end_date: Option<DateTime<Utc>>,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct GetHistogramQuery {
+	pub query: Option<String>,
+	pub bucket_secs: Option<u64>,
+	pub end_date: Option<DateTime<Utc>>,
+}
+
 #[tokio::main]
 async fn main() {
 	SimpleLogger::new()
@@ -124,6 +132,8 @@ async fn main() {
 		.with_state(ctx.clone())
 		.route("/api/v1/validate_query", get(validate_query))
 		.route("/api/v1/logs/stream", get(stream_logs))
+		.layer(cors.clone())
+		.route("/api/v1/logs/histogram", get(get_histogram))
 		.layer(cors.clone())
 		.route("/api/v1/device/settings", post(update_devices_settings))
 		.with_state(ctx.clone())
@@ -659,4 +669,112 @@ async fn stream_logs(
 		Ok(Event::default().data(data))
 	});
 	Ok(Sse::new(stream))
+}
+
+async fn get_histogram(
+        State(ctx): State<Arc<Context>>,
+        Query(params): Query<GetHistogramQuery>,
+) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, BadRequestError> {
+	log::info!("get histogram {:?}", params);
+	let bucket_secs = params.bucket_secs.unwrap_or(60);
+	let query = match params.query {
+		Some(ref q) => match parse_log_query(q) {
+			Ok(q) => q,
+			Err(err) => return Err(BadRequestError(err.to_string())),
+		},
+		None => QueryAst::default(),
+	};
+	let (tx, rx) = mpsc::channel(100);
+	let ctx_clone = Arc::clone(&ctx);
+	let producer_query = query.clone();
+	spawn_blocking(move || {
+		let mut current_bucket: Option<i64> = None;
+		let mut count: u64 = 0;
+		block_on(ctx_clone.find_logs(producer_query, |entry| {
+			let ts = entry.timestamp.timestamp();
+			let bucket = ts - ts % bucket_secs as i64;
+			if let Some(cb) = current_bucket {
+				if bucket != cb {
+					if tx.is_closed() {
+						return false;
+					}
+					let item = json!({
+					"timestamp": DateTime::<Utc>::from_timestamp(cb, 0).unwrap(),
+					"count": count,
+					});
+					if tx.blocking_send(item).is_err() {
+						return false;
+					}
+					current_bucket = Some(bucket);
+					count = 1;
+				} else {
+					count += 1;
+				}
+			} else {
+				current_bucket = Some(bucket);
+				count = 1;
+			}
+			true
+		}));
+		if let Some(cb) = current_bucket {
+			let item = json!({
+			"timestamp": DateTime::<Utc>::from_timestamp(cb, 0).unwrap(),
+			"count": count,
+			});
+			let _ = tx.blocking_send(item);
+		}
+	});
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(|item| {
+                let data = to_string(&item).unwrap();
+                Ok(Event::default().data(data))
+        });
+        Ok(Sse::new(stream))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tempfile::TempDir;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn histogram_basic() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = dir.path().join("logs");
+        std::fs::create_dir_all(&log_dir).unwrap();
+        std::env::set_var("LOG_PATH", &log_dir);
+        std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+        std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
+        std::fs::write(dir.path().join("settings.json"), "{\"collection_query\":\"\"}").unwrap();
+
+        let ctx = Arc::new(Context::new().await);
+
+        let base = Utc::now();
+        ctx.save_logs(&[
+            LogEntry { timestamp: base, msg: "a".into(), ..Default::default() },
+            LogEntry { timestamp: base + chrono::Duration::seconds(10), msg: "b".into(), ..Default::default() },
+            LogEntry { timestamp: base + chrono::Duration::seconds(70), msg: "c".into(), ..Default::default() },
+        ])
+        .await;
+
+        let app = Router::new()
+            .route("/api/v1/logs/histogram", get(get_histogram))
+            .with_state(ctx);
+
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/logs/histogram?bucketSecs=60")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let ct = res.headers().get(axum::http::header::CONTENT_TYPE).unwrap();
+        assert_eq!(ct, "text/event-stream");
+    }
 }
