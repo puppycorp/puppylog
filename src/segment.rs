@@ -95,8 +95,13 @@ impl LogSegment {
 	}
 
 	pub fn parse<R: Read>(reader: &mut R) -> Self {
+		use std::io::ErrorKind;
+
 		let mut header = [0u8; HEADER_SIZE];
-		reader.read_exact(&mut header).unwrap();
+		if let Err(err) = reader.read_exact(&mut header) {
+			log::error!("failed to read segment header: {}", err);
+			return LogSegment { buffer: Vec::new() };
+		}
 		let magic = String::from_utf8_lossy(&header[0..11]);
 		if magic != MAGIC {
 			panic!("Invalid magic: {}", magic);
@@ -108,7 +113,16 @@ impl LogSegment {
 		let mut log_entries = Vec::new();
 		let mut buff = Vec::new();
 		let mut ptr = 0;
-		reader.read_to_end(&mut buff).unwrap();
+		match reader.read_to_end(&mut buff) {
+			Ok(_) => {}
+			Err(err) if err.kind() == ErrorKind::UnexpectedEof => {
+				log::warn!("truncated segment: {}", err);
+			}
+			Err(err) => {
+				log::error!("failed to read segment: {}", err);
+				return LogSegment { buffer: Vec::new() };
+			}
+		}
 		loop {
 			match LogEntry::fast_deserialize(&buff, &mut ptr) {
 				Ok(log_entry) => log_entries.push(log_entry),
@@ -137,6 +151,8 @@ mod tests {
 	use super::*;
 	use puppylog::LogLevel;
 	use puppylog::Prop;
+	use std::io::Write;
+	use zstd::stream::{Decoder, Encoder};
 
 	#[test]
 	pub fn test_log_segment() {
@@ -165,5 +181,31 @@ mod tests {
 		let mut reader = Cursor::new(buff);
 		let segment2 = LogSegment::parse(&mut reader);
 		assert_eq!(segment, segment2);
+	}
+
+	#[test]
+	pub fn parse_truncated_does_not_panic() {
+		let mut segment = LogSegment::new();
+		let timestamp = DateTime::from_timestamp_micros(1740074054 * 1_000_000).unwrap();
+		segment.add_log_entry(LogEntry {
+			random: 0,
+			timestamp,
+			level: LogLevel::Info,
+			msg: "Hello".to_string(),
+			props: vec![],
+			..Default::default()
+		});
+
+		let mut plain = Vec::new();
+		segment.serialize(&mut plain);
+
+		let mut enc = Encoder::new(Vec::new(), 0).unwrap();
+		enc.write_all(&plain).unwrap();
+		let encoded = enc.finish().unwrap();
+		let truncated = &encoded[..encoded.len() - 1];
+
+		let cursor = Cursor::new(truncated.to_vec());
+		let mut dec = Decoder::new(cursor).unwrap();
+		let _ = LogSegment::parse(&mut dec);
 	}
 }
