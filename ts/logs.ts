@@ -1,7 +1,9 @@
 import { showModal } from "./common"
 import { formatLogMsg } from "./logmsg"
 import { navigate } from "./router"
-import { Button } from "./ui"
+import { saveQuery } from "./queries"
+import { Button, Collapsible, VList } from "./ui"
+import { Histogram, HistogramItem } from "./histogram"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
@@ -89,16 +91,82 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	settingsButton.innerHTML = settingsSvg
 	settingsButton.onclick = () => navigate("/settings")
 
+	const saveButton = document.createElement("button")
+	saveButton.textContent = "Save"
+	saveButton.onclick = () => {
+		const query = searchTextarea.value.trim()
+		if (!query) return
+		const name = prompt("Query name", query)
+		if (name) saveQuery({ name, query })
+	}
+
 	const searchButton = document.createElement("button")
 	searchButton.innerHTML = searchSvg
 
-	optionsRightPanel.append(settingsButton, searchButton)
+	// feature list for histogram toggle or future options
+	const featuresList = new VList()
+	const histogramToggle = document.createElement("label")
+	histogramToggle.style.display = "flex"
+	histogramToggle.style.alignItems = "center"
+	const histogramCheckbox = document.createElement("input")
+	histogramCheckbox.type = "checkbox"
+	histogramToggle.appendChild(histogramCheckbox)
+	histogramToggle.appendChild(document.createTextNode(" Show histogram"))
+	featuresList.root.appendChild(histogramToggle)
+	const featuresDropdown = new Collapsible({
+		buttonText: "Options",
+		content: featuresList
+	})
+
+	optionsRightPanel.append(
+		settingsButton,
+		saveButton,
+		searchButton,
+		featuresDropdown.root
+	)
+
+	// histogram container setup
+	const histogramContainer = document.createElement("div")
+	histogramContainer.style.display = "none"
+	const histogram = new Histogram()
+	histogramContainer.appendChild(histogram.root)
+	args.root.appendChild(histogramContainer)
+
+	let histStream: null | (() => void) = null
+	const startHistogram = () => {
+		histogramContainer.style.display = "block"
+		histogram.clear()
+		const params = new URLSearchParams()
+		if (searchTextarea.value) params.set("query", searchTextarea.value)
+		params.set("bucketSecs", "60")
+		const url = new URL("/api/v1/logs/histogram", window.location.origin)
+		url.search = params.toString()
+		const es = new EventSource(url)
+		es.onmessage = ev => {
+			const item = JSON.parse(ev.data) as HistogramItem
+			histogram.add(item)
+		}
+		es.onerror = () => es.close()
+		histStream = () => es.close()
+	}
+	const stopHistogram = () => {
+		if (histStream) histStream()
+		histStream = null
+		histogramContainer.style.display = "none"
+		histogram.clear()
+	}
+	histogramCheckbox.onchange = () => {
+		if (histogramCheckbox.checked) startHistogram()
+		else stopHistogram()
+	}
+
 	const logsList = document.createElement("div")
 	logsList.className = "logs-list"
 	args.root.appendChild(logsList)
 	const loadingIndicator = document.createElement("div")
 	loadingIndicator.style.height = "50px"
 	args.root.appendChild(loadingIndicator)
+
 	let debounce: any
 	let pendingLogs: LogEntry[] = []
 	const addLogs = (log: LogEntry) => {
@@ -178,8 +246,12 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		if (logEntries.length > 0) endDate = logEntries[logEntries.length - 1].timestamp
 		if (lastEndDate !== null && endDate === lastEndDate) return
 		lastEndDate = endDate
-		if (clear) clearLogs()
-		if (currentStream) currentStream()
+                if (clear) clearLogs()
+                if (histogramCheckbox.checked) {
+                        stopHistogram()
+                        startHistogram()
+                }
+                if (currentStream) currentStream()
 		currentStream = args.streamLogs(
 			{ query, count: 200, endDate },
 			(log) => {

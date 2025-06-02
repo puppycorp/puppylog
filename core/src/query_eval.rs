@@ -9,6 +9,22 @@ use crate::FieldAccess;
 use crate::LogEntry;
 use crate::LogLevel;
 use crate::Prop;
+use regex::Regex;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+
+static REGEX_CACHE: LazyLock<Mutex<HashMap<String, Regex>>> =
+	LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn cached_regex(pattern: &str) -> Result<Regex, regex::Error> {
+	let mut cache = REGEX_CACHE.lock().unwrap();
+	if let Some(re) = cache.get(pattern) {
+		return Ok(re.clone());
+	}
+	let re = Regex::new(pattern)?;
+	cache.insert(pattern.to_string(), re.clone());
+	Ok(re)
+}
 
 #[derive(Debug)]
 enum FieldType {
@@ -121,6 +137,14 @@ fn does_field_match(
 		(FieldType::Msg, Value::String(val), Operator::NotLike) => {
 			Ok(!logline.msg.to_lowercase().contains(&val.to_lowercase()))
 		}
+		(FieldType::Msg, Value::Regex(regex), Operator::Matches) => match cached_regex(regex) {
+			Ok(re) => Ok(re.is_match(&logline.msg)),
+			Err(e) => Err(e.to_string()),
+		},
+		(FieldType::Msg, Value::Regex(regex), Operator::NotMatches) => match cached_regex(regex) {
+			Ok(re) => Ok(!re.is_match(&logline.msg)),
+			Err(e) => Err(e.to_string()),
+		},
 		(FieldType::Timestamp, Value::Date(val), op) => Ok(magic_cmp(logline.timestamp, *val, op)),
 		(FieldType::Timestamp, _, _) => Err(format!("Invalid value for timestamp {:?}", value)),
 		(FieldType::Level, Value::String(val), op) => {
@@ -138,6 +162,18 @@ fn does_field_match(
 		}
 		(FieldType::Prop(_, val1), Value::String(val2), Operator::NotLike) => {
 			Ok(!val1.contains(&val2.to_string()))
+		}
+		(FieldType::Prop(_, val1), Value::Regex(regex), Operator::Matches) => {
+			match cached_regex(regex) {
+				Ok(re) => Ok(re.is_match(val1)),
+				Err(e) => Err(e.to_string()),
+			}
+		}
+		(FieldType::Prop(_, val1), Value::Regex(regex), Operator::NotMatches) => {
+			match cached_regex(regex) {
+				Ok(re) => Ok(!re.is_match(val1)),
+				Err(e) => Err(e.to_string()),
+			}
 		}
 		(FieldType::Prop(_, val1), Value::String(val2), op) => {
 			Ok(cmp_semver_or_string(val1, val2, op))
@@ -230,8 +266,9 @@ pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 		Expr::Or(expr, expr1) => Ok(check_expr(expr, &logline)? || check_expr(expr1, logline)?),
 		Expr::Value(value) => match value {
 			Value::String(value) => Ok(value != ""),
+			Value::Regex(_) => Ok(true),
 			Value::Number(value) => Ok(*value > 0),
-			Value::Date(value) => Ok(true),
+			Value::Date(_) => Ok(true),
 			Value::List(_) => Err("This is not javascript".to_string()),
 		},
 		Expr::Empty => Ok(true),
@@ -242,13 +279,19 @@ pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
 pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 	fn check_condition(cond: &Condition, props: &[Prop]) -> Result<bool, String> {
 		fn compare(prop_val: &String, query_val: &Value, op: &Operator) -> Result<bool, String> {
-			match (query_val, prop_val, op) {
-				(Value::String(query_str), prop_val, op) => {
-					Ok(cmp_semver_or_string(prop_val, query_str, op))
+			match (query_val, op) {
+				(Value::Regex(pattern), Operator::Matches) => {
+					let re = cached_regex(pattern).map_err(|e| e.to_string())?;
+					Ok(re.is_match(prop_val))
 				}
-				(Value::Number(num), prop_val, op) => Ok(magic_cmp(prop_val, &num.to_string(), op)),
-				(Value::List(list), right, Operator::In) => any(list, right, &Operator::Equal),
-				(_, _, _) => Ok(false),
+				(Value::Regex(pattern), Operator::NotMatches) => {
+					let re = cached_regex(pattern).map_err(|e| e.to_string())?;
+					Ok(!re.is_match(prop_val))
+				}
+				(Value::String(query_str), _) => Ok(cmp_semver_or_string(prop_val, query_str, op)),
+				(Value::Number(num), _) => Ok(magic_cmp(prop_val, &num.to_string(), op)),
+				(Value::List(list), Operator::In) => any(list, prop_val, &Operator::Equal),
+				_ => Ok(false),
 			}
 		}
 
@@ -296,8 +339,9 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 		Expr::Or(expr, expr1) => Ok(check_props(expr, props)? || check_props(expr1, props)?),
 		Expr::Value(value) => match value {
 			Value::String(value) => Ok(value != ""),
+			Value::Regex(_) => Ok(true),
 			Value::Number(value) => Ok(*value > 0),
-			Value::Date(value) => Ok(true),
+			Value::Date(_) => Ok(true),
 			Value::List(_) => Err("This is not javascript".to_string()),
 		},
 		Expr::Empty => Ok(true),
@@ -661,6 +705,25 @@ mod tests {
 	}
 
 	#[test]
+	fn test_regex_operators() {
+		let log = create_test_log_entry();
+
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
+			operator: Operator::Matches,
+			right: Box::new(Expr::Value(Value::Regex("^User.*success".to_string()))),
+		});
+		assert!(check_expr(&expr, &log).unwrap());
+
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("service".to_string()))),
+			operator: Operator::NotMatches,
+			right: Box::new(Expr::Value(Value::Regex("^auth$".to_string()))),
+		});
+		assert!(!check_expr(&expr, &log).unwrap());
+	}
+
+	#[test]
 	fn test_compound_expressions() {
 		let log = create_test_log_entry();
 
@@ -907,5 +970,35 @@ mod tests {
 			right: Box::new(Expr::Value(Value::String("1.10.0".to_string()))),
 		});
 		assert!(check_expr(&expr, &logline).unwrap());
+	}
+
+	#[test]
+	fn performance_regex_evaluation() {
+		let log = create_test_log_entry();
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
+			operator: Operator::Matches,
+			right: Box::new(Expr::Value(Value::Regex("^User.*success".to_string()))),
+		});
+		let start = std::time::Instant::now();
+		for _ in 0..1000 {
+			assert!(check_expr(&expr, &log).unwrap());
+		}
+		assert!(start.elapsed().as_secs_f32() < 1.0);
+	}
+
+	#[test]
+	fn performance_like_evaluation() {
+		let log = create_test_log_entry();
+		let expr = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
+			operator: Operator::Like,
+			right: Box::new(Expr::Value(Value::String("User".to_string()))),
+		});
+		let start = std::time::Instant::now();
+		for _ in 0..1000 {
+			assert!(check_expr(&expr, &log).unwrap());
+		}
+		assert!(start.elapsed().as_secs_f32() < 1.0);
 	}
 }
