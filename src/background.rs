@@ -5,9 +5,16 @@ use tokio::fs::{create_dir_all, metadata, read_dir, remove_file, File};
 use tokio::io::AsyncReadExt;
 use tokio::time::sleep;
 
+use crate::utility::available_space;
+
+use crate::slack;
+
 use crate::config::upload_path;
 use crate::context::Context;
 use puppylog::{LogEntry, LogentryDeserializerError};
+
+const DISK_LOW: u64 = 1_000_000_000; // 1GB
+const DISK_OK: u64 = 2_000_000_000; // 2GB
 
 // Background task that imports *.ready log files into the DB.
 pub async fn process_log_uploads(ctx: Arc<Context>) {
@@ -21,8 +28,22 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
 			}
 		}
 	}
+	let mut low_disk = false;
 
 	loop {
+		let free = available_space(&upload_dir);
+		if free < DISK_LOW {
+			if !low_disk {
+				slack::notify(&format!(
+					"Disk space running low: {} MB left",
+					free / 1_048_576
+				))
+				.await;
+				low_disk = true;
+			}
+		} else if free > DISK_OK {
+			low_disk = false;
+		}
 		let mut dir = match read_dir(&upload_dir).await {
 			Ok(d) => d,
 			Err(e) => {
