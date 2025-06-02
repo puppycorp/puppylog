@@ -484,8 +484,8 @@ impl DB {
 	pub async fn delete_segment(&self, segment: u32) -> anyhow::Result<()> {
 		let mut conn = self.conn.lock().await;
 		let tx = conn.transaction()?;
-		tx.execute("DELETE FROM log_segments WHERE id = ?1", [segment])?;
 		tx.execute("DELETE FROM segment_props WHERE segment_id = ?1", [segment])?;
+		tx.execute("DELETE FROM log_segments WHERE id = ?1", [segment])?;
 		tx.commit()?;
 		Ok(())
 	}
@@ -656,4 +656,42 @@ pub fn run_migrations(conn: &mut Connection) -> anyhow::Result<()> {
 		log::info!("No new migrations to apply.");
 	}
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use rusqlite::Connection;
+
+	#[tokio::test]
+	async fn delete_segment_removes_props() {
+		let conn = Connection::open_in_memory().unwrap();
+		let db = DB::new(conn);
+
+		let now = Utc::now();
+		let segment = db
+			.new_segment(NewSegmentArgs {
+				first_timestamp: now,
+				last_timestamp: now,
+				original_size: 1,
+				compressed_size: 1,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+
+		let prop = Prop {
+			key: "kind".to_string(),
+			value: "value".to_string(),
+		};
+		db.upsert_segment_props(segment, [prop.clone()].iter())
+			.await
+			.unwrap();
+		assert_eq!(db.fetch_segment_props(segment).await.unwrap().len(), 1);
+
+		db.delete_segment(segment).await.unwrap();
+
+		assert!(db.fetch_segment(segment).await.is_err());
+		assert!(db.fetch_segment_props(segment).await.unwrap().is_empty());
+	}
 }
