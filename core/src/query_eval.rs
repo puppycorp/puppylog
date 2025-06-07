@@ -1,5 +1,4 @@
-use chrono::Datelike;
-use chrono::Timelike;
+use chrono::{Datelike, FixedOffset, Timelike};
 
 use crate::query_parsing::Condition;
 use crate::query_parsing::Expr;
@@ -817,12 +816,18 @@ mod tests {
 	fn test_empty_and_value_expressions() {
 		let log = create_test_log_entry();
 
-		assert!(check_expr(&Expr::Empty, &log).unwrap());
-		assert!(check_expr(&Expr::Value(Value::String("nonempty".to_string())), &log).unwrap());
-		assert!(!check_expr(&Expr::Value(Value::String("".to_string())), &log).unwrap());
-		assert!(check_expr(&Expr::Value(Value::Number(1)), &log).unwrap());
-		assert!(!check_expr(&Expr::Value(Value::Number(0)), &log).unwrap());
-		assert!(check_expr(&Expr::Value(Value::Date(Utc::now())), &log).unwrap());
+		let tz = chrono::FixedOffset::east_opt(0).unwrap();
+		assert!(check_expr(&Expr::Empty, &log, &tz).unwrap());
+		assert!(check_expr(
+			&Expr::Value(Value::String("nonempty".to_string())),
+			&log,
+			&tz
+		)
+		.unwrap());
+		assert!(!check_expr(&Expr::Value(Value::String("".to_string())), &log, &tz).unwrap());
+		assert!(check_expr(&Expr::Value(Value::Number(1)), &log, &tz).unwrap());
+		assert!(!check_expr(&Expr::Value(Value::Number(0)), &log, &tz).unwrap());
+		assert!(check_expr(&Expr::Value(Value::Date(Utc::now())), &log, &tz).unwrap());
 	}
 
 	#[test]
