@@ -189,3 +189,113 @@ impl Context {
 		UploadGuard::new(&self.upload_queue, CONCURRENCY_LIMIT)
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use chrono::Utc;
+	use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
+	use std::fs;
+	use std::io::Cursor;
+	use tempfile::tempdir;
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn find_logs_from_memory() {
+		let dir = tempdir().unwrap();
+		std::env::set_var("LOG_PATH", dir.path().join("logs"));
+		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
+		fs::create_dir_all(dir.path().join("logs")).unwrap();
+
+		let ctx = Context::new().await;
+
+		let entry = LogEntry {
+			timestamp: Utc::now(),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "service".to_string(),
+				value: "search".to_string(),
+			}],
+			msg: "match me".to_string(),
+			..Default::default()
+		};
+
+		ctx.save_logs(&[entry.clone()]).await;
+
+		let query = parse_log_query("msg = \"match me\"").unwrap();
+		let mut found = Vec::new();
+		ctx.find_logs(query, |log| {
+			found.push(log.clone());
+			true
+		})
+		.await;
+
+		assert_eq!(found.len(), 1);
+		assert_eq!(found[0].msg, "match me");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn find_logs_from_segment() {
+		let dir = tempdir().unwrap();
+		std::env::set_var("LOG_PATH", dir.path().join("logs"));
+		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
+		fs::create_dir_all(dir.path().join("logs")).unwrap();
+
+		let ctx = Context::new().await;
+
+		let entry = LogEntry {
+			timestamp: Utc::now(),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "service".to_string(),
+				value: "segment".to_string(),
+			}],
+			msg: "segment log".to_string(),
+			..Default::default()
+		};
+
+		let mut segment = LogSegment::new();
+		segment.add_log_entry(entry.clone());
+		segment.sort();
+		let mut buff = Vec::new();
+		segment.serialize(&mut buff);
+		let original_size = buff.len();
+		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let compressed_size = compressed.len();
+
+		let segment_id = ctx
+			.db
+			.new_segment(NewSegmentArgs {
+				first_timestamp: entry.timestamp,
+				last_timestamp: entry.timestamp,
+				original_size,
+				compressed_size,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+
+		ctx.db
+			.upsert_segment_props(segment_id, entry.props.iter())
+			.await
+			.unwrap();
+
+		let path = log_path().join(format!("{}.log", segment_id));
+		fs::write(path, compressed).unwrap();
+
+		let mut found = Vec::new();
+		let mut query = parse_log_query("msg = \"segment log\"").unwrap();
+		query.end_date = Some(Utc::now() + chrono::Duration::seconds(1));
+		ctx.find_logs(query, |log| {
+			found.push(log.clone());
+			true
+		})
+		.await;
+
+		assert_eq!(found.len(), 1);
+		assert_eq!(found[0].msg, "segment log");
+	}
+}

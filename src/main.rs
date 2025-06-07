@@ -753,6 +753,7 @@ mod tests {
 	use tower::ServiceExt;
 
 	#[tokio::test]
+	#[serial_test::serial]
 	async fn histogram_basic() {
 		let dir = TempDir::new().unwrap();
 		let log_dir = dir.path().join("logs");
