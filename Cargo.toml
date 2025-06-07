@@ -32,6 +32,7 @@ libc = "0.2"
 tempfile = "3"
 tower = "0.5"
 serial_test = "3"
+hyper = { version = "1", features = ["full"] }
 
 [workspace.dependencies]
 chrono = { version = "0.4", features = ["serde"] }

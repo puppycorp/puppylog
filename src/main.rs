@@ -278,7 +278,7 @@ async fn validate_query(Query(params): Query<GetLogsQuery>) -> Result<(), BadReq
 	log::info!("validate_query {:?}", params);
 	match params.query {
 		Some(ref q) => {
-			let q = q.replace("\n", "");
+			let q = q.replace('\n', " ");
 			let q = q.trim();
 			if q.is_empty() {
 				return Ok(());
@@ -588,7 +588,7 @@ async fn get_logs(
 	log::info!("get_logs {:?}", params);
 	let mut query = match params.query {
 		Some(ref q) => {
-			let q = q.replace("\n", "");
+			let q = q.replace('\n', " ");
 			let q = q.trim();
 			if q.is_empty() {
 				log::info!("query is empty");
@@ -736,7 +736,7 @@ async fn get_histogram(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use axum::body::Body;
+	use axum::body::{to_bytes, Body};
 	use axum::http::{Request, StatusCode};
 	use tempfile::TempDir;
 	use tower::ServiceExt;
@@ -794,5 +794,93 @@ mod tests {
 		assert_eq!(res.status(), StatusCode::OK);
 		let ct = res.headers().get(axum::http::header::CONTENT_TYPE).unwrap();
 		assert_eq!(ct, "text/event-stream");
+	}
+
+	#[tokio::test]
+	async fn validate_query_allows_newlines() {
+		let dir = TempDir::new().unwrap();
+		let log_dir = dir.path().join("logs");
+		std::fs::create_dir_all(&log_dir).unwrap();
+		std::env::set_var("LOG_PATH", &log_dir);
+		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
+		std::fs::write(
+			dir.path().join("settings.json"),
+			"{\"collection_query\":\"\"}",
+		)
+		.unwrap();
+
+		let ctx = Arc::new(Context::new().await);
+		let app = Router::new()
+			.route("/api/v1/validate_query", get(validate_query))
+			.with_state(ctx);
+
+		let encoded = "level%20=%20info%0Aor%20level%20=%20error";
+		let res = app
+			.oneshot(
+				Request::builder()
+					.uri(format!("/api/v1/validate_query?query={}", encoded))
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+
+		assert_eq!(res.status(), StatusCode::OK);
+	}
+
+	#[tokio::test]
+	async fn get_logs_handles_newlines() {
+		let dir = TempDir::new().unwrap();
+		let log_dir = dir.path().join("logs");
+		std::fs::create_dir_all(&log_dir).unwrap();
+		std::env::set_var("LOG_PATH", &log_dir);
+		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
+		std::fs::write(
+			dir.path().join("settings.json"),
+			"{\"collection_query\":\"\"}",
+		)
+		.unwrap();
+
+		let ctx = Arc::new(Context::new().await);
+
+		let base = Utc::now();
+		ctx.save_logs(&[
+			LogEntry {
+				timestamp: base,
+				level: puppylog::LogLevel::Info,
+				msg: "a".into(),
+				..Default::default()
+			},
+			LogEntry {
+				timestamp: base + chrono::Duration::seconds(1),
+				level: puppylog::LogLevel::Error,
+				msg: "b".into(),
+				..Default::default()
+			},
+		])
+		.await;
+
+		let app = Router::new()
+			.route("/api/logs", get(get_logs))
+			.with_state(ctx);
+
+		let encoded = "level%20=%20info%0Aor%20level%20=%20error";
+		let res = app
+			.oneshot(
+				Request::builder()
+					.uri(format!("/api/logs?count=10&query={}", encoded))
+					.header("accept", "application/json")
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+
+		assert_eq!(res.status(), StatusCode::OK);
+		let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+		let logs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+		assert_eq!(logs.len(), 2);
 	}
 }
