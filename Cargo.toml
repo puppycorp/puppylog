@@ -29,6 +29,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 [dev-dependencies]
 tempfile = "3"
 tower = "0.5"
+hyper = { version = "1", features = ["full"] }
 
 [workspace.dependencies]
 chrono = { version = "0.4", features = ["serde"] }
