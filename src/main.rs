@@ -64,7 +64,6 @@ mod logline;
 mod segment;
 mod settings;
 mod slack;
-mod storage;
 mod subscribe_worker;
 mod types;
 mod upload_guard;
