@@ -196,8 +196,9 @@ mod tests {
 	use std::io::Cursor;
 	use tempfile::tempdir;
 
-	#[tokio::test]
-	async fn find_logs_from_memory() {
+#[tokio::test]
+#[serial_test::serial]
+async fn find_logs_from_memory() {
 		let dir = tempdir().unwrap();
 		std::env::set_var("LOG_PATH", dir.path().join("logs"));
 		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
@@ -231,8 +232,9 @@ mod tests {
 		assert_eq!(found[0].msg, "match me");
 	}
 
-	#[tokio::test]
-	async fn find_logs_from_segment() {
+#[tokio::test]
+#[serial_test::serial]
+async fn find_logs_from_segment() {
 		let dir = tempdir().unwrap();
 		std::env::set_var("LOG_PATH", dir.path().join("logs"));
 		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));

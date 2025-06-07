@@ -741,8 +741,9 @@ mod tests {
 	use tempfile::TempDir;
 	use tower::ServiceExt;
 
-	#[tokio::test]
-	async fn histogram_basic() {
+#[tokio::test]
+#[serial_test::serial]
+async fn histogram_basic() {
 		let dir = TempDir::new().unwrap();
 		let log_dir = dir.path().join("logs");
 		std::fs::create_dir_all(&log_dir).unwrap();
