@@ -17,8 +17,8 @@ native-tls = { version = "0.2", optional = true }
 tungstenite = { version = "0.26", features = ["native-tls"]}
 
 [dev-dependencies]
-tempfile = "3"
 criterion = "0.5"
+tempfile = "3"
 
 [features]
 default = ["nativetls"]
