@@ -111,6 +111,9 @@ impl Context {
 
 	pub async fn find_logs(&self, query: QueryAst, mut cb: impl FnMut(&LogEntry) -> bool) {
 		let mut end = query.end_date.unwrap_or(Utc::now());
+		let tz = query
+			.tz_offset
+			.unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
 		{
 			let current = self.current.lock().await;
 			let iter = current.iter();
@@ -119,7 +122,7 @@ impl Context {
 					continue;
 				}
 				end = entry.timestamp;
-				match check_expr(&query.root, entry) {
+				match check_expr(&query.root, entry, &tz) {
 					Ok(true) => {}
 					_ => continue,
 				}
@@ -166,7 +169,7 @@ impl Context {
 						continue;
 					}
 					end = entry.timestamp;
-					match check_expr(&query.root, entry) {
+					match check_expr(&query.root, entry, &tz) {
 						Ok(true) => {}
 						_ => continue,
 					}

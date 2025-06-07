@@ -1,5 +1,5 @@
 use crate::LogEntry;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 use serde::de::value;
 use std::str::FromStr;
 
@@ -80,11 +80,15 @@ pub struct QueryAst {
 	pub limit: Option<usize>,
 	pub offset: Option<usize>,
 	pub end_date: Option<DateTime<Utc>>,
+	pub tz_offset: Option<chrono::FixedOffset>,
 }
 
 impl QueryAst {
 	pub fn matches(&self, entry: &LogEntry) -> Result<bool, String> {
-		check_expr(&self.root, entry)
+		let tz = self
+			.tz_offset
+			.unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
+		check_expr(&self.root, entry, &tz)
 	}
 }
 

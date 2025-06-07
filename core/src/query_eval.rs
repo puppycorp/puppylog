@@ -115,9 +115,10 @@ fn any(
 	values: &[Value],
 	op: &Operator,
 	logline: &LogEntry,
+	tz: &FixedOffset,
 ) -> Result<bool, String> {
 	for value in values {
-		if does_field_match(field, value, op, logline)? {
+		if does_field_match(field, value, op, logline, tz)? {
 			return Ok(true);
 		}
 	}
@@ -129,6 +130,7 @@ fn does_field_match(
 	value: &Value,
 	operator: &Operator,
 	logline: &LogEntry,
+	tz: &FixedOffset,
 ) -> Result<bool, String> {
 	match (field, value, operator) {
 		(FieldType::Msg, Value::String(val), Operator::Like) => {
@@ -145,7 +147,9 @@ fn does_field_match(
 			Ok(re) => Ok(!re.is_match(&logline.msg)),
 			Err(e) => Err(e.to_string()),
 		},
-		(FieldType::Timestamp, Value::Date(val), op) => Ok(magic_cmp(logline.timestamp, *val, op)),
+		(FieldType::Timestamp, Value::Date(val), op) => {
+			Ok(magic_cmp(logline.timestamp.with_timezone(tz), *val, op))
+		}
 		(FieldType::Timestamp, _, _) => Err(format!("Invalid value for timestamp {:?}", value)),
 		(FieldType::Level, Value::String(val), op) => {
 			Ok(magic_cmp(&logline.level, &LogLevel::from_string(&val), op))
@@ -183,10 +187,10 @@ fn does_field_match(
 		}
 		(FieldType::Prop(_, _), Value::Date(_), _) => todo!(),
 		(field_type, Value::List(vec), Operator::In) => {
-			any(field_type, vec, &Operator::Equal, logline)
+			any(field_type, vec, &Operator::Equal, logline, tz)
 		}
 		(field_type, Value::List(vec), Operator::NotIn) => {
-			Ok(!any(field_type, vec, &Operator::Equal, logline)?)
+			Ok(!any(field_type, vec, &Operator::Equal, logline, tz)?)
 		}
 		_ => Err(format!(
 			"Invalid comparison {:?} {:?} {:?}",
@@ -200,6 +204,7 @@ fn check_field_access(
 	right: &Expr,
 	op: &Operator,
 	logline: &LogEntry,
+	tz: &FixedOffset,
 ) -> Result<bool, String> {
 	match field_access.expr.as_ref() {
 		Expr::Value(Value::String(obj)) => match obj.as_str() {
@@ -210,12 +215,36 @@ fn check_field_access(
 				};
 
 				match field_access.field.as_str() {
-					"year" => Ok(magic_cmp(logline.timestamp.year(), num, op)),
-					"month" => Ok(magic_cmp(logline.timestamp.month(), num as u32, op)),
-					"day" => Ok(magic_cmp(logline.timestamp.day(), num as u32, op)),
-					"hour" => Ok(magic_cmp(logline.timestamp.hour(), num as u32, op)),
-					"minute" => Ok(magic_cmp(logline.timestamp.minute(), num as u32, op)),
-					"second" => Ok(magic_cmp(logline.timestamp.second(), num as u32, op)),
+					"year" => Ok(magic_cmp(
+						logline.timestamp.with_timezone(tz).year(),
+						num,
+						op,
+					)),
+					"month" => Ok(magic_cmp(
+						logline.timestamp.with_timezone(tz).month(),
+						num as u32,
+						op,
+					)),
+					"day" => Ok(magic_cmp(
+						logline.timestamp.with_timezone(tz).day(),
+						num as u32,
+						op,
+					)),
+					"hour" => Ok(magic_cmp(
+						logline.timestamp.with_timezone(tz).hour(),
+						num as u32,
+						op,
+					)),
+					"minute" => Ok(magic_cmp(
+						logline.timestamp.with_timezone(tz).minute(),
+						num as u32,
+						op,
+					)),
+					"second" => Ok(magic_cmp(
+						logline.timestamp.with_timezone(tz).second(),
+						num as u32,
+						op,
+					)),
 					_ => Err(format!("Field not found: {}", field_access.field)),
 				}
 			}
@@ -225,24 +254,25 @@ fn check_field_access(
 	}
 }
 
-fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String> {
+fn check_condition(cond: &Condition, logline: &LogEntry, tz: &FixedOffset) -> Result<bool, String> {
 	fn match_field(
 		field: &str,
 		val: &Value,
 		op: &Operator,
 		logline: &LogEntry,
+		tz: &FixedOffset,
 	) -> Result<bool, String> {
 		match find_field(field, logline) {
-			Some(field) => does_field_match(&field, val, op, logline),
+			Some(field) => does_field_match(&field, val, op, logline, tz),
 			None => Ok(false),
 		}
 	}
 	match (cond.left.as_ref(), cond.right.as_ref(), &cond.operator) {
 		(Expr::Value(Value::String(left)), Expr::Value(val), op) => {
-			match_field(left, val, op, logline)
+			match_field(left, val, op, logline, tz)
 		}
 		(Expr::Value(val), Expr::Value(Value::String(right)), op) => {
-			match_field(right, val, op, logline)
+			match_field(right, val, op, logline, tz)
 		}
 		(Expr::Value(Value::String(left)), Expr::Empty, Operator::Exists) => {
 			Ok(find_field(left, logline).is_some())
@@ -250,8 +280,8 @@ fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String>
 		(Expr::Value(Value::String(left)), Expr::Empty, Operator::NotExists) => {
 			Ok(find_field(left, logline).is_none())
 		}
-		(Expr::FieldAccess(field), right, op) => check_field_access(field, right, op, logline),
-		(left, Expr::FieldAccess(field), op) => check_field_access(field, left, op, logline),
+		(Expr::FieldAccess(field), right, op) => check_field_access(field, right, op, logline, tz),
+		(left, Expr::FieldAccess(field), op) => check_field_access(field, left, op, logline, tz),
 		_ => panic!(
 			"Nothing makes sense anymore {:?} logline: {:?}",
 			cond, logline
@@ -259,11 +289,15 @@ fn check_condition(cond: &Condition, logline: &LogEntry) -> Result<bool, String>
 	}
 }
 
-pub fn check_expr(expr: &Expr, logline: &LogEntry) -> Result<bool, String> {
+pub fn check_expr(expr: &Expr, logline: &LogEntry, tz: &FixedOffset) -> Result<bool, String> {
 	match expr {
-		Expr::Condition(cond) => check_condition(&cond, logline),
-		Expr::And(expr, expr1) => Ok(check_expr(expr, &logline)? && check_expr(expr1, logline)?),
-		Expr::Or(expr, expr1) => Ok(check_expr(expr, &logline)? || check_expr(expr1, logline)?),
+		Expr::Condition(cond) => check_condition(&cond, logline, tz),
+		Expr::And(expr, expr1) => {
+			Ok(check_expr(expr, &logline, tz)? && check_expr(expr1, logline, tz)?)
+		}
+		Expr::Or(expr, expr1) => {
+			Ok(check_expr(expr, &logline, tz)? || check_expr(expr1, logline, tz)?)
+		}
 		Expr::Value(value) => match value {
 			Value::String(value) => Ok(value != ""),
 			Value::Regex(_) => Ok(true),
@@ -506,7 +540,7 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::String("Hello".to_string()))),
 		});
-		assert!(!check_expr(&expr, &logline).unwrap());
+		assert!(!check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	#[test]
@@ -527,7 +561,7 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::String("Hello, world!".to_string()))),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	fn create_test_log_entry() -> LogEntry {
@@ -595,14 +629,14 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::String("INFO".to_string()))),
 		});
-		assert!(check_expr(&expr, &log).unwrap());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("level".to_string()))),
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::String("ERROR".to_string()))),
 		});
-		assert!(!check_expr(&expr, &log).unwrap());
+		assert!(!check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	#[test]
@@ -614,28 +648,28 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::String("auth".to_string()))),
 		});
-		assert!(check_expr(&expr, &log).unwrap());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("duration_ms".to_string()))),
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::Number(150))),
 		});
-		assert!(check_expr(&expr, &log).unwrap());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::NotEqual,
 			right: Box::new(Expr::Value(Value::String("auth".to_string()))),
 		});
-		assert!(!check_expr(&expr, &log).unwrap());
+		assert!(!check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("duration_ms".to_string()))),
 			operator: Operator::NotEqual,
 			right: Box::new(Expr::Value(Value::Number(200))),
 		});
-		assert!(check_expr(&expr, &log).unwrap());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	#[test]
@@ -647,28 +681,28 @@ mod tests {
 			operator: Operator::Like,
 			right: Box::new(Expr::Value(Value::String("login".to_string()))),
 		});
-		assert!(check_expr(&expr, &log).unwrap());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
 			operator: Operator::Like,
 			right: Box::new(Expr::Value(Value::String("logout".to_string()))),
 		});
-		assert!(!check_expr(&expr, &log).unwrap());
+		assert!(!check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
 			operator: Operator::NotLike,
 			right: Box::new(Expr::Value(Value::String("login".to_string()))),
 		});
-		assert!(!check_expr(&expr, &log).unwrap());
+		assert!(!check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("msg".to_string()))),
 			operator: Operator::NotLike,
 			right: Box::new(Expr::Value(Value::String("logout".to_string()))),
 		});
-		assert!(check_expr(&expr, &log).unwrap());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	#[test]
@@ -680,28 +714,28 @@ mod tests {
 			operator: Operator::Like,
 			right: Box::new(Expr::Value(Value::String("au".to_string()))),
 		});
-		assert!(check_expr(&expr, &log).unwrap());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::Like,
 			right: Box::new(Expr::Value(Value::String("asdf".to_string()))),
 		});
-		assert!(!check_expr(&expr, &log).unwrap());
+		assert!(!check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::NotLike,
 			right: Box::new(Expr::Value(Value::String("au".to_string()))),
 		});
-		assert!(!check_expr(&expr, &log).unwrap());
+		assert!(!check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::NotLike,
 			right: Box::new(Expr::Value(Value::String("asdf".to_string()))),
 		});
-		assert!(check_expr(&expr, &log).unwrap());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	#[test]
@@ -713,14 +747,14 @@ mod tests {
 			operator: Operator::Matches,
 			right: Box::new(Expr::Value(Value::Regex("^User.*success".to_string()))),
 		});
-		assert!(check_expr(&expr, &log).unwrap());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("service".to_string()))),
 			operator: Operator::NotMatches,
 			right: Box::new(Expr::Value(Value::Regex("^auth$".to_string()))),
 		});
-		assert!(!check_expr(&expr, &log).unwrap());
+		assert!(!check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	#[test]
@@ -740,7 +774,7 @@ mod tests {
 				right: Box::new(Expr::Value(Value::String("123".to_string()))),
 			})),
 		);
-		assert!(check_expr(&expr, &log).unwrap());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		// Test OR expression
 		let expr = Expr::Or(
@@ -755,7 +789,7 @@ mod tests {
 				right: Box::new(Expr::Value(Value::String("123".to_string()))),
 			})),
 		);
-		assert!(check_expr(&expr, &log).unwrap());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	#[test]
@@ -768,7 +802,7 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::Date(Utc::now()))),
 		});
-		assert!(check_expr(&expr, &log).is_err());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).is_err());
 
 		// Test invalid message comparison
 		let expr = Expr::Condition(Condition {
@@ -776,7 +810,7 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::Date(Utc::now()))),
 		});
-		assert!(check_expr(&expr, &log).is_err());
+		assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).is_err());
 	}
 
 	#[test]
@@ -812,7 +846,7 @@ mod tests {
 				Value::String("debug".to_string()),
 			]))),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("level".to_string()))),
@@ -822,7 +856,7 @@ mod tests {
 				Value::String("warn".to_string()),
 			]))),
 		});
-		assert!(!check_expr(&expr, &logline).unwrap());
+		assert!(!check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	#[test]
@@ -842,25 +876,25 @@ mod tests {
 			operator: Operator::Exists,
 			right: Box::new(Expr::Empty),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("nonexistent".to_string()))),
 			operator: Operator::Exists,
 			right: Box::new(Expr::Empty),
 		});
-		assert!(!check_expr(&expr, &logline).unwrap());
+		assert!(!check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("nonexistent".to_string()))),
 			operator: Operator::NotExists,
 			right: Box::new(Expr::Empty),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("key".to_string()))),
 			operator: Operator::NotExists,
 			right: Box::new(Expr::Empty),
 		});
-		assert!(!check_expr(&expr, &logline).unwrap());
+		assert!(!check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	#[test]
@@ -889,7 +923,7 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::Number(2024))),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::FieldAccess(FieldAccess {
 				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
@@ -898,7 +932,7 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::Number(5))),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::FieldAccess(FieldAccess {
 				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
@@ -907,7 +941,7 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::Number(15))),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::FieldAccess(FieldAccess {
 				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
@@ -916,7 +950,7 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::Number(0))),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::FieldAccess(FieldAccess {
 				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
@@ -925,7 +959,7 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::Number(0))),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::FieldAccess(FieldAccess {
 				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
@@ -934,7 +968,7 @@ mod tests {
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::Number(0))),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	#[test]
@@ -955,21 +989,21 @@ mod tests {
 			operator: Operator::GreaterThan,
 			right: Box::new(Expr::Value(Value::String("1.2.0".to_string()))),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("version".to_string()))),
 			operator: Operator::LessThan,
 			right: Box::new(Expr::Value(Value::String("2.0.0".to_string()))),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 
 		let expr = Expr::Condition(Condition {
 			left: Box::new(Expr::Value(Value::String("version".to_string()))),
 			operator: Operator::Equal,
 			right: Box::new(Expr::Value(Value::String("1.10.0".to_string()))),
 		});
-		assert!(check_expr(&expr, &logline).unwrap());
+		assert!(check_expr(&expr, &logline, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 	}
 
 	#[test]
@@ -982,7 +1016,7 @@ mod tests {
 		});
 		let start = std::time::Instant::now();
 		for _ in 0..1000 {
-			assert!(check_expr(&expr, &log).unwrap());
+			assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 		}
 		assert!(start.elapsed().as_secs_f32() < 1.0);
 	}
@@ -997,7 +1031,7 @@ mod tests {
 		});
 		let start = std::time::Instant::now();
 		for _ in 0..1000 {
-			assert!(check_expr(&expr, &log).unwrap());
+			assert!(check_expr(&expr, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
 		}
 		assert!(start.elapsed().as_secs_f32() < 1.0);
 	}

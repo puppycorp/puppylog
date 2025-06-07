@@ -1157,6 +1157,7 @@ var logsSearchPage = (args) => {
     if (searchTextarea.value)
       params.set("query", searchTextarea.value);
     params.set("bucketSecs", "60");
+    params.set("tzOffset", new Date().getTimezoneOffset().toString());
     const url = new URL("/api/v1/logs/histogram", window.location.origin);
     url.search = params.toString();
     const es = new EventSource(url);
@@ -1437,6 +1438,7 @@ var mainPage = (root) => {
         streamQuery.append("count", args.count.toString());
       if (args.endDate)
         streamQuery.append("endDate", args.endDate);
+      streamQuery.append("tzOffset", new Date().getTimezoneOffset().toString());
       const streamUrl = new URL("/api/logs", window.location.origin);
       streamUrl.search = streamQuery.toString();
       const eventSource = new EventSource(streamUrl);
