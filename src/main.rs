@@ -63,10 +63,11 @@ mod db;
 mod logline;
 mod segment;
 mod settings;
-mod storage;
+mod slack;
 mod subscribe_worker;
 mod types;
 mod upload_guard;
+mod utility;
 mod wal;
 
 #[derive(Deserialize, Debug)]

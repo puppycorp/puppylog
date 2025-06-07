@@ -579,7 +579,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 						if !file_path.exists() {
 							println!("downloading: {}", url);
 							let response = client.get(url).send().await?.bytes().await?;
-
+							println!("saving to file: {}", file_path.display());
 							let mut file = std::fs::File::create(file_path)?;
 							file.write_all(&response)?;
 						}
@@ -644,7 +644,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 						println!("downloading: {}", url);
 						let response = client.get(url).send().await?.bytes().await?;
-
+						println!("saving to file: {}", file_path.display());
 						let mut file = std::fs::File::create(file_path)?;
 						file.write_all(&response)?;
 					}
