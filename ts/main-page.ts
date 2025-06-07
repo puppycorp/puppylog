@@ -9,8 +9,9 @@ export const mainPage = (root: HTMLElement) => {
 		streamLogs: (args, onNewLog, onEnd) => {
 			const streamQuery = new URLSearchParams()
 			if (args.query) streamQuery.append("query", args.query)
-			if (args.count) streamQuery.append("count", args.count.toString())
-			if (args.endDate) streamQuery.append("endDate", args.endDate)
+                        if (args.count) streamQuery.append("count", args.count.toString())
+                        if (args.endDate) streamQuery.append("endDate", args.endDate)
+                        streamQuery.append("tzOffset", new Date().getTimezoneOffset().toString())
 			const streamUrl = new URL("/api/logs", window.location.origin)
 			streamUrl.search = streamQuery.toString()
 			const eventSource = new EventSource(streamUrl)

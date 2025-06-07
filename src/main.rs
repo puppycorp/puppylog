@@ -76,6 +76,7 @@ struct GetLogsQuery {
 	pub count: Option<usize>,
 	pub query: Option<String>,
 	pub end_date: Option<DateTime<Utc>>,
+	pub tz_offset: Option<i32>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -84,6 +85,7 @@ struct GetHistogramQuery {
 	pub query: Option<String>,
 	pub bucket_secs: Option<u64>,
 	pub end_date: Option<DateTime<Utc>>,
+	pub tz_offset: Option<i32>,
 }
 
 #[tokio::main]
@@ -602,6 +604,9 @@ async fn get_logs(
 		}
 		None => QueryAst::default(),
 	};
+	if let Some(offset) = params.tz_offset {
+		query.tz_offset = chrono::FixedOffset::east_opt(-offset * 60);
+	}
 	query.limit = params.count;
 	query.end_date = match params.end_date {
 		Some(end_date) => Some(end_date),
@@ -657,13 +662,16 @@ async fn stream_logs(
 	Query(params): Query<GetLogsQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, BadRequestError> {
 	log::info!("stream logs {:?}", params);
-	let query = match params.query {
+	let mut query = match params.query {
 		Some(ref query) => match parse_log_query(query) {
 			Ok(query) => query,
 			Err(err) => return Err(BadRequestError(err.to_string())),
 		},
 		None => QueryAst::default(),
 	};
+	if let Some(offset) = params.tz_offset {
+		query.tz_offset = chrono::FixedOffset::east_opt(-offset * 60);
+	}
 	let rx = ctx.subscriber.subscribe(query).await;
 	let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(|p| {
 		let data = to_string(&logentry_to_json(&p)).unwrap();
@@ -678,13 +686,16 @@ async fn get_histogram(
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, BadRequestError> {
 	log::info!("get histogram {:?}", params);
 	let bucket_secs = params.bucket_secs.unwrap_or(60);
-	let query = match params.query {
+	let mut query = match params.query {
 		Some(ref q) => match parse_log_query(q) {
 			Ok(q) => q,
 			Err(err) => return Err(BadRequestError(err.to_string())),
 		},
 		None => QueryAst::default(),
 	};
+	if let Some(offset) = params.tz_offset {
+		query.tz_offset = chrono::FixedOffset::east_opt(-offset * 60);
+	}
 	let (tx, rx) = mpsc::channel(100);
 	let ctx_clone = Arc::clone(&ctx);
 	let producer_query = query.clone();
