@@ -139,6 +139,7 @@ impl Context {
 		log::info!("looking from archive");
 		let window = chrono::Duration::hours(24);
 		let mut prev_end: Option<DateTime<Utc>> = None;
+		let mut processed_segments: HashSet<u32> = HashSet::new();
 
 		'outer: loop {
 			let end = match self.db.prev_segment_end(prev_end).await? {
@@ -167,6 +168,9 @@ impl Context {
 			let segment_ids = segments.iter().map(|s| s.id).collect::<Vec<_>>();
 			// let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
 			for segment in &segments {
+				if !processed_segments.insert(segment.id) {
+					continue;
+				}
 				// let props = match segment_props.get(&segment.id) {
 				// 	Some(props) => props,
 				// 	None => continue,
@@ -339,5 +343,100 @@ mod tests {
 
 		// We expect to find **no** matching entries.
 		assert!(found.is_empty(), "unexpectedly found logs: {:?}", found);
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn find_logs_skip_duplicate_segments() {
+		let (ctx, _dir) = prepare_test_ctx().await;
+
+		let now = Utc::now();
+
+		// Older segment spanning a wide window so it overlaps multiple queries
+		let entry_old = LogEntry {
+			timestamp: now - Duration::hours(40),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "service".to_string(),
+				value: "old".to_string(),
+			}],
+			msg: "duplicate".to_string(),
+			..Default::default()
+		};
+		let mut old_seg = LogSegment::new();
+		old_seg.add_log_entry(entry_old.clone());
+		old_seg.sort();
+		let mut buff = Vec::new();
+		old_seg.serialize(&mut buff);
+		let orig_size = buff.len();
+		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let comp_size = compressed.len();
+		let old_seg_id = ctx
+			.db
+			.new_segment(NewSegmentArgs {
+				first_timestamp: entry_old.timestamp - Duration::hours(10),
+				last_timestamp: entry_old.timestamp + Duration::hours(10),
+				original_size: orig_size,
+				compressed_size: comp_size,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+		ctx.db
+			.upsert_segment_props(old_seg_id, entry_old.props.iter())
+			.await
+			.unwrap();
+		let path = log_path().join(format!("{}.log", old_seg_id));
+		fs::write(path, compressed).unwrap();
+
+		// Newer segment to trigger overlapping search window
+		let entry_new = LogEntry {
+			timestamp: now - Duration::hours(5),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "service".to_string(),
+				value: "new".to_string(),
+			}],
+			msg: "new".to_string(),
+			..Default::default()
+		};
+		let mut new_seg = LogSegment::new();
+		new_seg.add_log_entry(entry_new.clone());
+		new_seg.sort();
+		let mut buff = Vec::new();
+		new_seg.serialize(&mut buff);
+		let orig_size = buff.len();
+		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let comp_size = compressed.len();
+		let new_seg_id = ctx
+			.db
+			.new_segment(NewSegmentArgs {
+				first_timestamp: entry_new.timestamp,
+				last_timestamp: entry_new.timestamp,
+				original_size: orig_size,
+				compressed_size: comp_size,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+		ctx.db
+			.upsert_segment_props(new_seg_id, entry_new.props.iter())
+			.await
+			.unwrap();
+		let path = log_path().join(format!("{}.log", new_seg_id));
+		fs::write(path, compressed).unwrap();
+
+		let mut query = parse_log_query("msg = \"duplicate\"").unwrap();
+		query.end_date = Some(now);
+		let mut found = Vec::new();
+		ctx.find_logs(query, |log| {
+			found.push(log.clone());
+			true
+		})
+		.await
+		.unwrap();
+
+		assert_eq!(found.len(), 1, "log returned more than once");
+		assert_eq!(found[0].msg, "duplicate");
 	}
 }
