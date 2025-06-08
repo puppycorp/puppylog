@@ -15,3 +15,7 @@ lazy_static = "1"
 puppylog = { path = "../core" }
 log = "0.4"
 serde_json = "1"
+puppylog-server = { path = ".." }
+anyhow = "1"
+zstd = "0.13"
+

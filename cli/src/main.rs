@@ -5,6 +5,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use log::Level;
 use puppylog::{DrainParser, LogEntry, LogLevel, Prop, PuppylogBuilder};
+use puppylog_server::{config::log_path, db, segment};
 use rand::{distributions::Alphanumeric, prelude::*};
 use reqwest::{self, Client, Url};
 use std::collections::HashMap;
@@ -324,6 +325,10 @@ enum Commands {
 	UpdateMetadata(UpdateMetadataArgs),
 	#[command(subcommand)]
 	Segment(SegmentSubCommand),
+	/// Import compressed log segments from a directory
+	Import {
+		folder: String,
+	},
 }
 
 #[derive(Subcommand)]
@@ -358,6 +363,62 @@ async fn upload_logs(address: &str, logs: &[String], compress: bool) -> Result<(
 		.await?;
 
 	println!("Upload status: {}", response.status());
+	Ok(())
+}
+
+async fn import_segments(path: &str) -> anyhow::Result<()> {
+	use std::collections::HashSet;
+	use std::io::Cursor;
+	use tokio::fs::{create_dir_all, read, read_dir};
+
+	let log_dir = log_path();
+	if !log_dir.exists() {
+		create_dir_all(&log_dir).await?;
+	}
+
+	let db = db::DB::new(db::open_db());
+	let mut dir = read_dir(path).await?;
+	while let Some(entry) = dir.next_entry().await? {
+		let file_path = entry.path();
+		if !file_path.is_file() {
+			continue;
+		}
+
+		let compressed = read(&file_path).await?;
+		let compressed_size = compressed.len();
+		let decoded = zstd::decode_all(Cursor::new(&compressed))?;
+		let original_size = decoded.len();
+		let mut cursor = Cursor::new(decoded);
+		let segment = segment::LogSegment::parse(&mut cursor);
+		if segment.buffer.is_empty() {
+			continue;
+		}
+		let first_timestamp = segment.buffer.first().unwrap().timestamp;
+		let last_timestamp = segment.buffer.last().unwrap().timestamp;
+		let logs_count = segment.buffer.len() as u64;
+
+		let segment_id = db
+			.new_segment(db::NewSegmentArgs {
+				first_timestamp,
+				last_timestamp,
+				original_size,
+				compressed_size,
+				logs_count,
+			})
+			.await?;
+
+		let mut unique_props = HashSet::new();
+		for log in &segment.buffer {
+			for prop in &log.props {
+				unique_props.insert(prop.clone());
+			}
+		}
+		db.upsert_segment_props(segment_id, unique_props.iter())
+			.await?;
+
+		tokio::fs::write(log_dir.join(format!("{segment_id}.log")), &compressed).await?;
+	}
+
 	Ok(())
 }
 
@@ -650,6 +711,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 					}
 				}
 			}
+		}
+		Commands::Import { folder } => {
+			import_segments(&folder).await?;
 		}
 	}
 
