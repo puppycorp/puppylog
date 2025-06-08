@@ -742,44 +742,44 @@ mod tests {
 		assert!(db.fetch_segment_props(segment).await.unwrap().is_empty());
 	}
 
-    #[tokio::test]
-    async fn find_segments_overlap_start_inside_segment() {
-        use crate::segment::SegmentMeta; // for clarity
+	#[tokio::test]
+	async fn find_segments_overlap_start_inside_segment() {
+		use crate::segment::SegmentMeta; // for clarity
 
-        let conn = Connection::open_in_memory().unwrap();
-        let db = DB::new(conn);
+		let conn = Connection::open_in_memory().unwrap();
+		let db = DB::new(conn);
 
-        // Create one segment: [first=now-2h, last=now-1h]
-        let now = Utc::now();
-        let first_ts = now - chrono::Duration::hours(2);
-        let last_ts = now - chrono::Duration::hours(1);
-        let seg_id = db
-            .new_segment(NewSegmentArgs {
-                first_timestamp: first_ts,
-                last_timestamp: last_ts,
-                original_size: 100,
-                compressed_size: 50,
-                logs_count: 10,
-            })
-            .await
-            .unwrap();
+		// Create one segment: [first=now-2h, last=now-1h]
+		let now = Utc::now();
+		let first_ts = now - chrono::Duration::hours(2);
+		let last_ts = now - chrono::Duration::hours(1);
+		let seg_id = db
+			.new_segment(NewSegmentArgs {
+				first_timestamp: first_ts,
+				last_timestamp: last_ts,
+				original_size: 100,
+				compressed_size: 50,
+				logs_count: 10,
+			})
+			.await
+			.unwrap();
 
-        // Query window: start = now-90 min (inside segment), end = now
-        // Expect the segment to be returned because the interval overlaps.
-        let metas = db
-            .find_segments(&GetSegmentsQuery {
-                start: Some(now - chrono::Duration::minutes(90)),
-                end: Some(now),
-                count: None,
-                sort: None,
-            })
-            .await
-            .unwrap();
+		// Query window: start = now-90 min (inside segment), end = now
+		// Expect the segment to be returned because the interval overlaps.
+		let metas = db
+			.find_segments(&GetSegmentsQuery {
+				start: Some(now - chrono::Duration::minutes(90)),
+				end: Some(now),
+				count: None,
+				sort: None,
+			})
+			.await
+			.unwrap();
 
-        assert_eq!(
-            metas.iter().map(|m| m.id).collect::<Vec<_>>(),
-            vec![seg_id],
-            "segment should be returned when query start is inside its time span"
-        );
-    }
+		assert_eq!(
+			metas.iter().map(|m| m.id).collect::<Vec<_>>(),
+			vec![seg_id],
+			"segment should be returned when query start is inside its time span"
+		);
+	}
 }
