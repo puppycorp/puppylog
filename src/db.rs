@@ -418,13 +418,13 @@ impl DB {
 			let mut condition = String::new();
 			if let Some(start) = &query.start {
 				condition.push_str("last_timestamp > ?");
-				if query.end.is_some() {
-					condition.push_str(" OR ");
-				}
 				params.push(start);
 			}
 			if let Some(end) = &query.end {
-				condition.push_str("first_timestamp < ?");
+				if !condition.is_empty() {
+					condition.push_str(" AND ");
+				}
+				condition.push_str("first_timestamp <= ?");
 				params.push(end);
 			}
 			conditions.push(condition);
