@@ -182,7 +182,13 @@ impl Context {
 				// }
 				let path = log_path().join(format!("{}.log", segment.id));
 				log::info!("loading segment from disk: {}", path.display());
-				let file: File = File::open(path).unwrap();
+				let file: File = match File::open(path) {
+					Ok(file) => file,
+					Err(err) => {
+						log::error!("failed to open log file: {}", err);
+						continue;
+					}
+				};
 				let mut decoder = zstd::Decoder::new(file).unwrap();
 				let segment = LogSegment::parse(&mut decoder);
 				let iter = segment.iter();
