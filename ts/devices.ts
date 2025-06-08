@@ -1,5 +1,5 @@
 import { showModal } from "./common"
-import { Button, Container, Header, HList, Label, MultiCheckboxSelect, Select, SelectGroup, TextInput, UiComponent, vlist, VList } from "./ui"
+import { Button, Container, Header, HList, Label, MultiCheckboxSelect, Select, SelectGroup, TextInput, UiComponent, VList } from "./ui"
 import { formatBytes, formatNumber } from "./utility"
 
 const saveDeviceSettings = async (device: DeviceSetting) => {
