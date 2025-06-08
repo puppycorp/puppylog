@@ -459,6 +459,46 @@ impl DB {
 		Ok(metas)
 	}
 
+	/// Return the `last_timestamp` of the newest segment.
+	///
+	/// * `before = Some(ts)` → newest segment whose `last_timestamp` < `ts`
+	/// * `before = None`     → absolute newest segment (no upper bound)
+	///
+	/// Returns `Ok(None)` if no segment matches.
+	pub async fn prev_segment_end(
+		&self,
+		before: Option<chrono::DateTime<chrono::Utc>>,
+	) -> anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> {
+		use rusqlite::OptionalExtension;
+
+		let conn = self.conn.lock().await;
+
+		let ts: Option<chrono::DateTime<chrono::Utc>> = if let Some(b) = before {
+			conn.query_row(
+				"SELECT last_timestamp
+				FROM log_segments
+				WHERE last_timestamp < ?1
+			ORDER BY last_timestamp DESC
+				LIMIT 1",
+				[b],
+				|row| row.get(0),
+			)
+			.optional()?
+		} else {
+			conn.query_row(
+				"SELECT last_timestamp
+				FROM log_segments
+			ORDER BY last_timestamp DESC
+				LIMIT 1",
+				[],
+				|row| row.get(0),
+			)
+			.optional()?
+		};
+
+		Ok(ts)
+	}
+
 	pub async fn fetch_segment(&self, segment: u32) -> anyhow::Result<SegmentMeta> {
 		let conn = self.conn.lock().await;
 		let segment = conn.query_row("select first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at from log_segments where id = ?1", [segment], |row| {

@@ -10,6 +10,7 @@ use crate::types::GetSegmentsQuery;
 use crate::upload_guard::UploadGuard;
 use crate::wal::load_logs_from_wal;
 use crate::wal::Wal;
+use chrono::DateTime;
 use chrono::Utc;
 use puppylog::check_expr;
 use puppylog::LogEntry;
@@ -109,7 +110,7 @@ impl Context {
 		}
 	}
 
-	pub async fn find_logs(&self, query: QueryAst, mut cb: impl FnMut(&LogEntry) -> bool) {
+	pub async fn find_logs(&self, query: QueryAst, mut cb: impl FnMut(&LogEntry) -> bool) -> anyhow::Result<()> {
 		let mut end = query.end_date.unwrap_or(Utc::now());
 		let tz = query
 			.tz_offset
@@ -127,14 +128,25 @@ impl Context {
 					_ => continue,
 				}
 				if !cb(entry) {
-					return;
+					return Ok(());
 				}
 			}
 		}
 		log::info!("looking from archive");
-		let mut window = chrono::Duration::hours(24);
-		let mut start = end - window;
-		loop {
+		let window = chrono::Duration::hours(24);
+		let mut prev_end: Option<DateTime<Utc>> = None;
+
+		'outer: loop {
+			let end = match self.db.prev_segment_end(prev_end).await? {
+				Some(e) => e,
+				None => {
+					log::info!("no more segments to load");
+					break;
+				}
+			};
+			let start = end - window;
+			prev_end = Some(start);
+
 			let segments = self
 				.db
 				.find_segments(&GetSegmentsQuery {
@@ -145,13 +157,8 @@ impl Context {
 				.await
 				.unwrap();
 			if segments.is_empty() {
-				if start.timestamp() <= 0 {
-					log::info!("no more segments to load");
-					break;
-				}
-				end = start;
-				start -= window;
-				continue;
+				log::info!("no segments found in the range {} - {}", start, end);
+				break;
 			}
 			let segment_ids = segments.iter().map(|s| s.id).collect::<Vec<_>>();
 			// let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
@@ -172,20 +179,17 @@ impl Context {
 				let segment = LogSegment::parse(&mut decoder);
 				let iter = segment.iter();
 				for entry in iter {
-					if end < entry.timestamp {
-						continue;
-					}
-					end = entry.timestamp;
 					match check_expr(&query.root, entry, &tz) {
 						Ok(true) => {}
 						_ => continue,
 					}
 					if !cb(entry) {
-						return;
+						break 'outer;
 					}
 				}
 			}
-		}
+		};
+		Ok(())
 	}
 
 	pub fn allowed_to_upload(&self) -> bool {
@@ -205,18 +209,29 @@ mod tests {
 	use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
 	use std::fs;
 	use std::io::Cursor;
-	use tempfile::tempdir;
+	use tempfile::TempDir;
+
+    // Helper to set up an isolated temp environment & Context for tests.
+    async fn prepare_test_ctx() -> (Context, tempfile::TempDir) {
+        use std::fs;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let logs_path = dir.path().join("logs");
+        fs::create_dir_all(&logs_path).unwrap();
+
+        std::env::set_var("LOG_PATH", &logs_path);
+        std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+        std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
+
+        let ctx = Context::new().await;
+        (ctx, dir)
+    }
 
 	#[tokio::test]
 	#[serial_test::serial]
 	async fn find_logs_from_memory() {
-		let dir = tempdir().unwrap();
-		std::env::set_var("LOG_PATH", dir.path().join("logs"));
-		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
-		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
-		fs::create_dir_all(dir.path().join("logs")).unwrap();
-
-		let ctx = Context::new().await;
+		let (ctx, _dir) = prepare_test_ctx().await;
 
 		let entry = LogEntry {
 			timestamp: Utc::now(),
@@ -236,8 +251,7 @@ mod tests {
 		ctx.find_logs(query, |log| {
 			found.push(log.clone());
 			true
-		})
-		.await;
+		}).await.unwrap();
 
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "match me");
@@ -245,14 +259,8 @@ mod tests {
 
 	#[tokio::test]
 	#[serial_test::serial]
-	async fn find_logs_from_segment_with_window() {
-		let dir = tempdir().unwrap();
-		std::env::set_var("LOG_PATH", dir.path().join("logs"));
-		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
-		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
-		fs::create_dir_all(dir.path().join("logs")).unwrap();
-
-		let ctx = Context::new().await;
+	async fn find_logs_from_segment() {
+		let (ctx, _dir) = prepare_test_ctx().await;
 
 		let entry = LogEntry {
 			timestamp: Utc::now() - Duration::hours(47),
@@ -300,74 +308,28 @@ mod tests {
 		ctx.find_logs(query, |log| {
 			found.push(log.clone());
 			true
-		})
-		.await;
+		}).await.unwrap();
 
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "segment log");
 	}
 
-	// #[tokio::test]
-	// #[serial_test::serial]
-	// async fn find_logs_from_segment() {
-	// 	let dir = tempdir().unwrap();
-	// 	std::env::set_var("LOG_PATH", dir.path().join("logs"));
-	// 	std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
-	// 	std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
-	// 	fs::create_dir_all(dir.path().join("logs")).unwrap();
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn find_logs_not_found() {
+	    let (ctx, _dir) = prepare_test_ctx().await;
 
-	// 	let ctx = Context::new().await;
+	    // Search for a message that does not exist anywhere.
+	    let query = parse_log_query("msg = \"non‑existent log\"").unwrap();
+	    let mut found = Vec::<LogEntry>::new();
+	    ctx.find_logs(query, |log| {
+	        found.push(log.clone());
+	        true
+	    })
+	    .await
+	    .unwrap();
 
-	// 	let entry = LogEntry {
-	// 		timestamp: Utc::now(),
-	// 		level: LogLevel::Info,
-	// 		props: vec![Prop {
-	// 			key: "service".to_string(),
-	// 			value: "segment".to_string(),
-	// 		}],
-	// 		msg: "segment log".to_string(),
-	// 		..Default::default()
-	// 	};
-
-	// 	let mut segment = LogSegment::new();
-	// 	segment.add_log_entry(entry.clone());
-	// 	segment.sort();
-	// 	let mut buff = Vec::new();
-	// 	segment.serialize(&mut buff);
-	// 	let original_size = buff.len();
-	// 	let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
-	// 	let compressed_size = compressed.len();
-
-	// 	let segment_id = ctx
-	// 		.db
-	// 		.new_segment(NewSegmentArgs {
-	// 			first_timestamp: entry.timestamp,
-	// 			last_timestamp: entry.timestamp,
-	// 			original_size,
-	// 			compressed_size,
-	// 			logs_count: 1,
-	// 		})
-	// 		.await
-	// 		.unwrap();
-
-	// 	ctx.db
-	// 		.upsert_segment_props(segment_id, entry.props.iter())
-	// 		.await
-	// 		.unwrap();
-
-	// 	let path = log_path().join(format!("{}.log", segment_id));
-	// 	fs::write(path, compressed).unwrap();
-
-	// 	let mut found = Vec::new();
-	// 	let mut query = parse_log_query("msg = \"segment log\"").unwrap();
-	// 	query.end_date = Some(Utc::now() + chrono::Duration::seconds(1));
-	// 	ctx.find_logs(query, |log| {
-	// 		found.push(log.clone());
-	// 		true
-	// 	})
-	// 	.await;
-
-	// 	assert_eq!(found.len(), 1);
-	// 	assert_eq!(found[0].msg, "segment log");
-	// }
+	    // We expect to find **no** matching entries.
+	    assert!(found.is_empty(), "unexpectedly found logs: {:?}", found);
+	}
 }
