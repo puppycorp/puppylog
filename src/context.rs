@@ -187,6 +187,9 @@ impl Context {
 				let segment = LogSegment::parse(&mut decoder);
 				let iter = segment.iter();
 				for entry in iter {
+					if entry.timestamp > end {
+						continue;
+					}
 					match check_expr(&query.root, entry, &tz) {
 						Ok(true) => {}
 						_ => continue,
