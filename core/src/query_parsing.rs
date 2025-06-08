@@ -1,5 +1,5 @@
 use crate::LogEntry;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 use serde::de::value;
 use std::str::FromStr;
 
@@ -80,11 +80,15 @@ pub struct QueryAst {
 	pub limit: Option<usize>,
 	pub offset: Option<usize>,
 	pub end_date: Option<DateTime<Utc>>,
+	pub tz_offset: Option<chrono::FixedOffset>,
 }
 
 impl QueryAst {
 	pub fn matches(&self, entry: &LogEntry) -> Result<bool, String> {
-		check_expr(&self.root, entry)
+		let tz = self
+			.tz_offset
+			.unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
+		check_expr(&self.root, entry, &tz)
 	}
 }
 
@@ -1099,6 +1103,27 @@ mod tests {
 					left: Box::new(Expr::Value(Value::String("msg".to_string()))),
 					operator: Operator::Like,
 					right: Box::new(Expr::Value(Value::String("DoorEvent".to_string()))),
+				})),
+			)
+		);
+	}
+
+	#[test]
+	fn line_breaks_are_treated_as_whitespace() {
+		let query = "level = info\nor level = error";
+		let ast = parse_log_query(query).unwrap();
+		assert_eq!(
+			ast.root,
+			Expr::Or(
+				Box::new(Expr::Condition(Condition {
+					left: Box::new(Expr::Value(Value::String("level".to_string()))),
+					operator: Operator::Equal,
+					right: Box::new(Expr::Value(Value::String("info".to_string()))),
+				})),
+				Box::new(Expr::Condition(Condition {
+					left: Box::new(Expr::Value(Value::String("level".to_string()))),
+					operator: Operator::Equal,
+					right: Box::new(Expr::Value(Value::String("error".to_string()))),
 				})),
 			)
 		);

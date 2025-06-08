@@ -76,6 +76,7 @@ struct GetLogsQuery {
 	pub count: Option<usize>,
 	pub query: Option<String>,
 	pub end_date: Option<DateTime<Utc>>,
+	pub tz_offset: Option<i32>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -84,6 +85,7 @@ struct GetHistogramQuery {
 	pub query: Option<String>,
 	pub bucket_secs: Option<u64>,
 	pub end_date: Option<DateTime<Utc>>,
+	pub tz_offset: Option<i32>,
 }
 
 #[tokio::main]
@@ -278,7 +280,7 @@ async fn validate_query(Query(params): Query<GetLogsQuery>) -> Result<(), BadReq
 	log::info!("validate_query {:?}", params);
 	match params.query {
 		Some(ref q) => {
-			let q = q.replace("\n", "");
+			let q = q.replace('\n', " ");
 			let q = q.trim();
 			if q.is_empty() {
 				return Ok(());
@@ -588,7 +590,7 @@ async fn get_logs(
 	log::info!("get_logs {:?}", params);
 	let mut query = match params.query {
 		Some(ref q) => {
-			let q = q.replace("\n", "");
+			let q = q.replace('\n', " ");
 			let q = q.trim();
 			if q.is_empty() {
 				log::info!("query is empty");
@@ -602,6 +604,9 @@ async fn get_logs(
 		}
 		None => QueryAst::default(),
 	};
+	if let Some(offset) = params.tz_offset {
+		query.tz_offset = chrono::FixedOffset::east_opt(-offset * 60);
+	}
 	query.limit = params.count;
 	query.end_date = match params.end_date {
 		Some(end_date) => Some(end_date),
@@ -657,13 +662,16 @@ async fn stream_logs(
 	Query(params): Query<GetLogsQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, BadRequestError> {
 	log::info!("stream logs {:?}", params);
-	let query = match params.query {
+	let mut query = match params.query {
 		Some(ref query) => match parse_log_query(query) {
 			Ok(query) => query,
 			Err(err) => return Err(BadRequestError(err.to_string())),
 		},
 		None => QueryAst::default(),
 	};
+	if let Some(offset) = params.tz_offset {
+		query.tz_offset = chrono::FixedOffset::east_opt(-offset * 60);
+	}
 	let rx = ctx.subscriber.subscribe(query).await;
 	let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(|p| {
 		let data = to_string(&logentry_to_json(&p)).unwrap();
@@ -678,13 +686,16 @@ async fn get_histogram(
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, BadRequestError> {
 	log::info!("get histogram {:?}", params);
 	let bucket_secs = params.bucket_secs.unwrap_or(60);
-	let query = match params.query {
+	let mut query = match params.query {
 		Some(ref q) => match parse_log_query(q) {
 			Ok(q) => q,
 			Err(err) => return Err(BadRequestError(err.to_string())),
 		},
 		None => QueryAst::default(),
 	};
+	if let Some(offset) = params.tz_offset {
+		query.tz_offset = chrono::FixedOffset::east_opt(-offset * 60);
+	}
 	let (tx, rx) = mpsc::channel(100);
 	let ctx_clone = Arc::clone(&ctx);
 	let producer_query = query.clone();
@@ -736,12 +747,13 @@ async fn get_histogram(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use axum::body::Body;
+	use axum::body::{to_bytes, Body};
 	use axum::http::{Request, StatusCode};
 	use tempfile::TempDir;
 	use tower::ServiceExt;
 
 	#[tokio::test]
+	#[serial_test::serial]
 	async fn histogram_basic() {
 		let dir = TempDir::new().unwrap();
 		let log_dir = dir.path().join("logs");
@@ -793,5 +805,93 @@ mod tests {
 		assert_eq!(res.status(), StatusCode::OK);
 		let ct = res.headers().get(axum::http::header::CONTENT_TYPE).unwrap();
 		assert_eq!(ct, "text/event-stream");
+	}
+
+	#[tokio::test]
+	async fn validate_query_allows_newlines() {
+		let dir = TempDir::new().unwrap();
+		let log_dir = dir.path().join("logs");
+		std::fs::create_dir_all(&log_dir).unwrap();
+		std::env::set_var("LOG_PATH", &log_dir);
+		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
+		std::fs::write(
+			dir.path().join("settings.json"),
+			"{\"collection_query\":\"\"}",
+		)
+		.unwrap();
+
+		let ctx = Arc::new(Context::new().await);
+		let app = Router::new()
+			.route("/api/v1/validate_query", get(validate_query))
+			.with_state(ctx);
+
+		let encoded = "level%20=%20info%0Aor%20level%20=%20error";
+		let res = app
+			.oneshot(
+				Request::builder()
+					.uri(format!("/api/v1/validate_query?query={}", encoded))
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+
+		assert_eq!(res.status(), StatusCode::OK);
+	}
+
+	#[tokio::test]
+	async fn get_logs_handles_newlines() {
+		let dir = TempDir::new().unwrap();
+		let log_dir = dir.path().join("logs");
+		std::fs::create_dir_all(&log_dir).unwrap();
+		std::env::set_var("LOG_PATH", &log_dir);
+		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
+		std::fs::write(
+			dir.path().join("settings.json"),
+			"{\"collection_query\":\"\"}",
+		)
+		.unwrap();
+
+		let ctx = Arc::new(Context::new().await);
+
+		let base = Utc::now();
+		ctx.save_logs(&[
+			LogEntry {
+				timestamp: base,
+				level: puppylog::LogLevel::Info,
+				msg: "a".into(),
+				..Default::default()
+			},
+			LogEntry {
+				timestamp: base + chrono::Duration::seconds(1),
+				level: puppylog::LogLevel::Error,
+				msg: "b".into(),
+				..Default::default()
+			},
+		])
+		.await;
+
+		let app = Router::new()
+			.route("/api/logs", get(get_logs))
+			.with_state(ctx);
+
+		let encoded = "level%20=%20info%0Aor%20level%20=%20error";
+		let res = app
+			.oneshot(
+				Request::builder()
+					.uri(format!("/api/logs?count=10&query={}", encoded))
+					.header("accept", "application/json")
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+
+		assert_eq!(res.status(), StatusCode::OK);
+		let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+		let logs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+		assert_eq!(logs.len(), 2);
 	}
 }

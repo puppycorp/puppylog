@@ -136,9 +136,10 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const startHistogram = () => {
 		histogramContainer.style.display = "block"
 		histogram.clear()
-		const params = new URLSearchParams()
-		if (searchTextarea.value) params.set("query", searchTextarea.value)
-		params.set("bucketSecs", "60")
+                const params = new URLSearchParams()
+                if (searchTextarea.value) params.set("query", searchTextarea.value)
+                params.set("bucketSecs", "60")
+                params.set("tzOffset", new Date().getTimezoneOffset().toString())
 		const url = new URL("/api/v1/logs/histogram", window.location.origin)
 		url.search = params.toString()
 		const es = new EventSource(url)
