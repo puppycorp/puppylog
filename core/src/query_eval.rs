@@ -705,6 +705,14 @@ mod tests {
 	}
 
 	#[test]
+	fn message_like_with_quotes() {
+		let mut log = create_test_log_entry();
+		log.msg = "An \"error\" occurred".to_string();
+		let ast = crate::parse_log_query(r#"msg like "\"error\"""#).unwrap();
+		assert!(check_expr(&ast.root, &log, &chrono::FixedOffset::east_opt(0).unwrap()).unwrap());
+	}
+
+	#[test]
 	fn test_prop_like_operator() {
 		let log = create_test_log_entry();
 
