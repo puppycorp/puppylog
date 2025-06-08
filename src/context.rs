@@ -110,7 +110,11 @@ impl Context {
 		}
 	}
 
-	pub async fn find_logs(&self, query: QueryAst, mut cb: impl FnMut(&LogEntry) -> bool) -> anyhow::Result<()> {
+	pub async fn find_logs(
+		&self,
+		query: QueryAst,
+		mut cb: impl FnMut(&LogEntry) -> bool,
+	) -> anyhow::Result<()> {
 		let mut end = query.end_date.unwrap_or(Utc::now());
 		let tz = query
 			.tz_offset
@@ -188,7 +192,7 @@ impl Context {
 					}
 				}
 			}
-		};
+		}
 		Ok(())
 	}
 
@@ -211,22 +215,22 @@ mod tests {
 	use std::io::Cursor;
 	use tempfile::TempDir;
 
-    // Helper to set up an isolated temp environment & Context for tests.
-    async fn prepare_test_ctx() -> (Context, tempfile::TempDir) {
-        use std::fs;
-        use tempfile::tempdir;
+	// Helper to set up an isolated temp environment & Context for tests.
+	async fn prepare_test_ctx() -> (Context, tempfile::TempDir) {
+		use std::fs;
+		use tempfile::tempdir;
 
-        let dir = tempdir().unwrap();
-        let logs_path = dir.path().join("logs");
-        fs::create_dir_all(&logs_path).unwrap();
+		let dir = tempdir().unwrap();
+		let logs_path = dir.path().join("logs");
+		fs::create_dir_all(&logs_path).unwrap();
 
-        std::env::set_var("LOG_PATH", &logs_path);
-        std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
-        std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
+		std::env::set_var("LOG_PATH", &logs_path);
+		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
 
-        let ctx = Context::new().await;
-        (ctx, dir)
-    }
+		let ctx = Context::new().await;
+		(ctx, dir)
+	}
 
 	#[tokio::test]
 	#[serial_test::serial]
@@ -251,7 +255,9 @@ mod tests {
 		ctx.find_logs(query, |log| {
 			found.push(log.clone());
 			true
-		}).await.unwrap();
+		})
+		.await
+		.unwrap();
 
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "match me");
@@ -308,7 +314,9 @@ mod tests {
 		ctx.find_logs(query, |log| {
 			found.push(log.clone());
 			true
-		}).await.unwrap();
+		})
+		.await
+		.unwrap();
 
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "segment log");
@@ -317,19 +325,19 @@ mod tests {
 	#[tokio::test]
 	#[serial_test::serial]
 	async fn find_logs_not_found() {
-	    let (ctx, _dir) = prepare_test_ctx().await;
+		let (ctx, _dir) = prepare_test_ctx().await;
 
-	    // Search for a message that does not exist anywhere.
-	    let query = parse_log_query("msg = \"non‑existent log\"").unwrap();
-	    let mut found = Vec::<LogEntry>::new();
-	    ctx.find_logs(query, |log| {
-	        found.push(log.clone());
-	        true
-	    })
-	    .await
-	    .unwrap();
+		// Search for a message that does not exist anywhere.
+		let query = parse_log_query("msg = \"non‑existent log\"").unwrap();
+		let mut found = Vec::<LogEntry>::new();
+		ctx.find_logs(query, |log| {
+			found.push(log.clone());
+			true
+		})
+		.await
+		.unwrap();
 
-	    // We expect to find **no** matching entries.
-	    assert!(found.is_empty(), "unexpectedly found logs: {:?}", found);
+		// We expect to find **no** matching entries.
+		assert!(found.is_empty(), "unexpectedly found logs: {:?}", found);
 	}
 }
