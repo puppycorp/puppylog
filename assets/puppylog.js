@@ -1271,6 +1271,7 @@ var logsSearchPage = (args) => {
     if (lastEndDate !== null && endDate === lastEndDate)
       return;
     lastEndDate = endDate;
+    console.log("endDate", endDate);
     if (clear)
       clearLogs();
     if (histogramCheckbox.checked) {

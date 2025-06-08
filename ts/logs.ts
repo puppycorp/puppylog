@@ -247,12 +247,13 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		if (logEntries.length > 0) endDate = logEntries[logEntries.length - 1].timestamp
 		if (lastEndDate !== null && endDate === lastEndDate) return
 		lastEndDate = endDate
-                if (clear) clearLogs()
-                if (histogramCheckbox.checked) {
-                        stopHistogram()
-                        startHistogram()
-                }
-                if (currentStream) currentStream()
+		console.log("endDate", endDate)
+		if (clear) clearLogs()
+		if (histogramCheckbox.checked) {
+				stopHistogram()
+				startHistogram()
+		}
+		if (currentStream) currentStream()
 		currentStream = args.streamLogs(
 			{ query, count: 200, endDate },
 			(log) => {
