@@ -138,7 +138,7 @@ impl Context {
 		}
 		log::info!("looking from archive");
 		let window = chrono::Duration::hours(24);
-		let mut prev_end: Option<DateTime<Utc>> = None;
+		let mut prev_end: Option<DateTime<Utc>> = Some(end);
 		let mut processed_segments: HashSet<u32> = HashSet::new();
 
 		'outer: loop {
@@ -230,7 +230,11 @@ mod tests {
 		fs::create_dir_all(&logs_path).unwrap();
 
 		std::env::set_var("LOG_PATH", &logs_path);
-		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+		let db_path = dir.path().join("db.sqlite");
+		if db_path.exists() {
+			fs::remove_file(&db_path).unwrap();
+		}
+		std::env::set_var("DB_PATH", &db_path);
 		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
 
 		let ctx = Context::new().await;
@@ -240,7 +244,7 @@ mod tests {
 	#[tokio::test]
 	#[serial_test::serial]
 	async fn find_logs_from_memory() {
-		let (ctx, _dir) = prepare_test_ctx().await;
+		let (ctx, dir) = prepare_test_ctx().await;
 
 		let entry = LogEntry {
 			timestamp: Utc::now(),
@@ -266,12 +270,13 @@ mod tests {
 
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "match me");
+		drop(dir);
 	}
 
 	#[tokio::test]
 	#[serial_test::serial]
 	async fn find_logs_from_segment() {
-		let (ctx, _dir) = prepare_test_ctx().await;
+		let (ctx, dir) = prepare_test_ctx().await;
 
 		let entry = LogEntry {
 			timestamp: Utc::now() - Duration::hours(47),
@@ -325,12 +330,13 @@ mod tests {
 
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "segment log");
+		drop(dir);
 	}
 
 	#[tokio::test]
 	#[serial_test::serial]
 	async fn find_logs_not_found() {
-		let (ctx, _dir) = prepare_test_ctx().await;
+		let (ctx, dir) = prepare_test_ctx().await;
 
 		// Search for a message that does not exist anywhere.
 		let query = parse_log_query("msg = \"non‑existent log\"").unwrap();
@@ -344,12 +350,13 @@ mod tests {
 
 		// We expect to find **no** matching entries.
 		assert!(found.is_empty(), "unexpectedly found logs: {:?}", found);
+		drop(dir);
 	}
 
 	#[tokio::test]
 	#[serial_test::serial]
 	async fn find_logs_skip_duplicate_segments() {
-		let (ctx, _dir) = prepare_test_ctx().await;
+		let (ctx, dir) = prepare_test_ctx().await;
 
 		let now = Utc::now();
 
@@ -439,5 +446,134 @@ mod tests {
 
 		assert_eq!(found.len(), 1, "log returned more than once");
 		assert_eq!(found[0].msg, "duplicate");
+		drop(dir);
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn skips_segments_newer_than_in_memory() {
+		use chrono::{Duration, Utc};
+		use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
+		use std::fs;
+		use std::io::Cursor;
+		use zstd;
+
+		let (ctx, dir) = prepare_test_ctx().await;
+		let now = Utc::now();
+
+		let mem_entry = LogEntry {
+			timestamp: now - Duration::hours(2),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "svc".into(),
+				value: "mem".into(),
+			}],
+			msg: "harmless".into(),
+			..Default::default()
+		};
+		ctx.save_logs(&[mem_entry.clone()]).await;
+
+		let skip_entry = LogEntry {
+			timestamp: mem_entry.timestamp + Duration::hours(1),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "svc".into(),
+				value: "skip".into(),
+			}],
+			msg: "should_not_be_seen".into(),
+			..Default::default()
+		};
+		let new_seg_id = {
+			let mut seg = LogSegment::new();
+			seg.add_log_entry(skip_entry.clone());
+			seg.sort();
+			let mut buff = Vec::new();
+			seg.serialize(&mut buff);
+			let original_size = buff.len();
+			let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+			let compressed_size = compressed.len();
+
+			let id = ctx
+				.db
+				.new_segment(NewSegmentArgs {
+					first_timestamp: skip_entry.timestamp,
+					last_timestamp: skip_entry.timestamp,
+					original_size,
+					compressed_size,
+					logs_count: 1,
+				})
+				.await
+				.unwrap();
+
+			ctx.db
+				.upsert_segment_props(id, skip_entry.props.iter())
+				.await
+				.unwrap();
+			fs::write(log_path().join(format!("{}.log", id)), compressed).unwrap();
+			id
+		};
+
+		let want_entry = LogEntry {
+			timestamp: mem_entry.timestamp - Duration::hours(5),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "svc".into(),
+				value: "want".into(),
+			}],
+			msg: "target".into(),
+			..Default::default()
+		};
+		{
+			let mut seg = LogSegment::new();
+			seg.add_log_entry(want_entry.clone());
+			seg.sort();
+			let mut buff = Vec::new();
+			seg.serialize(&mut buff);
+			let original_size = buff.len();
+			let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+			let compressed_size = compressed.len();
+
+			let id = ctx
+				.db
+				.new_segment(NewSegmentArgs {
+					first_timestamp: want_entry.timestamp,
+					last_timestamp: want_entry.timestamp,
+					original_size,
+					compressed_size,
+					logs_count: 1,
+				})
+				.await
+				.unwrap();
+			ctx.db
+				.upsert_segment_props(id, want_entry.props.iter())
+				.await
+				.unwrap();
+			fs::write(log_path().join(format!("{}.log", id)), compressed).unwrap();
+		}
+
+		let q_skip = parse_log_query("msg = \"should_not_be_seen\"").unwrap();
+		let mut seen = Vec::<LogEntry>::new();
+		ctx.find_logs(q_skip, |e| {
+			seen.push(e.clone());
+			true
+		})
+		.await
+		.unwrap();
+		assert!(
+			seen.is_empty(),
+			"search incorrectly visited segment {new_seg_id} that is newer than in-memory logs"
+		);
+
+		let q_target = parse_log_query("msg = \"target\"").unwrap();
+		let mut found = Vec::<LogEntry>::new();
+		ctx.find_logs(q_target, |e| {
+			found.push(e.clone());
+			true
+		})
+		.await
+		.unwrap();
+		assert_eq!(found.len(), 1);
+		assert_eq!(found[0].msg, "target");
+		drop(dir);
 	}
 }
