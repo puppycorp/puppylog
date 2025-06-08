@@ -192,6 +192,7 @@ impl Context {
 						_ => continue,
 					}
 					if !cb(entry) {
+						log::info!("stopped searching logs at {:?}", entry);
 						break 'outer;
 					}
 				}
