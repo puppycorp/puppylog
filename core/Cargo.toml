@@ -24,10 +24,6 @@ tempfile = "3"
 name = "log_search"
 harness = false
 
-[[bench]]
-name = "log_search"
-harness = false
-
 [features]
 default = ["nativetls"]
 # ws = ["tungstenite"]

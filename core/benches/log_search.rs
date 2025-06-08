@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{FixedOffset, Utc};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use puppylog::{check_expr, parse_log_query, LogEntry, LogLevel, Prop};
 
@@ -29,7 +29,7 @@ fn bench_log_search(c: &mut Criterion) {
 		b.iter(|| {
 			let mut hits = 0usize;
 			for entry in &logs {
-				if check_expr(&query.root, entry).unwrap() {
+				if check_expr(&query.root, entry, &FixedOffset::east(0)).unwrap() {
 					hits += 1;
 				}
 			}
