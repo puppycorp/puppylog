@@ -40,6 +40,10 @@ PuppyLog is a log collection server where clients can submit logs and send queri
 <property> not matches <regex>
 ```
 
+To search for a string that contains a quote character, escape it with a backslash. Example:
+`msg like "\"error\""`
+
+
 **Type Coercion**
 
 ```
