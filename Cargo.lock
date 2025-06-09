@@ -1691,17 +1691,20 @@ dependencies = [
 name = "puppylogcli"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "clap",
  "flate2",
  "lazy_static",
  "log",
  "puppylog",
+ "puppylog-server",
  "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
+ "zstd",
 ]
 
 [[package]]
