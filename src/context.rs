@@ -59,10 +59,15 @@ impl Context {
 			load_logs_from_wal()
 		};
 		let db = DB::new(open_db());
+		let settings = if cfg!(test) {
+			Settings::new()
+		} else {
+			Settings::load().unwrap_or_else(|_| Settings::new())
+		};
 		Context {
 			subscriber: Subscriber::new(subtx),
 			publisher: pubtx,
-			settings: Settings::load().unwrap(),
+			settings,
 			event_tx,
 			db,
 			current: Mutex::new(LogSegment::with_logs(logs)),
@@ -72,6 +77,7 @@ impl Context {
 		}
 	}
 
+	// TODO add log level as segment property to db
 	pub async fn save_logs(&self, logs: &[LogEntry]) {
 		let mut current = self.current.lock().await;
 		current.buffer.extend_from_slice(logs);
