@@ -29,7 +29,5 @@ jobs:
               uses: actions/setup-node@v3
               with:
                   node-version: '18'
-            - name: Install Node dependencies
-              run: npm ci
             - name: Prettier Check
               run: npx prettier --check --no-semi .
