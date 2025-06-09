@@ -592,34 +592,45 @@ impl DB {
 		&self,
 		segment_ids: &[u32],
 	) -> anyhow::Result<HashMap<u32, Vec<Prop>>> {
+		// SQLite can bind at most 999 parameters per statement.  We batch
+		// the request in chunks of that size so very large queries stay safe
+		// and perform well.
+		const MAX_SQL_PARAMS: usize = 999;
+
 		let conn = self.conn.lock().await;
+
 		if segment_ids.is_empty() {
 			return Ok(HashMap::new());
 		}
 
-		// build a placeholder string like "?, ?, ?"
-		let placeholders = segment_ids
-			.iter()
-			.map(|_| "?")
-			.collect::<Vec<_>>()
-			.join(", ");
-		let sql = format!(
-			"SELECT segment_id, key, value FROM segment_props WHERE segment_id IN ({})",
-			placeholders
-		);
-
-		let mut stmt = conn.prepare(&sql)?;
-		let params: Vec<&dyn ToSql> = segment_ids.iter().map(|id| id as &dyn ToSql).collect();
-		let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
-
 		let mut map: HashMap<u32, Vec<Prop>> = HashMap::new();
-		while let Some(row) = rows.next()? {
-			let sid: u32 = row.get(0)?;
-			let prop = Prop {
-				key: row.get(1)?,
-				value: row.get(2)?,
-			};
-			map.entry(sid).or_default().push(prop);
+
+		for chunk in segment_ids.chunks(MAX_SQL_PARAMS) {
+			// Build a "?, ?, …" placeholder list sized to this chunk.
+			let placeholders = std::iter::repeat("?")
+				.take(chunk.len())
+				.collect::<Vec<_>>()
+				.join(", ");
+
+			let sql = format!(
+				"SELECT segment_id, key, value \
+				 FROM segment_props \
+				 WHERE segment_id IN ({})",
+				placeholders
+			);
+
+			let mut stmt = conn.prepare(&sql)?;
+			let params: Vec<&dyn ToSql> = chunk.iter().map(|id| id as &dyn ToSql).collect();
+			let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
+
+			while let Some(row) = rows.next()? {
+				let sid: u32 = row.get(0)?;
+				let prop = Prop {
+					key: row.get(1)?,
+					value: row.get(2)?,
+				};
+				map.entry(sid).or_default().push(prop);
+			}
 		}
 
 		Ok(map)
