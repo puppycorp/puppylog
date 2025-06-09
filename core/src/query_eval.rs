@@ -405,6 +405,34 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 	}
 }
 
+pub fn extract_date_conditions(expr: &Expr) -> Vec<Condition> {
+	fn is_timestamp_field(expr: &Expr) -> bool {
+		match expr {
+			Expr::Value(Value::String(s)) => s == "timestamp",
+			Expr::FieldAccess(FieldAccess { expr, .. }) => {
+				matches!(expr.as_ref(), Expr::Value(Value::String(s)) if s == "timestamp")
+			}
+			_ => false,
+		}
+	}
+
+	let mut out = Vec::new();
+
+	match expr {
+		Expr::Condition(cond) => {
+			if is_timestamp_field(cond.left.as_ref()) || is_timestamp_field(cond.right.as_ref()) {
+				out.push(cond.clone());
+			}
+		}
+		Expr::And(left, right) | Expr::Or(left, right) => {
+			out.extend(extract_date_conditions(left));
+			out.extend(extract_date_conditions(right));
+		}
+		_ => {}
+	}
+
+	out
+}
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -570,6 +598,14 @@ mod tests {
 		assert!(check_props(&expr, &props).unwrap());
 	}
 
+	#[test]
+	fn extract_date_conditions_from_query() {
+		let ast = crate::parse_log_query("deviceId = 237865 and timestamp.month = 4").unwrap();
+		let conds = extract_date_conditions(&ast.root);
+		assert_eq!(conds.len(), 1);
+		if let Expr::FieldAccess(_) = *conds[0].left {}
+		assert_eq!(conds[0].operator, Operator::Equal);
+	}
 	#[test]
 	fn msg_does_not_match() {
 		let logline = LogEntry {
