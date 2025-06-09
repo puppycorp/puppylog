@@ -1,4 +1,4 @@
-use chrono::{Datelike, FixedOffset, Timelike};
+use chrono::{DateTime, Datelike, FixedOffset, Timelike, Utc};
 
 use crate::query_parsing::Condition;
 use crate::query_parsing::Expr;
@@ -369,11 +369,22 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 			return Ok(false);
 		}
 
+		fn is_ts_access(expr: &Expr) -> bool {
+			match expr {
+				Expr::FieldAccess(FieldAccess { expr, .. }) => {
+					matches!(expr.as_ref(), Expr::Value(Value::String(s)) if s == "timestamp")
+				}
+				_ => false,
+			}
+		}
+
 		match (cond.left.as_ref(), cond.right.as_ref(), &cond.operator) {
 			(_, _, op) if is_negative_operator(op) => Ok(true),
 			(Expr::Value(Value::String(left)), Expr::Value(val), op) => {
 				match_field(left, val, op, props)
 			}
+			(left, Expr::Value(_), _) if is_ts_access(left) => Ok(true),
+			(Expr::Value(_), right, _) if is_ts_access(right) => Ok(true),
 			_ => Ok(false),
 		}
 	}
@@ -394,6 +405,94 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 	}
 }
 
+pub fn extract_date_conditions(expr: &Expr) -> Vec<Condition> {
+	fn is_timestamp_field(expr: &Expr) -> bool {
+		match expr {
+			Expr::Value(Value::String(s)) => s == "timestamp",
+			Expr::FieldAccess(FieldAccess { expr, .. }) => {
+				matches!(expr.as_ref(), Expr::Value(Value::String(s)) if s == "timestamp")
+			}
+			_ => false,
+		}
+	}
+
+	let mut out = Vec::new();
+
+	match expr {
+		Expr::Condition(cond) => {
+			if is_timestamp_field(cond.left.as_ref()) || is_timestamp_field(cond.right.as_ref()) {
+				out.push(cond.clone());
+			}
+		}
+		Expr::And(left, right) | Expr::Or(left, right) => {
+			out.extend(extract_date_conditions(left));
+			out.extend(extract_date_conditions(right));
+		}
+		_ => {}
+	}
+
+	out
+}
+pub fn match_date_range(
+	expr: &Expr,
+	first: chrono::DateTime<Utc>,
+	last: chrono::DateTime<Utc>,
+	tz: &FixedOffset,
+) -> bool {
+	fn cond_matches(
+		cond: &Condition,
+		first: chrono::DateTime<Utc>,
+		last: chrono::DateTime<Utc>,
+		tz: &FixedOffset,
+	) -> bool {
+		fn range_cmp(min: i64, max: i64, val: i64, op: &Operator) -> bool {
+			match op {
+				Operator::Equal => val >= min && val <= max,
+				Operator::GreaterThan => max > val,
+				Operator::GreaterThanOrEqual => max >= val,
+				Operator::LessThan => min < val,
+				Operator::LessThanOrEqual => min <= val,
+				_ => true,
+			}
+		}
+
+		match (cond.left.as_ref(), cond.right.as_ref()) {
+			(Expr::Value(Value::String(f)), Expr::Value(Value::Date(d))) if f == "timestamp" => {
+				match cond.operator {
+					Operator::Equal => *d >= first && *d <= last,
+					Operator::GreaterThan => last > *d,
+					Operator::GreaterThanOrEqual => last >= *d,
+					Operator::LessThan => first < *d,
+					Operator::LessThanOrEqual => first <= *d,
+					_ => true,
+				}
+			}
+			(Expr::FieldAccess(FieldAccess { expr, field }), Expr::Value(Value::Number(n))) if matches!(expr.as_ref(), Expr::Value(Value::String(s)) if s == "timestamp") =>
+			{
+				let f = first.with_timezone(tz);
+				let l = last.with_timezone(tz);
+				let (min, max) = match field.as_str() {
+					"year" => (f.year() as i64, l.year() as i64),
+					"month" => (f.month() as i64, l.month() as i64),
+					"day" => (f.day() as i64, l.day() as i64),
+					"hour" => (f.hour() as i64, l.hour() as i64),
+					"minute" => (f.minute() as i64, l.minute() as i64),
+					"second" => (f.second() as i64, l.second() as i64),
+					_ => return true,
+				};
+				range_cmp(min, max, *n, &cond.operator)
+			}
+			_ => true,
+		}
+	}
+
+	for c in extract_date_conditions(expr) {
+		if !cond_matches(&c, first, last, tz) {
+			return false;
+		}
+	}
+	true
+}
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -533,6 +632,75 @@ mod tests {
 		assert!(check_props(&expr, &props).unwrap());
 	}
 
+	#[test]
+	fn ignore_timestamp_fields_in_props_check() {
+		let props = vec![Prop {
+			key: "deviceId".to_string(),
+			value: "237865".to_string(),
+		}];
+
+		let expr = Expr::And(
+			Box::new(Expr::Condition(Condition {
+				left: Box::new(Expr::Value(Value::String("deviceId".to_string()))),
+				operator: Operator::Equal,
+				right: Box::new(Expr::Value(Value::Number(237865))),
+			})),
+			Box::new(Expr::Condition(Condition {
+				left: Box::new(Expr::FieldAccess(FieldAccess {
+					expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+					field: "month".to_string(),
+				})),
+				operator: Operator::Equal,
+				right: Box::new(Expr::Value(Value::Number(4))),
+			})),
+		);
+
+		assert!(check_props(&expr, &props).unwrap());
+	}
+
+	#[test]
+	fn extract_date_conditions_from_query() {
+		let ast = crate::parse_log_query("deviceId = 237865 and timestamp.month = 4").unwrap();
+		let conds = extract_date_conditions(&ast.root);
+		assert_eq!(conds.len(), 1);
+		if let Expr::FieldAccess(_) = *conds[0].left {}
+		assert_eq!(conds[0].operator, Operator::Equal);
+	}
+	#[test]
+	fn match_date_range_month() {
+		let expr = crate::parse_log_query("timestamp.month = 4").unwrap();
+		let start = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 4, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let end = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 4, 30)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let tz = chrono::FixedOffset::east_opt(0).unwrap();
+		assert!(match_date_range(&expr.root, start, end, &tz));
+		let start2 = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 5, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let end2 = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 5, 31)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		assert!(!match_date_range(&expr.root, start2, end2, &tz));
+	}
 	#[test]
 	fn msg_does_not_match() {
 		let logline = LogEntry {
@@ -1095,4 +1263,126 @@ fn negative_check_and_positive_match() {
 		})),
 	);
 	assert!(check_props(&expr, &props).unwrap());
+}
+
+#[test]
+fn match_date_range_timestamp_greater_than() {
+	use crate::query_parsing::{Condition, Operator, Value};
+	use crate::Expr;
+	use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
+
+	// Build an AST equivalent to: `timestamp > 2025‑05‑01T00:00:00Z`
+	let ts_cut = DateTime::<Utc>::from_utc(
+		NaiveDate::from_ymd_opt(2025, 5, 1)
+			.unwrap()
+			.and_hms_opt(0, 0, 0)
+			.unwrap(),
+		Utc,
+	);
+	let ast = Expr::Condition(Condition {
+		left: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+		operator: Operator::GreaterThan,
+		right: Box::new(Expr::Value(Value::Date(ts_cut))),
+	});
+
+	let tz = FixedOffset::east_opt(0).unwrap();
+
+	// Segment completely *before* the cut‑off date should not match.
+	let seg_start = DateTime::<Utc>::from_utc(
+		NaiveDate::from_ymd_opt(2025, 4, 1)
+			.unwrap()
+			.and_hms_opt(0, 0, 0)
+			.unwrap(),
+		Utc,
+	);
+	let seg_end = DateTime::<Utc>::from_utc(
+		NaiveDate::from_ymd_opt(2025, 4, 30)
+			.unwrap()
+			.and_hms_opt(23, 59, 59)
+			.unwrap(),
+		Utc,
+	);
+	assert!(
+		!match_date_range(&ast, seg_start, seg_end, &tz),
+		"segment that ends before cut‑off should not match",
+	);
+
+	// Segment entirely *after* the cut‑off date should match.
+	let seg_start2 = DateTime::<Utc>::from_utc(
+		NaiveDate::from_ymd_opt(2025, 6, 1)
+			.unwrap()
+			.and_hms_opt(0, 0, 0)
+			.unwrap(),
+		Utc,
+	);
+	let seg_end2 = DateTime::<Utc>::from_utc(
+		NaiveDate::from_ymd_opt(2025, 6, 30)
+			.unwrap()
+			.and_hms_opt(23, 59, 59)
+			.unwrap(),
+		Utc,
+	);
+	assert!(
+		match_date_range(&ast, seg_start2, seg_end2, &tz),
+		"segment after cut‑off should match",
+	);
+}
+
+#[test]
+fn match_date_range_year_greater_equal() {
+	use crate::query_parsing::{Condition, Operator, Value};
+	use crate::Expr;
+	use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
+
+	// Equivalent to: `timestamp.year >= 2024`
+	let ast = Expr::Condition(Condition {
+		left: Box::new(Expr::FieldAccess(crate::FieldAccess {
+			expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+			field: "year".to_string(),
+		})),
+		operator: Operator::GreaterThanOrEqual,
+		right: Box::new(Expr::Value(Value::Number(2024))),
+	});
+
+	let tz = FixedOffset::east_opt(0).unwrap();
+
+	// Segment wholly in 2023 should NOT match.
+	let seg_start = DateTime::<Utc>::from_utc(
+		NaiveDate::from_ymd_opt(2023, 12, 1)
+			.unwrap()
+			.and_hms_opt(0, 0, 0)
+			.unwrap(),
+		Utc,
+	);
+	let seg_end = DateTime::<Utc>::from_utc(
+		NaiveDate::from_ymd_opt(2023, 12, 31)
+			.unwrap()
+			.and_hms_opt(23, 59, 59)
+			.unwrap(),
+		Utc,
+	);
+	assert!(
+		!match_date_range(&ast, seg_start, seg_end, &tz),
+		"segment in 2023 should not match year >= 2024 query",
+	);
+
+	// Segment in 2025 should match.
+	let seg_start2 = DateTime::<Utc>::from_utc(
+		NaiveDate::from_ymd_opt(2025, 1, 1)
+			.unwrap()
+			.and_hms_opt(0, 0, 0)
+			.unwrap(),
+		Utc,
+	);
+	let seg_end2 = DateTime::<Utc>::from_utc(
+		NaiveDate::from_ymd_opt(2025, 12, 31)
+			.unwrap()
+			.and_hms_opt(23, 59, 59)
+			.unwrap(),
+		Utc,
+	);
+	assert!(
+		match_date_range(&ast, seg_start2, seg_end2, &tz),
+		"segment in 2025 should satisfy year >= 2024",
+	);
 }

@@ -12,6 +12,7 @@ pub use logentry::*;
 pub use logger::PuppylogBuilder;
 pub use query_eval::check_expr;
 pub use query_eval::check_props;
+pub use query_eval::match_date_range;
 pub use query_parsing::*;
 use serde::Deserialize;
 use serde::Serialize;

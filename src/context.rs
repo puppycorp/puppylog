@@ -11,6 +11,7 @@ use crate::wal::load_logs_from_wal;
 use crate::wal::Wal;
 use chrono::DateTime;
 use chrono::Utc;
+use puppylog::match_date_range;
 use puppylog::LogEntry;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
@@ -202,8 +203,21 @@ impl Context {
 					segment.first_timestamp,
 					segment.last_timestamp
 				);
-				let check = check_props(&query.root, &props).unwrap_or_default();
-				if !check {
+				// First check whether the segment’s time window could satisfy the query.
+				let time_match = match_date_range(
+					&query.root,
+					segment.first_timestamp,
+					segment.last_timestamp,
+					&tz,
+				);
+				if !time_match {
+					end = segment.first_timestamp;
+					continue;
+				}
+
+				// Only if the date range fits do we bother checking the segment’s properties.
+				let prop_match = check_props(&query.root, &props).unwrap_or_default();
+				if !prop_match {
 					end = segment.first_timestamp;
 					continue;
 				}
