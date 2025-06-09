@@ -252,7 +252,7 @@ impl DB {
 
 		let default_send_logs = false;
 		let default_filter_level = LogLevel::Info.to_u8();
-		let default_send_interval = 60;
+		let default_send_interval = 500;
 		let default_logs_size = 0;
 		let default_logs_count = 0;
 
