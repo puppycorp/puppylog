@@ -160,6 +160,7 @@ impl Context {
 			let start = end - window;
 			prev_end = Some(start);
 
+			let timer = std::time::Instant::now();
 			let segments = self
 				.db
 				.find_segments(&GetSegmentsQuery {
@@ -173,9 +174,6 @@ impl Context {
 				log::info!("no segments found in the range {} - {}", start, end);
 				break;
 			}
-			let segment_ids = segments.iter().map(|s| s.id).collect::<Vec<_>>();
-			let timer = std::time::Instant::now();
-			let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
 			log::info!(
 				"found {} segments in range {} - {} in {:?}",
 				segments.len(),
@@ -183,11 +181,15 @@ impl Context {
 				end,
 				timer.elapsed()
 			);
+			let segment_ids = segments.iter().map(|s| s.id).collect::<Vec<_>>();
+			let timer = std::time::Instant::now();
+			let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
 			log::info!(
-				"found {} segment props in range {} - {}",
+				"found {} segment props in range {} - {} in {:?}",
 				segment_props.len(),
 				start,
-				end
+				end,
+				timer.elapsed()
 			);
 			for segment in &segments {
 				if !processed_segments.insert(segment.id) {
