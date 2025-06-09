@@ -369,11 +369,22 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 			return Ok(false);
 		}
 
+		fn is_ts_access(expr: &Expr) -> bool {
+			match expr {
+				Expr::FieldAccess(FieldAccess { expr, .. }) => {
+					matches!(expr.as_ref(), Expr::Value(Value::String(s)) if s == "timestamp")
+				}
+				_ => false,
+			}
+		}
+
 		match (cond.left.as_ref(), cond.right.as_ref(), &cond.operator) {
 			(_, _, op) if is_negative_operator(op) => Ok(true),
 			(Expr::Value(Value::String(left)), Expr::Value(val), op) => {
 				match_field(left, val, op, props)
 			}
+			(left, Expr::Value(_), _) if is_ts_access(left) => Ok(true),
+			(Expr::Value(_), right, _) if is_ts_access(right) => Ok(true),
 			_ => Ok(false),
 		}
 	}
@@ -530,6 +541,32 @@ mod tests {
 				right: Box::new(Expr::Value(Value::String("123".to_string()))),
 			})),
 		);
+		assert!(check_props(&expr, &props).unwrap());
+	}
+
+	#[test]
+	fn ignore_timestamp_fields_in_props_check() {
+		let props = vec![Prop {
+			key: "deviceId".to_string(),
+			value: "237865".to_string(),
+		}];
+
+		let expr = Expr::And(
+			Box::new(Expr::Condition(Condition {
+				left: Box::new(Expr::Value(Value::String("deviceId".to_string()))),
+				operator: Operator::Equal,
+				right: Box::new(Expr::Value(Value::Number(237865))),
+			})),
+			Box::new(Expr::Condition(Condition {
+				left: Box::new(Expr::FieldAccess(FieldAccess {
+					expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+					field: "month".to_string(),
+				})),
+				operator: Operator::Equal,
+				right: Box::new(Expr::Value(Value::Number(4))),
+			})),
+		);
+
 		assert!(check_props(&expr, &props).unwrap());
 	}
 
