@@ -12,10 +12,10 @@ use crate::wal::load_logs_from_wal;
 use crate::wal::Wal;
 use chrono::DateTime;
 use chrono::Utc;
-use puppylog::check_expr;
 use puppylog::LogEntry;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
+use puppylog::{check_expr, check_props};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Cursor;
@@ -142,7 +142,7 @@ impl Context {
 		let mut processed_segments: HashSet<u32> = HashSet::new();
 
 		'outer: loop {
-			let end = match self.db.prev_segment_end(prev_end).await? {
+			let mut end = match self.db.prev_segment_end(prev_end).await? {
 				Some(e) => e,
 				None => {
 					log::info!("no more segments to load");
@@ -166,20 +166,20 @@ impl Context {
 				break;
 			}
 			let segment_ids = segments.iter().map(|s| s.id).collect::<Vec<_>>();
-			// let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
+			let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
 			for segment in &segments {
 				if !processed_segments.insert(segment.id) {
 					continue;
 				}
-				// let props = match segment_props.get(&segment.id) {
-				// 	Some(props) => props,
-				// 	None => continue,
-				// };
-				// let check = check_props(&query.root, &props).unwrap_or_default();
-				// if !check {
-				// 	end = segment.first_timestamp;
-				// 	continue;
-				// }
+				let props = match segment_props.get(&segment.id) {
+					Some(props) => props,
+					None => continue,
+				};
+				let check = check_props(&query.root, &props).unwrap_or_default();
+				if !check {
+					end = segment.first_timestamp;
+					continue;
+				}
 				let path = log_path().join(format!("{}.log", segment.id));
 				log::info!("loading segment from disk: {}", path.display());
 				let file: File = match File::open(path) {
