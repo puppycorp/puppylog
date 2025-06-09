@@ -305,3 +305,36 @@ sudo apt-get install gcc libssl-dev pkg-config
 cargo run
 ```
 
+### Command Line Interface
+
+PuppyLog comes with a CLI called `puppylogcli`. The CLI automatically reads the
+server address from the `PUPPYLOG_ADDRESS` environment variable or the file
+`$HOME/.puppylog/address` when `--address` is not provided. Run `cargo run --bin
+puppylogcli -- --help` to see all commands. Available commands include:
+
+| Command | Description |
+| ------- | ----------- |
+| `upload` | Upload randomly generated logs to a server |
+| `tokenize drain` | Tokenize a log file using the Drain algorithm |
+| `update-metadata` | Upload updated device metadata from a JSON file |
+| `segment get` | Query segment metadata using filters |
+| `segment download` | Download segments to a directory |
+| `segment download-remove` | Download segments and delete them from the server |
+| `import` | Import compressed log segments from a directory |
+
+Example importing log segments:
+
+```
+cargo run --bin puppylogcli -- import ./segments
+```
+
+### Building the Web UI
+
+The web interface is written in TypeScript. Bundle the assets with `bun` and
+type‑check the sources using `tsc`:
+
+```
+bun build ./ts/app.ts --outfile=./assets/puppylog.js
+bun x tsc --noEmit
+```
+
