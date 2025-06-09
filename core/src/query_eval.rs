@@ -310,6 +310,17 @@ pub fn check_expr(expr: &Expr, logline: &LogEntry, tz: &FixedOffset) -> Result<b
 }
 
 pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
+	fn is_negative_operator(op: &Operator) -> bool {
+		matches!(
+			op,
+			Operator::NotEqual
+				| Operator::NotLike
+				| Operator::NotIn
+				| Operator::NotExists
+				| Operator::NotMatches
+		)
+	}
+
 	fn check_condition(cond: &Condition, props: &[Prop]) -> Result<bool, String> {
 		fn compare(prop_val: &String, query_val: &Value, op: &Operator) -> Result<bool, String> {
 			match (query_val, op) {
@@ -359,6 +370,7 @@ pub fn check_props(expr: &Expr, props: &[Prop]) -> Result<bool, String> {
 		}
 
 		match (cond.left.as_ref(), cond.right.as_ref(), &cond.operator) {
+			(_, _, op) if is_negative_operator(op) => Ok(true),
 			(Expr::Value(Value::String(left)), Expr::Value(val), op) => {
 				match_field(left, val, op, props)
 			}
@@ -1048,4 +1060,39 @@ mod tests {
 		}
 		assert!(start.elapsed().as_secs_f32() < 1.0);
 	}
+}
+
+#[test]
+fn negative_operator_does_not_skip_props() {
+	let props = vec![Prop {
+		key: "service".into(),
+		value: "auth".into(),
+	}];
+	let expr = Expr::Condition(Condition {
+		left: Box::new(Expr::Value(Value::String("service".into()))),
+		operator: Operator::NotEqual,
+		right: Box::new(Expr::Value(Value::String("auth".into()))),
+	});
+	assert!(check_props(&expr, &props).unwrap());
+}
+
+#[test]
+fn negative_check_and_positive_match() {
+	let props = vec![Prop {
+		key: "service".into(),
+		value: "auth".into(),
+	}];
+	let expr = Expr::And(
+		Box::new(Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("service".into()))),
+			operator: Operator::NotEqual,
+			right: Box::new(Expr::Value(Value::String("auth".into()))),
+		})),
+		Box::new(Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("service".into()))),
+			operator: Operator::Equal,
+			right: Box::new(Expr::Value(Value::String("auth".into()))),
+		})),
+	);
+	assert!(check_props(&expr, &props).unwrap());
 }
