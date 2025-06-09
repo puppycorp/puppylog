@@ -1,4 +1,4 @@
-use chrono::{Datelike, FixedOffset, Timelike, Utc, DateTime};
+use chrono::{DateTime, Datelike, FixedOffset, Timelike, Utc};
 
 use crate::query_parsing::Condition;
 use crate::query_parsing::Expr;
