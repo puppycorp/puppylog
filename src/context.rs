@@ -1,4 +1,3 @@
-use crate::config::log_path;
 use crate::db::open_db;
 use crate::db::NewSegmentArgs;
 use crate::db::DB;
@@ -20,6 +19,8 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::Cursor;
 use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use tokio::sync::broadcast;
@@ -39,10 +40,11 @@ pub struct Context {
 	pub current: Mutex<LogSegment>,
 	pub wal: Wal,
 	pub upload_queue: AtomicUsize,
+	logs_path: PathBuf,
 }
 
 impl Context {
-	pub async fn new() -> Self {
+	pub async fn new<P: AsRef<Path>>(logs_path: P) -> Self {
 		let (subtx, subrx) = mpsc::channel(100);
 		let (pubtx, pubrx) = mpsc::channel(100);
 		tokio::spawn(async move {
@@ -50,7 +52,11 @@ impl Context {
 		});
 		let (event_tx, _) = broadcast::channel(100);
 		let wal = Wal::new();
-		let logs = load_logs_from_wal();
+		let logs = if cfg!(test) {
+			Vec::new()
+		} else {
+			load_logs_from_wal()
+		};
 		let db = DB::new(open_db());
 		Context {
 			subscriber: Subscriber::new(subtx),
@@ -61,6 +67,7 @@ impl Context {
 			current: Mutex::new(LogSegment::with_logs(logs)),
 			wal,
 			upload_queue: AtomicUsize::new(0),
+			logs_path: logs_path.as_ref().to_owned(),
 		}
 	}
 
@@ -103,7 +110,7 @@ impl Context {
 				.upsert_segment_props(segment_id, unique_props.iter())
 				.await
 				.unwrap();
-			let path = log_path().join(format!("{}.log", segment_id));
+			let path = self.logs_path.join(format!("{}.log", segment_id));
 			let mut file = File::create(&path).unwrap();
 			file.write_all(&buff).unwrap();
 			current.buffer.clear();
@@ -168,8 +175,19 @@ impl Context {
 			let segment_ids = segments.iter().map(|s| s.id).collect::<Vec<_>>();
 			let timer = std::time::Instant::now();
 			let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
-			log::info!("found {} segments in range {} - {} in {:?}", segments.len(), start, end, timer.elapsed());
-			println!("found {} segment props in range {} - {}", segment_props.len(), start, end);
+			log::info!(
+				"found {} segments in range {} - {} in {:?}",
+				segments.len(),
+				start,
+				end,
+				timer.elapsed()
+			);
+			log::info!(
+				"found {} segment props in range {} - {}",
+				segment_props.len(),
+				start,
+				end
+			);
 			for segment in &segments {
 				if !processed_segments.insert(segment.id) {
 					continue;
@@ -178,14 +196,24 @@ impl Context {
 					Some(props) => props,
 					None => continue,
 				};
-				log::info!("checking segment {} {} - {}", segment.id, segment.first_timestamp, segment.last_timestamp);
+				log::info!(
+					"checking segment {} {} - {}",
+					segment.id,
+					segment.first_timestamp,
+					segment.last_timestamp
+				);
 				let check = check_props(&query.root, &props).unwrap_or_default();
 				if !check {
 					end = segment.first_timestamp;
 					continue;
 				}
-				let path = log_path().join(format!("{}.log", segment.id));
-				log::info!("loading {} segment {} - {}", segment.id, segment.first_timestamp, segment.last_timestamp);
+				let path = self.logs_path.join(format!("{}.log", segment.id));
+				log::info!(
+					"loading {} segment {} - {}",
+					segment.id,
+					segment.first_timestamp,
+					segment.last_timestamp
+				);
 				let file: File = match File::open(path) {
 					Ok(file) => file,
 					Err(err) => {
@@ -231,7 +259,6 @@ mod tests {
 	use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
 	use std::fs;
 	use std::io::Cursor;
-	use tempfile::TempDir;
 
 	// Helper to set up an isolated temp environment & Context for tests.
 	async fn prepare_test_ctx() -> (Context, tempfile::TempDir) {
@@ -241,21 +268,11 @@ mod tests {
 		let dir = tempdir().unwrap();
 		let logs_path = dir.path().join("logs");
 		fs::create_dir_all(&logs_path).unwrap();
-
-		std::env::set_var("LOG_PATH", &logs_path);
-		let db_path = dir.path().join("db.sqlite");
-		if db_path.exists() {
-			fs::remove_file(&db_path).unwrap();
-		}
-		std::env::set_var("DB_PATH", &db_path);
-		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
-
-		let ctx = Context::new().await;
+		let ctx = Context::new(logs_path).await;
 		(ctx, dir)
 	}
 
 	#[tokio::test]
-	#[serial_test::serial]
 	async fn find_logs_from_memory() {
 		let (ctx, dir) = prepare_test_ctx().await;
 
@@ -287,7 +304,6 @@ mod tests {
 	}
 
 	#[tokio::test]
-	#[serial_test::serial]
 	async fn find_logs_from_segment() {
 		let (ctx, dir) = prepare_test_ctx().await;
 
@@ -328,7 +344,7 @@ mod tests {
 			.await
 			.unwrap();
 
-		let path = log_path().join(format!("{}.log", segment_id));
+		let path = ctx.logs_path.join(format!("{}.log", segment_id));
 		fs::write(path, compressed).unwrap();
 
 		let mut found = Vec::new();
@@ -347,7 +363,6 @@ mod tests {
 	}
 
 	#[tokio::test]
-	#[serial_test::serial]
 	async fn find_logs_not_found() {
 		let (ctx, dir) = prepare_test_ctx().await;
 
@@ -367,10 +382,8 @@ mod tests {
 	}
 
 	#[tokio::test]
-	#[serial_test::serial]
 	async fn find_logs_skip_duplicate_segments() {
 		let (ctx, dir) = prepare_test_ctx().await;
-
 		let now = Utc::now();
 
 		// Older segment spanning a wide window so it overlaps multiple queries
@@ -407,7 +420,7 @@ mod tests {
 			.upsert_segment_props(old_seg_id, entry_old.props.iter())
 			.await
 			.unwrap();
-		let path = log_path().join(format!("{}.log", old_seg_id));
+		let path = ctx.logs_path.join(format!("{}.log", old_seg_id));
 		fs::write(path, compressed).unwrap();
 
 		// Newer segment to trigger overlapping search window
@@ -444,7 +457,7 @@ mod tests {
 			.upsert_segment_props(new_seg_id, entry_new.props.iter())
 			.await
 			.unwrap();
-		let path = log_path().join(format!("{}.log", new_seg_id));
+		let path = ctx.logs_path.join(format!("{}.log", new_seg_id));
 		fs::write(path, compressed).unwrap();
 
 		let mut query = parse_log_query("msg = \"duplicate\"").unwrap();
@@ -463,7 +476,6 @@ mod tests {
 	}
 
 	#[tokio::test]
-	#[serial_test::serial]
 	async fn skips_segments_newer_than_in_memory() {
 		use chrono::{Duration, Utc};
 		use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
@@ -522,7 +534,7 @@ mod tests {
 				.upsert_segment_props(id, skip_entry.props.iter())
 				.await
 				.unwrap();
-			fs::write(log_path().join(format!("{}.log", id)), compressed).unwrap();
+			fs::write(ctx.logs_path.join(format!("{}.log", id)), compressed).unwrap();
 			id
 		};
 
@@ -561,7 +573,7 @@ mod tests {
 				.upsert_segment_props(id, want_entry.props.iter())
 				.await
 				.unwrap();
-			fs::write(log_path().join(format!("{}.log", id)), compressed).unwrap();
+			fs::write(ctx.logs_path.join(format!("{}.log", id)), compressed).unwrap();
 		}
 
 		let q_skip = parse_log_query("msg = \"should_not_be_seen\"").unwrap();

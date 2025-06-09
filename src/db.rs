@@ -79,6 +79,10 @@ const MIGRATIONS: &[Migration] = &[
 ];
 
 pub fn open_db() -> Connection {
+	if cfg!(test) {
+		println!("Opening in-memory database for tests");
+		return Connection::open_in_memory().unwrap();
+	}
 	let path = db_path();
 	if !path.exists() {
 		create_dir_all(path.parent().unwrap()).unwrap();

@@ -98,9 +98,9 @@ async fn main() {
 	log::info!("checking if log path exists: {:?}", log_path);
 	if !log_path.exists() {
 		log::info!("does not exist, creating it");
-		std::fs::create_dir_all(log_path).unwrap();
+		std::fs::create_dir_all(&log_path).unwrap();
 	}
-	let ctx = Context::new().await;
+	let ctx = Context::new(log_path).await;
 	let ctx = Arc::new(ctx);
 
 	// Spawn background worker that ingests staged log uploads
@@ -767,7 +767,7 @@ mod tests {
 		)
 		.unwrap();
 
-		let ctx = Arc::new(Context::new().await);
+		let ctx = Arc::new(Context::new(log_dir).await);
 
 		let base = Utc::now();
 		ctx.save_logs(&[
@@ -821,7 +821,7 @@ mod tests {
 		)
 		.unwrap();
 
-		let ctx = Arc::new(Context::new().await);
+		let ctx = Arc::new(Context::new(log_dir).await);
 		let app = Router::new()
 			.route("/api/v1/validate_query", get(validate_query))
 			.with_state(ctx);
@@ -854,7 +854,7 @@ mod tests {
 		)
 		.unwrap();
 
-		let ctx = Arc::new(Context::new().await);
+		let ctx = Arc::new(Context::new(log_dir).await);
 
 		let base = Utc::now();
 		ctx.save_logs(&[
