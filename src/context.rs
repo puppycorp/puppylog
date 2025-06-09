@@ -166,7 +166,10 @@ impl Context {
 				break;
 			}
 			let segment_ids = segments.iter().map(|s| s.id).collect::<Vec<_>>();
+			let timer = std::time::Instant::now();
 			let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
+			log::info!("found {} segments in range {} - {} in {:?}", segments.len(), start, end, timer.elapsed());
+			println!("found {} segment props in range {} - {}", segment_props.len(), start, end);
 			for segment in &segments {
 				if !processed_segments.insert(segment.id) {
 					continue;
@@ -175,6 +178,7 @@ impl Context {
 					Some(props) => props,
 					None => continue,
 				};
+				log::info!("checking segment {} {} - {}", segment.id, segment.first_timestamp, segment.last_timestamp);
 				let check = check_props(&query.root, &props).unwrap_or_default();
 				if !check {
 					end = segment.first_timestamp;
