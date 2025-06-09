@@ -383,7 +383,7 @@ async fn import_segments(path: &str) -> anyhow::Result<()> {
 		if !file_path.is_file() {
 			continue;
 		}
-
+		println!("importing {:?}", file_path.display());
 		let compressed = read(&file_path).await?;
 		let compressed_size = compressed.len();
 		let decoded = zstd::decode_all(Cursor::new(&compressed))?;
