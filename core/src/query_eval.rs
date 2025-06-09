@@ -1264,3 +1264,125 @@ fn negative_check_and_positive_match() {
 	);
 	assert!(check_props(&expr, &props).unwrap());
 }
+
+	#[test]
+	fn match_date_range_timestamp_greater_than() {
+		use chrono::{NaiveDate, DateTime, Utc, FixedOffset};
+		use crate::query_parsing::{Condition, Operator, Value};
+		use crate::Expr;
+
+		// Build an AST equivalent to: `timestamp > 2025‑05‑01T00:00:00Z`
+		let ts_cut = DateTime::<Utc>::from_utc(
+			NaiveDate::from_ymd_opt(2025, 5, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let ast = Expr::Condition(Condition {
+			left: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+			operator: Operator::GreaterThan,
+			right: Box::new(Expr::Value(Value::Date(ts_cut))),
+		});
+
+		let tz = FixedOffset::east_opt(0).unwrap();
+
+		// Segment completely *before* the cut‑off date should not match.
+		let seg_start = DateTime::<Utc>::from_utc(
+			NaiveDate::from_ymd_opt(2025, 4, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let seg_end = DateTime::<Utc>::from_utc(
+			NaiveDate::from_ymd_opt(2025, 4, 30)
+				.unwrap()
+				.and_hms_opt(23, 59, 59)
+				.unwrap(),
+			Utc,
+		);
+		assert!(
+			!match_date_range(&ast, seg_start, seg_end, &tz),
+			"segment that ends before cut‑off should not match",
+		);
+
+		// Segment entirely *after* the cut‑off date should match.
+		let seg_start2 = DateTime::<Utc>::from_utc(
+			NaiveDate::from_ymd_opt(2025, 6, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let seg_end2 = DateTime::<Utc>::from_utc(
+			NaiveDate::from_ymd_opt(2025, 6, 30)
+				.unwrap()
+				.and_hms_opt(23, 59, 59)
+				.unwrap(),
+			Utc,
+		);
+		assert!(
+			match_date_range(&ast, seg_start2, seg_end2, &tz),
+			"segment after cut‑off should match",
+		);
+	}
+
+	#[test]
+	fn match_date_range_year_greater_equal() {
+		use chrono::{NaiveDate, DateTime, Utc, FixedOffset};
+		use crate::query_parsing::{Condition, Operator, Value};
+		use crate::Expr;
+
+		// Equivalent to: `timestamp.year >= 2024`
+		let ast = Expr::Condition(Condition {
+			left: Box::new(Expr::FieldAccess(crate::FieldAccess {
+				expr: Box::new(Expr::Value(Value::String("timestamp".to_string()))),
+				field: "year".to_string(),
+			})),
+			operator: Operator::GreaterThanOrEqual,
+			right: Box::new(Expr::Value(Value::Number(2024))),
+		});
+
+		let tz = FixedOffset::east_opt(0).unwrap();
+
+		// Segment wholly in 2023 should NOT match.
+		let seg_start = DateTime::<Utc>::from_utc(
+			NaiveDate::from_ymd_opt(2023, 12, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let seg_end = DateTime::<Utc>::from_utc(
+			NaiveDate::from_ymd_opt(2023, 12, 31)
+				.unwrap()
+				.and_hms_opt(23, 59, 59)
+				.unwrap(),
+			Utc,
+		);
+		assert!(
+			!match_date_range(&ast, seg_start, seg_end, &tz),
+			"segment in 2023 should not match year >= 2024 query",
+		);
+
+		// Segment in 2025 should match.
+		let seg_start2 = DateTime::<Utc>::from_utc(
+			NaiveDate::from_ymd_opt(2025, 1, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let seg_end2 = DateTime::<Utc>::from_utc(
+			NaiveDate::from_ymd_opt(2025, 12, 31)
+				.unwrap()
+				.and_hms_opt(23, 59, 59)
+				.unwrap(),
+			Utc,
+		);
+		assert!(
+			match_date_range(&ast, seg_start2, seg_end2, &tz),
+			"segment in 2025 should satisfy year >= 2024",
+		);
+	}
