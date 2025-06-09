@@ -1,4 +1,4 @@
-use chrono::{Datelike, FixedOffset, Timelike};
+use chrono::{Datelike, FixedOffset, Timelike, Utc, DateTime};
 
 use crate::query_parsing::Condition;
 use crate::query_parsing::Expr;
@@ -433,6 +433,66 @@ pub fn extract_date_conditions(expr: &Expr) -> Vec<Condition> {
 
 	out
 }
+pub fn match_date_range(
+	expr: &Expr,
+	first: chrono::DateTime<Utc>,
+	last: chrono::DateTime<Utc>,
+	tz: &FixedOffset,
+) -> bool {
+	fn cond_matches(
+		cond: &Condition,
+		first: chrono::DateTime<Utc>,
+		last: chrono::DateTime<Utc>,
+		tz: &FixedOffset,
+	) -> bool {
+		fn range_cmp(min: i64, max: i64, val: i64, op: &Operator) -> bool {
+			match op {
+				Operator::Equal => val >= min && val <= max,
+				Operator::GreaterThan => max > val,
+				Operator::GreaterThanOrEqual => max >= val,
+				Operator::LessThan => min < val,
+				Operator::LessThanOrEqual => min <= val,
+				_ => true,
+			}
+		}
+
+		match (cond.left.as_ref(), cond.right.as_ref()) {
+			(Expr::Value(Value::String(f)), Expr::Value(Value::Date(d))) if f == "timestamp" => {
+				match cond.operator {
+					Operator::Equal => *d >= first && *d <= last,
+					Operator::GreaterThan => last > *d,
+					Operator::GreaterThanOrEqual => last >= *d,
+					Operator::LessThan => first < *d,
+					Operator::LessThanOrEqual => first <= *d,
+					_ => true,
+				}
+			}
+			(Expr::FieldAccess(FieldAccess { expr, field }), Expr::Value(Value::Number(n))) if matches!(expr.as_ref(), Expr::Value(Value::String(s)) if s == "timestamp") =>
+			{
+				let f = first.with_timezone(tz);
+				let l = last.with_timezone(tz);
+				let (min, max) = match field.as_str() {
+					"year" => (f.year() as i64, l.year() as i64),
+					"month" => (f.month() as i64, l.month() as i64),
+					"day" => (f.day() as i64, l.day() as i64),
+					"hour" => (f.hour() as i64, l.hour() as i64),
+					"minute" => (f.minute() as i64, l.minute() as i64),
+					"second" => (f.second() as i64, l.second() as i64),
+					_ => return true,
+				};
+				range_cmp(min, max, *n, &cond.operator)
+			}
+			_ => true,
+		}
+	}
+
+	for c in extract_date_conditions(expr) {
+		if !cond_matches(&c, first, last, tz) {
+			return false;
+		}
+	}
+	true
+}
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -605,6 +665,41 @@ mod tests {
 		assert_eq!(conds.len(), 1);
 		if let Expr::FieldAccess(_) = *conds[0].left {}
 		assert_eq!(conds[0].operator, Operator::Equal);
+	}
+	#[test]
+	fn match_date_range_month() {
+		let expr = crate::parse_log_query("timestamp.month = 4").unwrap();
+		let start = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 4, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let end = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 4, 30)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let tz = chrono::FixedOffset::east_opt(0).unwrap();
+		assert!(match_date_range(&expr.root, start, end, &tz));
+		let start2 = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 5, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let end2 = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 5, 31)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		assert!(!match_date_range(&expr.root, start2, end2, &tz));
 	}
 	#[test]
 	fn msg_does_not_match() {
