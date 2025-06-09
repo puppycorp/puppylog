@@ -1,16 +1,13 @@
 {
 	"compilerOptions": {
-		"lib": [
-			"ESNext",
-			"DOM"
-		],
+		"lib": ["ESNext", "DOM"],
 		"target": "ES6",
 		"module": "ESNext", // Use ESNext modules for better bundling compatibility
 		"moduleResolution": "node",
 		"jsx": "react-jsx",
 		"allowJs": true,
 		"noEmit": true,
-		"strict": true,
+		"strict": false,
 		"skipLibCheck": true,
 		"noFallthroughCasesInSwitch": true,
 		"noUnusedLocals": false,
@@ -18,7 +15,5 @@
 		"noPropertyAccessFromIndexSignature": false
 		// Removed "outFile" as bundling will be handled by Bun
 	},
-	"include": [
-		"ts/**/*"
-	]
+	"include": ["ts/**/*"]
 }

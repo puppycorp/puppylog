@@ -7,8 +7,8 @@ const handleRoute = (path: string) => {
 	if (!m) console.error("No route found for", path)
 	console.log("match result", m)
 }
-window.addEventListener('popstate', () => {
-	handleRoute(window.location.pathname);
+window.addEventListener("popstate", () => {
+	handleRoute(window.location.pathname)
 })
 
 export const routes = (routes: any) => {
@@ -17,6 +17,6 @@ export const routes = (routes: any) => {
 }
 
 export const navigate = (path: string) => {
-	window.history.pushState({}, '', path)
+	window.history.pushState({}, "", path)
 	handleRoute(path)
 }

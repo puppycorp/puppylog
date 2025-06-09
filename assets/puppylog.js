@@ -683,7 +683,10 @@ var devicesPage = async (root) => {
     const uniquePropKeys = Array.from(new Set(devices.flatMap((device) => device.props.map((prop) => prop.key))));
     for (const key of uniquePropKeys) {
       const uniqueValues = Array.from(new Set(devices.flatMap((device) => device.props.filter((prop) => prop.key === key).map((prop) => prop.value))));
-      const options = uniqueValues.map((value) => ({ text: value, value }));
+      const options = uniqueValues.map((value) => ({
+        text: value,
+        value
+      }));
       const multiSelect = new MultiCheckboxSelect({
         label: key,
         options
@@ -751,7 +754,9 @@ var devicesPage = async (root) => {
           style: {
             gap: "10px"
           }
-        }).add(bulkEditFilterLevel, sendLogsSelect, sendIntervalInput, new Label({ text: "Devices: " }), new Label({ text: filteredDevices.map((p) => p.id).join(", ") })).root,
+        }).add(bulkEditFilterLevel, sendLogsSelect, sendIntervalInput, new Label({ text: "Devices: " }), new Label({
+          text: filteredDevices.map((p) => p.id).join(", ")
+        })).root,
         footer: [saveButton]
       });
     };
@@ -1225,9 +1230,7 @@ var logsSearchPage = (args) => {
           showModal({
             title: "Log Message",
             content: formatLogMsg(entry.msg),
-            footer: [
-              copyButton
-            ]
+            footer: [copyButton]
           });
         });
       });
@@ -1355,7 +1358,9 @@ var createRandomJson = (totalPropsCount, maxDepth = 5) => {
 var createRandomXml = (totalNodesCount, maxDepth = 5) => {
   const root = { tag: "root", children: [] };
   let createdCount = 0;
-  const queue = [{ node: root, depth: 0 }];
+  const queue = [
+    { node: root, depth: 0 }
+  ];
   while (queue.length > 0 && createdCount < totalNodesCount) {
     const { node, depth } = queue.shift();
     const remaining = totalNodesCount - createdCount;
@@ -1369,7 +1374,10 @@ var createRandomXml = (totalNodesCount, maxDepth = 5) => {
         createdCount++;
         queue.push({ node: childNode, depth: depth + 1 });
       } else {
-        const childNode = { tag: tagName, text: `value${createdCount}` };
+        const childNode = {
+          tag: tagName,
+          text: `value${createdCount}`
+        };
         node.children.push(childNode);
         createdCount++;
       }
@@ -1467,12 +1475,42 @@ var mainPage = (root) => {
 // ts/pivot.ts
 var PivotPage = (root) => {
   const fakeData = [
-    { logLevel: "Info", deviceId: "Device1", message: "Started process", timestamp: 1610000000000 },
-    { logLevel: "Error", deviceId: "Device2", message: "Failed to load module", timestamp: 1610000001000 },
-    { logLevel: "Warning", deviceId: "Device1", message: "Memory usage high", timestamp: 1610000002000 },
-    { logLevel: "Info", deviceId: "Device3", message: "Process completed", timestamp: 1610000003000 },
-    { logLevel: "Error", deviceId: "Device1", message: "Unhandled exception", timestamp: 1610000004000 },
-    { logLevel: "Debug", deviceId: "Device2", message: "Debugging info", timestamp: 1610000005000 }
+    {
+      logLevel: "Info",
+      deviceId: "Device1",
+      message: "Started process",
+      timestamp: 1610000000000
+    },
+    {
+      logLevel: "Error",
+      deviceId: "Device2",
+      message: "Failed to load module",
+      timestamp: 1610000001000
+    },
+    {
+      logLevel: "Warning",
+      deviceId: "Device1",
+      message: "Memory usage high",
+      timestamp: 1610000002000
+    },
+    {
+      logLevel: "Info",
+      deviceId: "Device3",
+      message: "Process completed",
+      timestamp: 1610000003000
+    },
+    {
+      logLevel: "Error",
+      deviceId: "Device1",
+      message: "Unhandled exception",
+      timestamp: 1610000004000
+    },
+    {
+      logLevel: "Debug",
+      deviceId: "Device2",
+      message: "Debugging info",
+      timestamp: 1610000005000
+    }
   ];
   const availableFields = ["logLevel", "deviceId", "timestamp", "message"];
   const container = document.createElement("div");
@@ -1536,7 +1574,6 @@ var PivotPage = (root) => {
   configureButton.addEventListener("click", () => {
     const hello = document.createElement("h1");
     hello.textContent = "Hello";
-    showModal(hello);
   });
   const dropZone = document.createElement("div");
   dropZone.innerHTML = "<h3>Drop a field here to group by</h3>";
@@ -1629,17 +1666,41 @@ var segmentsPage = async (root) => {
   const averageCompressedLogSize = segementsMetadata.compressedSize / segementsMetadata.logsCount;
   const averageOriginalLogSize = segementsMetadata.originalSize / segementsMetadata.logsCount;
   const metadata = new KeyValueTable([
-    { key: "Total segments", value: formatNumber(segementsMetadata.segmentCount) },
-    { key: "Total original size", value: formatBytes(segementsMetadata.originalSize) },
-    { key: "Total compressed size", value: formatBytes(segementsMetadata.compressedSize) },
-    { key: "Total logs count", value: formatNumber(segementsMetadata.logsCount) },
+    {
+      key: "Total segments",
+      value: formatNumber(segementsMetadata.segmentCount)
+    },
+    {
+      key: "Total original size",
+      value: formatBytes(segementsMetadata.originalSize)
+    },
+    {
+      key: "Total compressed size",
+      value: formatBytes(segementsMetadata.compressedSize)
+    },
+    {
+      key: "Total logs count",
+      value: formatNumber(segementsMetadata.logsCount)
+    },
     { key: "Compression ratio", value: compressionRatio.toFixed(2) + "%" },
-    { key: "Average compressed log size", value: formatBytes(averageCompressedLogSize) },
-    { key: "Average original log size", value: formatBytes(averageOriginalLogSize) }
+    {
+      key: "Average compressed log size",
+      value: formatBytes(averageCompressedLogSize)
+    },
+    {
+      key: "Average original log size",
+      value: formatBytes(averageOriginalLogSize)
+    }
   ]);
   metadata.root.style.whiteSpace = "nowrap";
-  const metadataCollapsible = new Collapsible({ buttonText: "Metadata", content: metadata });
-  const header = new Header({ title: "Segments", rightSide: metadataCollapsible });
+  const metadataCollapsible = new Collapsible({
+    buttonText: "Metadata",
+    content: metadata
+  });
+  const header = new Header({
+    title: "Segments",
+    rightSide: metadataCollapsible
+  });
   root.add(header);
   const segmentList = new WrapList;
   const infiniteScroll = new InfiniteScroll({
@@ -1653,13 +1714,32 @@ var segmentsPage = async (root) => {
     endDate = new Date(segments[segments.length - 1].lastTimestamp);
     for (const segment of segments) {
       const table = new KeyValueTable([
-        { key: "Segment ID", value: segment.id.toString(), href: `/segment/${segment.id}` },
-        { key: "First timestamp", value: formatTimestamp(segment.firstTimestamp) },
-        { key: "Last timestamp", value: formatTimestamp(segment.lastTimestamp) },
-        { key: "Original size", value: formatBytes(segment.originalSize) },
-        { key: "Compressed size", value: formatBytes(segment.compressedSize) },
+        {
+          key: "Segment ID",
+          value: segment.id.toString(),
+          href: `/segment/${segment.id}`
+        },
+        {
+          key: "First timestamp",
+          value: formatTimestamp(segment.firstTimestamp)
+        },
+        {
+          key: "Last timestamp",
+          value: formatTimestamp(segment.lastTimestamp)
+        },
+        {
+          key: "Original size",
+          value: formatBytes(segment.originalSize)
+        },
+        {
+          key: "Compressed size",
+          value: formatBytes(segment.compressedSize)
+        },
         { key: "Logs count", value: formatNumber(segment.logsCount) },
-        { key: "Compression ratio", value: (segment.compressedSize / segment.originalSize * 100).toFixed(2) + "%" }
+        {
+          key: "Compression ratio",
+          value: (segment.compressedSize / segment.originalSize * 100).toFixed(2) + "%"
+        }
       ]);
       segmentList.add(table);
     }

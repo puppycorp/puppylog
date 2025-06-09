@@ -1,5 +1,17 @@
 import { showModal } from "./common"
-import { Button, Container, Header, HList, Label, MultiCheckboxSelect, Select, SelectGroup, TextInput, UiComponent, VList } from "./ui"
+import {
+	Button,
+	Container,
+	Header,
+	HList,
+	Label,
+	MultiCheckboxSelect,
+	Select,
+	SelectGroup,
+	TextInput,
+	UiComponent,
+	VList,
+} from "./ui"
 import { formatBytes, formatNumber } from "./utility"
 
 const saveDeviceSettings = async (device: DeviceSetting) => {
@@ -68,7 +80,7 @@ export class DeviceRow extends UiComponent<HTMLDivElement> {
 		filterLevelCell.className = "table-cell"
 		filterLevelCell.innerHTML = `<strong>Filter level:</strong> `
 		const select = document.createElement("select")
-		levels.forEach(level => {
+		levels.forEach((level) => {
 			const option = document.createElement("option")
 			option.value = level
 			option.textContent = level
@@ -134,7 +146,7 @@ export class DeviceRow extends UiComponent<HTMLDivElement> {
 			noPropsRow.textContent = "No properties"
 			propsContainer.appendChild(noPropsRow)
 		} else {
-			device.props.forEach(prop => {
+			device.props.forEach((prop) => {
 				const propRow = document.createElement("div")
 				propRow.textContent = `${prop.key} = ${prop.value}`
 				propsContainer.appendChild(propRow)
@@ -226,7 +238,7 @@ export const devicesPage = async (root: HTMLElement) => {
 	const summary = new Summary()
 	const header = new Header({
 		title: "Devices",
-		rightSide: summary
+		rightSide: summary,
 	})
 	const sendLogsSearchOption = new SelectGroup({
 		label: "Sending logs",
@@ -234,24 +246,24 @@ export const devicesPage = async (root: HTMLElement) => {
 		options: [
 			{
 				text: "All",
-				value: "all"
+				value: "all",
 			},
 			{
 				text: "Yes",
-				value: "true"
+				value: "true",
 			},
 			{
 				text: "No",
-				value: "false"
-			}
-		]
+				value: "false",
+			},
+		],
 	})
 	const bulkEditButton = document.createElement("button")
 	bulkEditButton.textContent = "Bulk Edit"
 
 	const filterLevelMultiSelect = new MultiCheckboxSelect({
 		label: "Filter level",
-		options: levels.map(level => ({ text: level, value: level }))
+		options: levels.map((level) => ({ text: level, value: level })),
 	})
 
 	const propsFiltters = new HList()
@@ -271,28 +283,32 @@ export const devicesPage = async (root: HTMLElement) => {
 
 	try {
 		const res = await fetch("/api/v1/devices")
-		const devices = await res.json() as DeviceSetting[]
-		let totalLogsCount = 0, totalLogsSize = 0
-		let earliestTimestamp = Infinity, latestTimestamp = -Infinity
+		const devices = (await res.json()) as DeviceSetting[]
+		let totalLogsCount = 0,
+			totalLogsSize = 0
+		let earliestTimestamp = Infinity,
+			latestTimestamp = -Infinity
 		let totalLogsPerSecond = 0
 
-		devices.forEach(device => {
+		devices.forEach((device) => {
 			totalLogsCount += device.logsCount
 			totalLogsSize += device.logsSize
 			const createdAtTime = new Date(device.createdAt).getTime()
 			const lastUploadTime = new Date(device.lastUploadAt).getTime()
 			earliestTimestamp = Math.min(earliestTimestamp, createdAtTime)
 			latestTimestamp = Math.max(latestTimestamp, lastUploadTime)
-			const logsPersecond = device.logsCount / ((lastUploadTime - createdAtTime) / 1000)
+			const logsPersecond =
+				device.logsCount / ((lastUploadTime - createdAtTime) / 1000)
 			if (!isNaN(logsPersecond)) totalLogsPerSecond += logsPersecond
 		})
-		const averageLogSize = totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0
+		const averageLogSize =
+			totalLogsCount > 0 ? totalLogsSize / totalLogsCount : 0
 		summary.setSummary({
 			totalDevicesCount: devices.length,
 			totalLogsCount,
 			totalLogsSize,
 			averageLogSize,
-			totalLogsPerSecond: totalLogsPerSecond
+			totalLogsPerSecond: totalLogsPerSecond,
 		})
 
 		const renderList = (devices: DeviceSetting[]) => {
@@ -313,26 +329,55 @@ export const devicesPage = async (root: HTMLElement) => {
 		let filtterProps = new Map<string, string[]>()
 
 		const filterDevices = () => {
-			filteredDevices = devices.filter(device => {
-				if (sendLogsFilter !== undefined && device.sendLogs !== sendLogsFilter) return false
-				if (filterLevel.length > 0 && !filterLevel.includes(device.filterLevel)) return false
+			filteredDevices = devices.filter((device) => {
+				if (
+					sendLogsFilter !== undefined &&
+					device.sendLogs !== sendLogsFilter
+				)
+					return false
+				if (
+					filterLevel.length > 0 &&
+					!filterLevel.includes(device.filterLevel)
+				)
+					return false
 				for (const [key, values] of filtterProps) {
-					if (!device.props.some(prop => prop.key === key && values.includes(prop.value))) return false
+					if (
+						!device.props.some(
+							(prop) =>
+								prop.key === key && values.includes(prop.value),
+						)
+					)
+						return false
 				}
 				return true
 			})
 			renderList(filteredDevices)
 		}
 
-		const uniquePropKeys = Array.from(new Set(devices.flatMap(device => device.props.map(prop => prop.key))))
+		const uniquePropKeys = Array.from(
+			new Set(
+				devices.flatMap((device) =>
+					device.props.map((prop) => prop.key),
+				),
+			),
+		)
 		for (const key of uniquePropKeys) {
 			const uniqueValues = Array.from(
-				new Set(devices.flatMap(device => device.props.filter(prop => prop.key === key).map(prop => prop.value)))
+				new Set(
+					devices.flatMap((device) =>
+						device.props
+							.filter((prop) => prop.key === key)
+							.map((prop) => prop.value),
+					),
+				),
 			)
-			const options = uniqueValues.map(value => ({ text: value, value }))
+			const options = uniqueValues.map((value) => ({
+				text: value,
+				value,
+			}))
 			const multiSelect = new MultiCheckboxSelect({
 				label: key,
-				options
+				options,
 			})
 			multiSelect.onChange = () => {
 				if (multiSelect.values.length === 0) filtterProps.delete(key)
@@ -356,20 +401,20 @@ export const devicesPage = async (root: HTMLElement) => {
 			const bulkEditFilterLevel = new SelectGroup({
 				label: "Filter level",
 				value: first.filterLevel,
-				options: levels.map(level => ({ text: level, value: level }))
+				options: levels.map((level) => ({ text: level, value: level })),
 			})
 			const sendLogsSelect = new SelectGroup({
 				label: "Send logs",
 				value: first.sendLogs ? "true" : "false",
 				options: [
 					{ text: "Yes", value: "true" },
-					{ text: "No", value: "false" }
-				]
+					{ text: "No", value: "false" },
+				],
 			})
-			const sendIntervalInput = new TextInput({ 
-				label: "Send interval", 
+			const sendIntervalInput = new TextInput({
+				label: "Send interval",
 				placeholder: "Enter interval",
-				value: first.sendInterval.toString()
+				value: first.sendInterval.toString(),
 			})
 
 			const saveButton = new Button({ text: "Save" })
@@ -377,10 +422,10 @@ export const devicesPage = async (root: HTMLElement) => {
 				const filterLevel = bulkEditFilterLevel.value
 				const sendLogs = sendLogsSelect.value === "true"
 				await bulkEdit({
-					deviceIds: filteredDevices.map(p => p.id),
+					deviceIds: filteredDevices.map((p) => p.id),
 					filterLevel,
 					sendInterval: parseInt(sendIntervalInput.value),
-					sendLogs
+					sendLogs,
 				})
 				for (const device of filteredDevices) {
 					device.filterLevel = filterLevel
@@ -395,16 +440,18 @@ export const devicesPage = async (root: HTMLElement) => {
 				minWidth: 300,
 				content: new VList({
 					style: {
-						gap: "10px"
-					}
+						gap: "10px",
+					},
 				}).add(
 					bulkEditFilterLevel,
 					sendLogsSelect,
 					sendIntervalInput,
 					new Label({ text: "Devices: " }),
-					new Label({ text: filteredDevices.map(p => p.id).join(", ") }),
+					new Label({
+						text: filteredDevices.map((p) => p.id).join(", "),
+					}),
 				).root,
-				footer: [saveButton]
+				footer: [saveButton],
 			})
 		}
 	} catch (error) {

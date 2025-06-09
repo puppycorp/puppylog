@@ -1,5 +1,12 @@
 import { Prop } from "./logs"
-import { Collapsible, Container, Header, InfiniteScroll, KeyValueTable, WrapList } from "./ui"
+import {
+	Collapsible,
+	Container,
+	Header,
+	InfiniteScroll,
+	KeyValueTable,
+	WrapList,
+} from "./ui"
 import { formatBytes, formatNumber, formatTimestamp } from "./utility"
 type Segment = {
 	id: number
@@ -20,32 +27,64 @@ type SegementsMetadata = {
 const fetchSegments = async (end: Date) => {
 	const url = new URL("/api/segments", window.location.origin)
 	url.searchParams.set("end", end.toISOString())
-	const res = await fetch(url.toString()).then(res => res.json()) as Segment[]
+	const res = (await fetch(url.toString()).then((res) =>
+		res.json(),
+	)) as Segment[]
 	return res
 }
 
 export const segmentsPage = async (root: Container) => {
-	const segementsMetadata = await fetch("/api/segment/metadata").then(res => res.json()) as SegementsMetadata
-	const compressionRatio = segementsMetadata.compressedSize / segementsMetadata.originalSize * 100
-	const averageCompressedLogSize = segementsMetadata.compressedSize / segementsMetadata.logsCount
-	const averageOriginalLogSize = segementsMetadata.originalSize / segementsMetadata.logsCount
+	const segementsMetadata = (await fetch("/api/segment/metadata").then(
+		(res) => res.json(),
+	)) as SegementsMetadata
+	const compressionRatio =
+		(segementsMetadata.compressedSize / segementsMetadata.originalSize) *
+		100
+	const averageCompressedLogSize =
+		segementsMetadata.compressedSize / segementsMetadata.logsCount
+	const averageOriginalLogSize =
+		segementsMetadata.originalSize / segementsMetadata.logsCount
 	const metadata = new KeyValueTable([
-		{ key: "Total segments", value: formatNumber(segementsMetadata.segmentCount) },
-		{ key: "Total original size", value: formatBytes(segementsMetadata.originalSize) },
-		{ key: "Total compressed size", value: formatBytes(segementsMetadata.compressedSize) },
-		{ key: "Total logs count", value: formatNumber(segementsMetadata.logsCount) },
+		{
+			key: "Total segments",
+			value: formatNumber(segementsMetadata.segmentCount),
+		},
+		{
+			key: "Total original size",
+			value: formatBytes(segementsMetadata.originalSize),
+		},
+		{
+			key: "Total compressed size",
+			value: formatBytes(segementsMetadata.compressedSize),
+		},
+		{
+			key: "Total logs count",
+			value: formatNumber(segementsMetadata.logsCount),
+		},
 		{ key: "Compression ratio", value: compressionRatio.toFixed(2) + "%" },
-		{ key: "Average compressed log size", value: formatBytes(averageCompressedLogSize) },
-		{ key: "Average original log size", value: formatBytes(averageOriginalLogSize) },
+		{
+			key: "Average compressed log size",
+			value: formatBytes(averageCompressedLogSize),
+		},
+		{
+			key: "Average original log size",
+			value: formatBytes(averageOriginalLogSize),
+		},
 	])
 	metadata.root.style.whiteSpace = "nowrap"
-	const metadataCollapsible = new Collapsible({ buttonText: "Metadata", content: metadata })
-	const header = new Header({ title: "Segments", rightSide: metadataCollapsible });
+	const metadataCollapsible = new Collapsible({
+		buttonText: "Metadata",
+		content: metadata,
+	})
+	const header = new Header({
+		title: "Segments",
+		rightSide: metadataCollapsible,
+	})
 	root.add(header)
 
 	const segmentList = new WrapList()
 	const infiniteScroll = new InfiniteScroll({
-		container: segmentList
+		container: segmentList,
 	})
 	root.add(infiniteScroll)
 	let endDate = new Date()
@@ -55,28 +94,54 @@ export const segmentsPage = async (root: Container) => {
 		endDate = new Date(segments[segments.length - 1].lastTimestamp)
 		for (const segment of segments) {
 			const table = new KeyValueTable([
-				{ key: "Segment ID", value: segment.id.toString(), href: `/segment/${segment.id}` },
-				{ key: "First timestamp", value: formatTimestamp(segment.firstTimestamp) },
-				{ key: "Last timestamp", value: formatTimestamp(segment.lastTimestamp) },
-				{ key: "Original size", value: formatBytes(segment.originalSize) },
-				{ key: "Compressed size", value: formatBytes(segment.compressedSize) },
+				{
+					key: "Segment ID",
+					value: segment.id.toString(),
+					href: `/segment/${segment.id}`,
+				},
+				{
+					key: "First timestamp",
+					value: formatTimestamp(segment.firstTimestamp),
+				},
+				{
+					key: "Last timestamp",
+					value: formatTimestamp(segment.lastTimestamp),
+				},
+				{
+					key: "Original size",
+					value: formatBytes(segment.originalSize),
+				},
+				{
+					key: "Compressed size",
+					value: formatBytes(segment.compressedSize),
+				},
 				{ key: "Logs count", value: formatNumber(segment.logsCount) },
-				{ key: "Compression ratio", value: ((segment.compressedSize / segment.originalSize) * 100).toFixed(2) + "%" },
+				{
+					key: "Compression ratio",
+					value:
+						(
+							(segment.compressedSize / segment.originalSize) *
+							100
+						).toFixed(2) + "%",
+				},
 			])
 			segmentList.add(table)
 		}
 	}
 }
 
-
 export const segmentPage = async (root: HTMLElement, segmentId: number) => {
-	const segment = await fetch(`/api/v1/segment/${segmentId}`).then(res => res.json()) as Segment
-	const props = await fetch(`/api/v1/segment/${segmentId}/props`).then(res => res.json()) as Prop[]
+	const segment = (await fetch(`/api/v1/segment/${segmentId}`).then((res) =>
+		res.json(),
+	)) as Segment
+	const props = (await fetch(`/api/v1/segment/${segmentId}/props`).then(
+		(res) => res.json(),
+	)) as Prop[]
 
 	const totalOriginalSize = segment.originalSize
 	const totalCompressedSize = segment.compressedSize
 	const totalLogsCount = segment.logsCount
-	const compressRatio = totalCompressedSize / totalOriginalSize * 100
+	const compressRatio = (totalCompressedSize / totalOriginalSize) * 100
 	root.innerHTML = `
 		<div class="page-header">
 			<h1 style="flex-grow: 1">Segment ${segmentId}</h1>
@@ -90,12 +155,16 @@ export const segmentPage = async (root: HTMLElement, segmentId: number) => {
 			</div>
 		</div>
 		<div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px">
-			${props.map(prop => `
+			${props
+				.map(
+					(prop) => `
 				<div class="list-row">
 					<div class="table-cell"><strong>Key:</strong> ${prop.key}</div>
 					<div class="table-cell"><strong>Value:</strong> ${prop.value}</div>
 				</div>
-			`).join("")}
+			`,
+				)
+				.join("")}
 		</div>
 	`
 }

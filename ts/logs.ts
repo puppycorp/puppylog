@@ -6,7 +6,7 @@ import { Button, Collapsible, VList } from "./ui"
 import { Histogram, HistogramItem } from "./histogram"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 
-export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal"
 
 export type Prop = {
 	key: string
@@ -31,7 +31,11 @@ export type FetchMoreArgs = {
 interface LogsSearchPageArgs {
 	root: HTMLElement
 	validateQuery: (query: string) => Promise<string | null>
-	streamLogs: (args: FetchMoreArgs, onNewLog: (log: LogEntry) => void, onEnd: () => void) => () => void
+	streamLogs: (
+		args: FetchMoreArgs,
+		onNewLog: (log: LogEntry) => void,
+		onEnd: () => void,
+	) => () => void
 }
 
 const MAX_LOG_ENTRIES = 10_000
@@ -40,12 +44,12 @@ const FETCH_DEBOUNCE_MS = 500
 const OBSERVER_THRESHOLD = 0.1
 
 const LOG_COLORS = {
-	trace: "#6B7280",  // gray
-	debug: "#3B82F6",  // blue
-	info: "#10B981",   // green
-	warn: "#F59E0B",   // orange
-	error: "#EF4444",  // red
-	fatal: "#8B5CF6"   // purple
+	trace: "#6B7280", // gray
+	debug: "#3B82F6", // blue
+	info: "#10B981", // green
+	warn: "#F59E0B", // orange
+	error: "#EF4444", // red
+	fatal: "#8B5CF6", // purple
 } as const
 
 export const settingsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings w-5 h-5"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>`
@@ -53,11 +57,11 @@ export const searchSvg = `<svg xmlns="http://www.w3.org/2000/svg"  viewBox="0 0 
 
 const formatTimestamp = (ts: string): string => {
 	const date = new Date(ts)
-	return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
+	return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`
 }
 
 const escapeHTML = (str: string): string => {
-	const div = document.createElement('div')
+	const div = document.createElement("div")
 	div.textContent = str
 	return div.innerHTML
 }
@@ -115,14 +119,14 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	featuresList.root.appendChild(histogramToggle)
 	const featuresDropdown = new Collapsible({
 		buttonText: "Options",
-		content: featuresList
+		content: featuresList,
 	})
 
 	optionsRightPanel.append(
 		settingsButton,
 		saveButton,
 		searchButton,
-		featuresDropdown.root
+		featuresDropdown.root,
 	)
 
 	// histogram container setup
@@ -136,14 +140,14 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const startHistogram = () => {
 		histogramContainer.style.display = "block"
 		histogram.clear()
-                const params = new URLSearchParams()
-                if (searchTextarea.value) params.set("query", searchTextarea.value)
-                params.set("bucketSecs", "60")
-                params.set("tzOffset", new Date().getTimezoneOffset().toString())
+		const params = new URLSearchParams()
+		if (searchTextarea.value) params.set("query", searchTextarea.value)
+		params.set("bucketSecs", "60")
+		params.set("tzOffset", new Date().getTimezoneOffset().toString())
 		const url = new URL("/api/v1/logs/histogram", window.location.origin)
 		url.search = params.toString()
 		const es = new EventSource(url)
-		es.onmessage = ev => {
+		es.onmessage = (ev) => {
 			const item = JSON.parse(ev.data) as HistogramItem
 			histogram.add(item)
 		}
@@ -174,40 +178,48 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		pendingLogs.push(log)
 		if (debounce) return
 		debounce = setTimeout(() => {
-			const newEntries = pendingLogs.filter(entry => !logIds.has(entry.id))
-			newEntries.forEach(entry => {
+			const newEntries = pendingLogs.filter(
+				(entry) => !logIds.has(entry.id),
+			)
+			newEntries.forEach((entry) => {
 				logIds.add(entry.id)
 				logEntries.push(entry)
 			})
 			logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-			if (logEntries.length > MAX_LOG_ENTRIES && args.root.scrollTop === 0) {
+			if (
+				logEntries.length > MAX_LOG_ENTRIES &&
+				args.root.scrollTop === 0
+			) {
 				const removed = logEntries.splice(MAX_LOG_ENTRIES)
-				removed.forEach(r => logIds.delete(r.id))
+				removed.forEach((r) => logIds.delete(r.id))
 			}
-			logsList.innerHTML = logEntries.map(entry => `
+			logsList.innerHTML = logEntries
+				.map(
+					(entry) => `
 				<div class="list-row">
 					<div>
 						${formatTimestamp(entry.timestamp)} 
 						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
-						${entry.props.map(p => `${p.key}=${p.value}`).join(" ")}
+						${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
 					</div>
 					<div class="logs-list-row-msg">
 						<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
 					</div>
 				</div>
-			`).join('')
+			`,
+				)
+				.join("")
 			document.querySelectorAll(".list-row").forEach((el, key) => {
 				el.addEventListener("click", () => {
 					const entry = logEntries[key]
 					const copyButton = new Button({ text: "Copy" })
-					copyButton.onClick = () => navigator.clipboard.writeText(entry.msg)
+					copyButton.onClick = () =>
+						navigator.clipboard.writeText(entry.msg)
 					const closeButton = new Button({ text: "Close" })
 					showModal({
 						title: "Log Message",
 						content: formatLogMsg(entry.msg),
-						footer: [
-							copyButton
-						]
+						footer: [copyButton],
 					})
 				})
 			})
@@ -244,14 +256,15 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		else removeQueryParam("query")
 		loadingIndicator.textContent = "Loading..."
 		let endDate
-		if (logEntries.length > 0) endDate = logEntries[logEntries.length - 1].timestamp
+		if (logEntries.length > 0)
+			endDate = logEntries[logEntries.length - 1].timestamp
 		if (lastEndDate !== null && endDate === lastEndDate) return
 		lastEndDate = endDate
 		console.log("endDate", endDate)
 		if (clear) clearLogs()
 		if (histogramCheckbox.checked) {
-				stopHistogram()
-				startHistogram()
+			stopHistogram()
+			startHistogram()
 		}
 		if (currentStream) currentStream()
 		currentStream = args.streamLogs(
@@ -265,12 +278,15 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 				loadingIndicator.textContent = ""
 				console.log("stream rows count", streamRowsCount)
 				if (streamRowsCount === 0) {
-					loadingIndicator.textContent = logEntries.length === 0 ? "No logs found" : "No more logs"
+					loadingIndicator.textContent =
+						logEntries.length === 0
+							? "No logs found"
+							: "No more logs"
 					return
 				}
 				streamRowsCount = 0
 				if (loadingIndicatorVisible()) queryLogs()
-			}
+			},
 		)
 	}
 
@@ -286,7 +302,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			if (!entries[0].isIntersecting) return
 			queryLogs()
 		},
-		{ threshold: OBSERVER_THRESHOLD }
+		{ threshold: OBSERVER_THRESHOLD },
 	)
 	observer.observe(loadingIndicator)
 }

@@ -7,10 +7,9 @@ export class Modal extends UiComponent<HTMLDivElement> {
 	}
 }
 
-
 export const showModal = (args: {
 	title: string
-	minWidth?: number,
+	minWidth?: number
 	content: HTMLElement
 	footer: UiComponent<HTMLElement>[]
 }) => {
@@ -59,7 +58,7 @@ export const showModal = (args: {
 	buttonContainer.style.display = "flex"
 	buttonContainer.style.justifyContent = "space-between"
 	buttonContainer.style.marginTop = "8px"
-	buttonContainer.append(...args.footer.map(f => f.root))
+	buttonContainer.append(...args.footer.map((f) => f.root))
 
 	modalContent.appendChild(buttonContainer)
 

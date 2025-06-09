@@ -22,7 +22,11 @@ export const formatLogMsg = (msg: string): HTMLElement => {
 				if (trimmed.startsWith("{")) {
 					try {
 						const pre = document.createElement("pre")
-						pre.textContent = JSON.stringify(JSON.parse(backbuffer), null, 2)
+						pre.textContent = JSON.stringify(
+							JSON.parse(backbuffer),
+							null,
+							2,
+						)
 						container.appendChild(pre)
 					} catch (e) {
 						const span = document.createElement("span")
@@ -32,8 +36,13 @@ export const formatLogMsg = (msg: string): HTMLElement => {
 				} else if (trimmed.startsWith("<")) {
 					try {
 						const parser = new DOMParser()
-						const xmlDoc = parser.parseFromString(backbuffer, "application/xml")
-						if (!xmlDoc.getElementsByTagName("parsererror").length) {
+						const xmlDoc = parser.parseFromString(
+							backbuffer,
+							"application/xml",
+						)
+						if (
+							!xmlDoc.getElementsByTagName("parsererror").length
+						) {
 							const pre = document.createElement("pre")
 							pre.textContent = formatXml(backbuffer)
 							container.appendChild(pre)
@@ -58,10 +67,17 @@ export const formatLogMsg = (msg: string): HTMLElement => {
 			continue
 		}
 		backbuffer += char
-		if (jsonDepth === 0 && backbuffer.trim().startsWith("<") && char == ">") {
+		if (
+			jsonDepth === 0 &&
+			backbuffer.trim().startsWith("<") &&
+			char == ">"
+		) {
 			try {
 				const parser = new DOMParser()
-				const xmlDoc = parser.parseFromString(backbuffer, "application/xml")
+				const xmlDoc = parser.parseFromString(
+					backbuffer,
+					"application/xml",
+				)
 				if (!xmlDoc.getElementsByTagName("parsererror").length) {
 					const pre = document.createElement("pre")
 					pre.textContent = formatXml(backbuffer)
@@ -69,7 +85,7 @@ export const formatLogMsg = (msg: string): HTMLElement => {
 					backbuffer = ""
 					continue
 				}
-			} catch (e) { }
+			} catch (e) {}
 		}
 	}
 	if (backbuffer) {
@@ -77,7 +93,11 @@ export const formatLogMsg = (msg: string): HTMLElement => {
 		if (trimmed.startsWith("{")) {
 			try {
 				const pre = document.createElement("pre")
-				pre.textContent = JSON.stringify(JSON.parse(backbuffer), null, 2)
+				pre.textContent = JSON.stringify(
+					JSON.parse(backbuffer),
+					null,
+					2,
+				)
 				container.appendChild(pre)
 			} catch (e) {
 				const span = document.createElement("span")
@@ -87,7 +107,10 @@ export const formatLogMsg = (msg: string): HTMLElement => {
 		} else if (trimmed.startsWith("<")) {
 			try {
 				const parser = new DOMParser()
-				const xmlDoc = parser.parseFromString(backbuffer, "application/xml")
+				const xmlDoc = parser.parseFromString(
+					backbuffer,
+					"application/xml",
+				)
 				if (!xmlDoc.getElementsByTagName("parsererror").length) {
 					const pre = document.createElement("pre")
 					pre.textContent = formatXml(backbuffer)
@@ -115,7 +138,7 @@ const formatXml = (xml: string): string => {
 	let formatted = ""
 	xml = xml.replace(/(>)(<)(\/*)/g, "$1\n$2$3")
 	let pad = 0
-	xml.split("\n").forEach(node => {
+	xml.split("\n").forEach((node) => {
 		let indent = 0
 		if (node.match(/.+<\/\w[^>]*>$/)) {
 			indent = 0

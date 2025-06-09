@@ -17,7 +17,7 @@ body {
 	gap: 10px;
 	background-color: #fff;
 	padding: 16px;
-	border-bottom: 1px solid #E5E7EB;
+	border-bottom: 1px solid #e5e7eb;
 	z-index: 10;
 }
 .logs-options-right-panel {
@@ -31,7 +31,7 @@ body {
 	resize: none;
 	flex-grow: 1;
 	padding: 8px;
-	border: 1px solid #D1D5DB;
+	border: 1px solid #d1d5db;
 	border-radius: 4px;
 	font-family: inherit;
 	height: 120px;
@@ -39,8 +39,8 @@ body {
 .logs-button,
 button {
 	padding: 8px 16px;
-	background-color: #F3F4F6;
-	border: 1px solid #D1D5DB;
+	background-color: #f3f4f6;
+	border: 1px solid #d1d5db;
 	border-radius: 4px;
 	cursor: pointer;
 	white-space: pre-line;
@@ -49,12 +49,12 @@ button {
 
 .logs-button:hover,
 button:hover {
-	background-color: #E5E7EB;
+	background-color: #e5e7eb;
 }
 
 .table-cell {
 	padding: 8px 12px;
-	border-bottom: 1px solid #E5E7EB;
+	border-bottom: 1px solid #e5e7eb;
 }
 
 .logs-loading-indicator {
@@ -62,7 +62,7 @@ button:hover {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	color: #6B7280;
+	color: #6b7280;
 }
 
 .logs-timestamp-cell,
@@ -70,7 +70,7 @@ button:hover {
 .logs-props-cell,
 .logs-message-cell {
 	padding: 8px 12px;
-	border-bottom: 1px solid #E5E7EB;
+	border-bottom: 1px solid #e5e7eb;
 }
 
 .logs-timestamp-cell {
@@ -92,27 +92,27 @@ button:hover {
 
 /* Log level colors */
 .logs-level-trace {
-	color: #6B7280;
+	color: #6b7280;
 }
 
 .logs-level-debug {
-	color: #3B82F6;
+	color: #3b82f6;
 }
 
 .logs-level-info {
-	color: #10B981;
+	color: #10b981;
 }
 
 .logs-level-warn {
-	color: #F59E0B;
+	color: #f59e0b;
 }
 
 .logs-level-error {
-	color: #EF4444;
+	color: #ef4444;
 }
 
 .logs-level-fatal {
-	color: #8B5CF6;
+	color: #8b5cf6;
 }
 body {
 	padding: 0;
@@ -136,7 +136,7 @@ body {
 	z-index: 5;
 	padding: 12px;
 	text-align: left;
-	border-bottom: 2px solid #E5E7EB;
+	border-bottom: 2px solid #e5e7eb;
 }
 .logs-table-body {
 	/* overflow-x: auto; */
@@ -159,7 +159,7 @@ body {
 	padding: 16px;
 }
 .list-row {
-	border: 1px solid #E5E7EB;
+	border: 1px solid #e5e7eb;
 	border-radius: 4px;
 	padding: 8px;
 	background-color: #fff;
@@ -191,7 +191,7 @@ body {
 .device-details > div {
 	flex: 1 1 200px;
 	padding: 4px 8px;
-	border: 1px solid #E5E7EB;
+	border: 1px solid #e5e7eb;
 	border-radius: 4px;
 	background-color: #f3f4f6;
 }
