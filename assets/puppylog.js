@@ -1536,7 +1536,7 @@ var PivotPage = (root) => {
   configureButton.addEventListener("click", () => {
     const hello = document.createElement("h1");
     hello.textContent = "Hello";
-    showModal(hello);
+    showModal({ title: "Info", content: hello, footer: [] });
   });
   const dropZone = document.createElement("div");
   dropZone.innerHTML = "<h3>Drop a field here to group by</h3>";
@@ -1553,7 +1553,7 @@ var PivotPage = (root) => {
       container.removeChild(existingTable);
     }
     const pivotResult = fakeData.reduce((acc, entry) => {
-      const key = entry[groupField];
+      const key = String(entry[groupField]);
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});

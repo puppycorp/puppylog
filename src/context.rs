@@ -181,24 +181,24 @@ impl Context {
 				end,
 				timer.elapsed()
 			);
-			let segment_ids = segments.iter().map(|s| s.id).collect::<Vec<_>>();
-			let timer = std::time::Instant::now();
-			let segment_props = self.db.fetch_segments_props(&segment_ids).await.unwrap();
-			log::info!(
-				"found {} segment props in range {} - {} in {:?}",
-				segment_props.len(),
-				start,
-				end,
-				timer.elapsed()
-			);
 			for segment in &segments {
 				if !processed_segments.insert(segment.id) {
 					continue;
 				}
-				let props = match segment_props.get(&segment.id) {
-					Some(props) => props,
-					None => continue,
+				let timer = std::time::Instant::now();
+				let props = match self.db.fetch_segment_props(segment.id).await {
+					Ok(p) => p,
+					Err(err) => {
+						log::error!("failed to fetch props for segment {}: {}", segment.id, err);
+						continue;
+					}
 				};
+				log::info!(
+					"fetched {} props for segment {} in {:?}",
+					props.len(),
+					segment.id,
+					timer.elapsed()
+				);
 				log::info!(
 					"checking segment {} {} - {}",
 					segment.id,

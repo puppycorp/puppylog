@@ -1,15 +1,15 @@
 import { showModal } from "./common";
 
-export const PivotPage = (root) => {
+export const PivotPage = (root: HTMLElement) => {
 	// 1) Fake log data
-	const fakeData = [
-		{ logLevel: 'Info', deviceId: 'Device1', message: 'Started process', timestamp: 1610000000000 },
-		{ logLevel: 'Error', deviceId: 'Device2', message: 'Failed to load module', timestamp: 1610000001000 },
-		{ logLevel: 'Warning', deviceId: 'Device1', message: 'Memory usage high', timestamp: 1610000002000 },
-		{ logLevel: 'Info', deviceId: 'Device3', message: 'Process completed', timestamp: 1610000003000 },
-		{ logLevel: 'Error', deviceId: 'Device1', message: 'Unhandled exception', timestamp: 1610000004000 },
-		{ logLevel: 'Debug', deviceId: 'Device2', message: 'Debugging info', timestamp: 1610000005000 },
-	];
+        const fakeData: Record<string, unknown>[] = [
+                { logLevel: 'Info', deviceId: 'Device1', message: 'Started process', timestamp: 1610000000000 },
+                { logLevel: 'Error', deviceId: 'Device2', message: 'Failed to load module', timestamp: 1610000001000 },
+                { logLevel: 'Warning', deviceId: 'Device1', message: 'Memory usage high', timestamp: 1610000002000 },
+                { logLevel: 'Info', deviceId: 'Device3', message: 'Process completed', timestamp: 1610000003000 },
+                { logLevel: 'Error', deviceId: 'Device1', message: 'Unhandled exception', timestamp: 1610000004000 },
+                { logLevel: 'Debug', deviceId: 'Device2', message: 'Debugging info', timestamp: 1610000005000 },
+        ];
 
 	// 2) Available fields for grouping
 	const availableFields = ['logLevel', 'deviceId', 'timestamp', 'message'];
@@ -94,11 +94,11 @@ export const PivotPage = (root) => {
 	document.body.appendChild(modalOverlay);
 
 	// Open the modal on button click
-	configureButton.addEventListener('click', () => {
-		const hello = document.createElement('h1');
-		hello.textContent = 'Hello';
-		showModal(hello);
-	});
+        configureButton.addEventListener('click', () => {
+                const hello = document.createElement('h1');
+                hello.textContent = 'Hello';
+                showModal({ title: 'Info', content: hello, footer: [] });
+        });
 
 	// ---------------------------------------------------------------------
 	// C) Drop Zone for selecting a grouping field
@@ -118,7 +118,7 @@ export const PivotPage = (root) => {
 	// ---------------------------------------------------------------------
 	// D) Render Pivot Table
 	// ---------------------------------------------------------------------
-	const renderPivotTable = (groupField) => {
+        const renderPivotTable = (groupField: string) => {
 		// Remove existing pivot table if it exists
 		const existingTable = container.querySelector('table');
 		if (existingTable) {
@@ -126,11 +126,11 @@ export const PivotPage = (root) => {
 		}
 
 		// Calculate pivot data: group by the selected field and count occurrences
-		const pivotResult = fakeData.reduce((acc, entry) => {
-			const key = entry[groupField];
-			acc[key] = (acc[key] || 0) + 1;
-			return acc;
-		}, {});
+                const pivotResult: Record<string, number> = fakeData.reduce((acc: Record<string, number>, entry) => {
+                        const key = String(entry[groupField]);
+                        acc[key] = (acc[key] || 0) + 1;
+                        return acc;
+                }, {} as Record<string, number>);
 
 		// Create table element
 		const table = document.createElement('table');
@@ -160,7 +160,7 @@ export const PivotPage = (root) => {
 
 		// Table body
 		const tbody = document.createElement('tbody');
-		Object.entries(pivotResult).forEach(([key, count]) => {
+                (Object.entries(pivotResult) as [string, number][]).forEach(([key, count]) => {
 			const row = document.createElement('tr');
 
 			const keyTd = document.createElement('td');
