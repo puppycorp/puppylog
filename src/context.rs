@@ -181,7 +181,7 @@ impl Context {
 					continue;
 				}
 				let path = log_path().join(format!("{}.log", segment.id));
-				log::info!("loading segment from disk: {}", path.display());
+				log::info!("loading {} segment {} - {}", segment.id, segment.first_timestamp, segment.last_timestamp);
 				let file: File = match File::open(path) {
 					Ok(file) => file,
 					Err(err) => {
