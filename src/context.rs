@@ -13,6 +13,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use puppylog::match_date_range;
 use puppylog::LogEntry;
+use puppylog::Prop;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
 use puppylog::{check_expr, check_props};
@@ -112,6 +113,10 @@ impl Context {
 				for prop in &log.props {
 					unique_props.insert(prop.clone());
 				}
+				unique_props.insert(Prop {
+					key: "level".into(),
+					value: log.level.to_string(),
+				});
 			}
 			self.db
 				.upsert_segment_props(segment_id, unique_props.iter())
@@ -197,7 +202,7 @@ impl Context {
 					Err(err) => {
 						log::error!("failed to fetch segment props: {}", err);
 						continue;
-					},
+					}
 				};
 				log::info!(
 					"checking segment {} {} - {} in {:?}",
@@ -356,8 +361,13 @@ mod tests {
 			.await
 			.unwrap();
 
+		let mut props_vec: Vec<Prop> = entry.props.clone();
+		props_vec.push(Prop {
+			key: "level".into(),
+			value: entry.level.to_string(),
+		});
 		ctx.db
-			.upsert_segment_props(segment_id, entry.props.iter())
+			.upsert_segment_props(segment_id, props_vec.iter())
 			.await
 			.unwrap();
 
@@ -433,8 +443,13 @@ mod tests {
 			})
 			.await
 			.unwrap();
+		let mut props_old_vec: Vec<Prop> = entry_old.props.clone();
+		props_old_vec.push(Prop {
+			key: "level".into(),
+			value: entry_old.level.to_string(),
+		});
 		ctx.db
-			.upsert_segment_props(old_seg_id, entry_old.props.iter())
+			.upsert_segment_props(old_seg_id, props_old_vec.iter())
 			.await
 			.unwrap();
 		let path = ctx.logs_path.join(format!("{}.log", old_seg_id));
@@ -470,8 +485,13 @@ mod tests {
 			})
 			.await
 			.unwrap();
+		let mut props_new_vec: Vec<Prop> = entry_new.props.clone();
+		props_new_vec.push(Prop {
+			key: "level".into(),
+			value: entry_new.level.to_string(),
+		});
 		ctx.db
-			.upsert_segment_props(new_seg_id, entry_new.props.iter())
+			.upsert_segment_props(new_seg_id, props_new_vec.iter())
 			.await
 			.unwrap();
 		let path = ctx.logs_path.join(format!("{}.log", new_seg_id));
@@ -547,10 +567,12 @@ mod tests {
 				.await
 				.unwrap();
 
-			ctx.db
-				.upsert_segment_props(id, skip_entry.props.iter())
-				.await
-				.unwrap();
+			let mut props: Vec<Prop> = skip_entry.props.clone();
+			props.push(Prop {
+				key: "level".into(),
+				value: skip_entry.level.to_string(),
+			});
+			ctx.db.upsert_segment_props(id, props.iter()).await.unwrap();
 			fs::write(ctx.logs_path.join(format!("{}.log", id)), compressed).unwrap();
 			id
 		};
@@ -586,8 +608,13 @@ mod tests {
 				})
 				.await
 				.unwrap();
+			let mut props_vec: Vec<Prop> = want_entry.props.clone();
+			props_vec.push(Prop {
+				key: "level".into(),
+				value: want_entry.level.to_string(),
+			});
 			ctx.db
-				.upsert_segment_props(id, want_entry.props.iter())
+				.upsert_segment_props(id, props_vec.iter())
 				.await
 				.unwrap();
 			fs::write(ctx.logs_path.join(format!("{}.log", id)), compressed).unwrap();
