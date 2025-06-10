@@ -78,7 +78,6 @@ impl Context {
 		}
 	}
 
-	// TODO add log level as segment property to db
 	pub async fn save_logs(&self, logs: &[LogEntry]) {
 		let mut current = self.current.lock().await;
 		current.buffer.extend_from_slice(logs);
