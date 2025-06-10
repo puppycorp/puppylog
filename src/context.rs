@@ -220,13 +220,6 @@ impl Context {
 						continue;
 					}
 				};
-				log::info!(
-					"checking segment {} {} - {} in {:?}",
-					segment.id,
-					segment.first_timestamp,
-					segment.last_timestamp,
-					timer.elapsed()
-				);
 				// First check whether the segment’s time window could satisfy the query.
 				let time_match = match_date_range(
 					&query.root,
