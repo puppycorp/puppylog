@@ -797,4 +797,73 @@ mod tests {
 			"segment should be returned when query start is inside its time span"
 		);
 	}
+
+	#[tokio::test]
+	async fn find_segments_by_level() {
+		use chrono::Duration;
+		use puppylog::{parse_log_query, LogLevel, Prop};
+
+		let conn = Connection::open_in_memory().unwrap();
+		let db = DB::new(conn);
+
+		let now = Utc::now();
+
+		let info_id = db
+			.new_segment(NewSegmentArgs {
+				first_timestamp: now - Duration::hours(3),
+				last_timestamp: now - Duration::hours(2),
+				original_size: 1,
+				compressed_size: 1,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+		db.upsert_segment_props(
+			info_id,
+			[Prop {
+				key: "level".into(),
+				value: LogLevel::Info.to_string(),
+			}]
+			.iter(),
+		)
+		.await
+		.unwrap();
+
+		let error_id = db
+			.new_segment(NewSegmentArgs {
+				first_timestamp: now - Duration::hours(1),
+				last_timestamp: now,
+				original_size: 1,
+				compressed_size: 1,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+		db.upsert_segment_props(
+			error_id,
+			[Prop {
+				key: "level".into(),
+				value: LogLevel::Error.to_string(),
+			}]
+			.iter(),
+		)
+		.await
+		.unwrap();
+
+		let mut q_info = parse_log_query("level = info").unwrap();
+		q_info.end_date = Some(now);
+		let metas_info = db.find_segments_with_query(&q_info).await.unwrap();
+		assert_eq!(
+			metas_info.iter().map(|m| m.id).collect::<Vec<_>>(),
+			vec![info_id]
+		);
+
+		let mut q_error = parse_log_query("level = error").unwrap();
+		q_error.end_date = Some(now);
+		let metas_error = db.find_segments_with_query(&q_error).await.unwrap();
+		assert_eq!(
+			metas_error.iter().map(|m| m.id).collect::<Vec<_>>(),
+			vec![error_id]
+		);
+	}
 }
