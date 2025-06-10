@@ -433,6 +433,68 @@ pub fn extract_date_conditions(expr: &Expr) -> Vec<Condition> {
 
 	out
 }
+
+pub fn timestamp_bounds(expr: &Expr) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+	let mut start: Option<DateTime<Utc>> = None;
+	let mut end: Option<DateTime<Utc>> = None;
+
+	for cond in extract_date_conditions(expr) {
+		if let (Expr::Value(Value::String(f)), Expr::Value(Value::Date(d))) =
+			(cond.left.as_ref(), cond.right.as_ref())
+		{
+			if f == "timestamp" {
+				match cond.operator {
+					Operator::GreaterThan | Operator::GreaterThanOrEqual => {
+						if start.map_or(true, |s| *d > s) {
+							start = Some(*d);
+						}
+					}
+					Operator::LessThan | Operator::LessThanOrEqual => {
+						if end.map_or(true, |e| *d < e) {
+							end = Some(*d);
+						}
+					}
+					Operator::Equal => {
+						start = Some(*d);
+						end = Some(*d);
+					}
+					_ => {}
+				}
+			}
+		} else if let (Expr::Value(Value::Date(d)), Expr::Value(Value::String(f))) =
+			(cond.left.as_ref(), cond.right.as_ref())
+		{
+			if f == "timestamp" {
+				let op = match cond.operator {
+					Operator::GreaterThan => Operator::LessThan,
+					Operator::GreaterThanOrEqual => Operator::LessThanOrEqual,
+					Operator::LessThan => Operator::GreaterThan,
+					Operator::LessThanOrEqual => Operator::GreaterThanOrEqual,
+					o => o,
+				};
+				match op {
+					Operator::GreaterThan | Operator::GreaterThanOrEqual => {
+						if start.map_or(true, |s| *d > s) {
+							start = Some(*d);
+						}
+					}
+					Operator::LessThan | Operator::LessThanOrEqual => {
+						if end.map_or(true, |e| *d < e) {
+							end = Some(*d);
+						}
+					}
+					Operator::Equal => {
+						start = Some(*d);
+						end = Some(*d);
+					}
+					_ => {}
+				}
+			}
+		}
+	}
+
+	(start, end)
+}
 pub fn match_date_range(
 	expr: &Expr,
 	first: chrono::DateTime<Utc>,
@@ -700,6 +762,76 @@ mod tests {
 			Utc,
 		);
 		assert!(!match_date_range(&expr.root, start2, end2, &tz));
+	}
+
+	#[test]
+	fn timestamp_bounds_basic() {
+		let date1 = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 1, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let date2 = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 1, 31)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let ast = Expr::And(
+			Box::new(Expr::Condition(Condition {
+				left: Box::new(Expr::Value(Value::String("timestamp".into()))),
+				operator: Operator::GreaterThanOrEqual,
+				right: Box::new(Expr::Value(Value::Date(date1))),
+			})),
+			Box::new(Expr::Condition(Condition {
+				left: Box::new(Expr::Value(Value::String("timestamp".into()))),
+				operator: Operator::LessThanOrEqual,
+				right: Box::new(Expr::Value(Value::Date(date2))),
+			})),
+		);
+		let (start, end) = timestamp_bounds(&ast);
+		let start_expected = date1;
+		let end_expected = date2;
+		assert_eq!(start, Some(start_expected));
+		assert_eq!(end, Some(end_expected));
+	}
+
+	#[test]
+	fn timestamp_bounds_reversed() {
+		let date1 = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 2, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let date2 = DateTime::<Utc>::from_utc(
+			chrono::NaiveDate::from_ymd_opt(2025, 3, 1)
+				.unwrap()
+				.and_hms_opt(0, 0, 0)
+				.unwrap(),
+			Utc,
+		);
+		let ast = Expr::And(
+			Box::new(Expr::Condition(Condition {
+				left: Box::new(Expr::Value(Value::Date(date2))),
+				operator: Operator::GreaterThan,
+				right: Box::new(Expr::Value(Value::String("timestamp".into()))),
+			})),
+			Box::new(Expr::Condition(Condition {
+				left: Box::new(Expr::Value(Value::Date(date1))),
+				operator: Operator::LessThanOrEqual,
+				right: Box::new(Expr::Value(Value::String("timestamp".into()))),
+			})),
+		);
+		let (start, end) = timestamp_bounds(&ast);
+		let start_expected = date1;
+		let end_expected = date2;
+		assert_eq!(start, Some(start_expected));
+		assert_eq!(end, Some(end_expected));
 	}
 	#[test]
 	fn msg_does_not_match() {

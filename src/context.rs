@@ -15,7 +15,7 @@ use puppylog::match_date_range;
 use puppylog::LogEntry;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
-use puppylog::{check_expr, check_props};
+use puppylog::{check_expr, check_props, timestamp_bounds};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Cursor;
@@ -133,12 +133,23 @@ impl Context {
 		let tz = query
 			.tz_offset
 			.unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
+		let (mut start_bound, mut end_bound) = timestamp_bounds(&query.root);
+		if let Some(e) = end_bound {
+			if e < end {
+				end = e;
+			}
+		}
 		{
 			let current = self.current.lock().await;
 			let iter = current.iter();
 			for entry in iter {
 				if entry.timestamp > end {
 					continue;
+				}
+				if let Some(start) = start_bound {
+					if entry.timestamp < start {
+						continue;
+					}
 				}
 				end = entry.timestamp;
 				match check_expr(&query.root, entry, &tz) {
@@ -163,7 +174,17 @@ impl Context {
 					break;
 				}
 			};
-			let start = end - window;
+			if let Some(start) = start_bound {
+				if end < start {
+					break;
+				}
+			}
+			let mut start = end - window;
+			if let Some(bound) = start_bound {
+				if start < bound {
+					start = bound;
+				}
+			}
 			prev_end = Some(start);
 
 			let timer = std::time::Instant::now();
@@ -197,7 +218,7 @@ impl Context {
 					Err(err) => {
 						log::error!("failed to fetch segment props: {}", err);
 						continue;
-					},
+					}
 				};
 				log::info!(
 					"checking segment {} {} - {} in {:?}",
