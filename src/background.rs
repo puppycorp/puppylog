@@ -145,3 +145,237 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
 		sleep(Duration::from_secs(2)).await;
 	}
 }
+
+use std::collections::HashSet;
+use std::io::Cursor;
+
+use crate::config::log_path;
+use crate::db::NewSegmentArgs;
+use crate::segment::LogSegment;
+use crate::types::{GetSegmentsQuery, SortDir};
+use puppylog::Prop;
+
+const TARGET_LOGS: usize = 100_000;
+
+pub async fn merge_segments(ctx: Arc<Context>) {
+	loop {
+		if let Err(e) = merge_once(&ctx).await {
+			log::error!("merge_segments: {}", e);
+		}
+		sleep(Duration::from_secs(60)).await;
+	}
+}
+
+async fn merge_once(ctx: &Arc<Context>) -> anyhow::Result<()> {
+	let segments = ctx
+		.db
+		.find_segments(&GetSegmentsQuery {
+			start: None,
+			end: None,
+			count: None,
+			sort: Some(SortDir::Asc),
+		})
+		.await?;
+	if segments.len() < 2 {
+		return Ok(());
+	}
+
+	let log_dir = log_path();
+	let mut merged_logs = Vec::new();
+	let mut to_delete = Vec::new();
+
+	for meta in segments {
+		let path = log_dir.join(format!("{}.log", meta.id));
+		let compressed = tokio::fs::read(&path).await?;
+		let decoded = zstd::decode_all(Cursor::new(compressed))?;
+		let mut cursor = Cursor::new(decoded);
+		let seg = LogSegment::parse(&mut cursor);
+		merged_logs.extend(seg.buffer.into_iter());
+		to_delete.push(meta.id);
+		if merged_logs.len() >= TARGET_LOGS {
+			write_segment(ctx, &merged_logs, &to_delete, &log_dir).await?;
+			merged_logs.clear();
+			to_delete.clear();
+		}
+	}
+	if to_delete.len() > 1 {
+		write_segment(ctx, &merged_logs, &to_delete, &log_dir).await?;
+	}
+	Ok(())
+}
+
+async fn write_segment(
+	ctx: &Arc<Context>,
+	logs: &[LogEntry],
+	old_ids: &[u32],
+	log_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+	if logs.is_empty() {
+		return Ok(());
+	}
+	let mut segment = LogSegment::with_logs(logs.to_vec());
+	segment.sort();
+	let first_timestamp = segment.buffer.first().unwrap().timestamp;
+	let last_timestamp = segment.buffer.last().unwrap().timestamp;
+	let mut buff = Cursor::new(Vec::new());
+	segment.serialize(&mut buff);
+	let original_size = buff.position() as usize;
+	buff.set_position(0);
+	let compressed = zstd::encode_all(buff, 0)?;
+	let compressed_size = compressed.len();
+	let new_id = ctx
+		.db
+		.new_segment(NewSegmentArgs {
+			first_timestamp,
+			last_timestamp,
+			original_size,
+			compressed_size,
+			logs_count: segment.buffer.len() as u64,
+		})
+		.await?;
+	let mut props = HashSet::new();
+	for entry in &segment.buffer {
+		for prop in &entry.props {
+			props.insert(prop.clone());
+		}
+		props.insert(Prop {
+			key: "level".into(),
+			value: entry.level.to_string(),
+		});
+	}
+	ctx.db.upsert_segment_props(new_id, props.iter()).await?;
+	tokio::fs::write(log_dir.join(format!("{}.log", new_id)), &compressed).await?;
+	for id in old_ids {
+		ctx.db.delete_segment(*id).await?;
+		let _ = tokio::fs::remove_file(log_dir.join(format!("{}.log", id))).await;
+	}
+	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::context::Context;
+	use chrono::Utc;
+	use puppylog::{LogEntry, LogLevel, Prop};
+	use std::fs;
+	use tempfile::tempdir;
+
+	async fn prepare_test_ctx() -> (Arc<Context>, tempfile::TempDir) {
+		let dir = tempdir().unwrap();
+		let logs_dir = dir.path().join("logs");
+		fs::create_dir_all(&logs_dir).unwrap();
+		std::env::set_var("LOG_PATH", &logs_dir);
+		let ctx = Arc::new(Context::new(&logs_dir).await);
+		(ctx, dir)
+	}
+
+	async fn create_segment(ctx: &Arc<Context>, entry: LogEntry) -> u32 {
+		use std::io::Cursor;
+
+		let mut seg = LogSegment::new();
+		seg.add_log_entry(entry.clone());
+		seg.sort();
+		let mut buff = Vec::new();
+		seg.serialize(&mut buff);
+		let original_size = buff.len();
+		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let compressed_size = compressed.len();
+		let id = ctx
+			.db
+			.new_segment(NewSegmentArgs {
+				first_timestamp: entry.timestamp,
+				last_timestamp: entry.timestamp,
+				original_size,
+				compressed_size,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+		ctx.db
+			.upsert_segment_props(
+				id,
+				[Prop {
+					key: "level".into(),
+					value: entry.level.to_string(),
+				}]
+				.iter(),
+			)
+			.await
+			.unwrap();
+		tokio::fs::write(log_path().join(format!("{}.log", id)), compressed)
+			.await
+			.unwrap();
+		id
+	}
+
+	#[tokio::test]
+	async fn merge_segments_combines_old_segments() {
+		let (ctx, _dir) = prepare_test_ctx().await;
+		let now = Utc::now();
+
+		let id1 = create_segment(
+			&ctx,
+			LogEntry {
+				timestamp: now - chrono::Duration::seconds(1),
+				level: LogLevel::Info,
+				msg: "first".into(),
+				..Default::default()
+			},
+		)
+		.await;
+		let id2 = create_segment(
+			&ctx,
+			LogEntry {
+				timestamp: now,
+				level: LogLevel::Info,
+				msg: "second".into(),
+				..Default::default()
+			},
+		)
+		.await;
+
+		// Ensure we start with two segments
+		assert_eq!(
+			ctx.db
+				.find_segments(&GetSegmentsQuery {
+					start: None,
+					end: None,
+					count: None,
+					sort: Some(SortDir::Asc),
+				})
+				.await
+				.unwrap()
+				.len(),
+			2
+		);
+
+		merge_once(&ctx).await.unwrap();
+
+		let metas = ctx
+			.db
+			.find_segments(&GetSegmentsQuery {
+				start: None,
+				end: None,
+				count: None,
+				sort: Some(SortDir::Asc),
+			})
+			.await
+			.unwrap();
+		assert_eq!(metas.len(), 1);
+		let merged_id = metas[0].id;
+		assert_eq!(metas[0].logs_count, 2);
+
+		// Old segment files should be gone
+		assert!(!log_path().join(format!("{}.log", id1)).exists());
+		assert!(!log_path().join(format!("{}.log", id2)).exists());
+		assert!(log_path().join(format!("{}.log", merged_id)).exists());
+
+		let compressed = fs::read(log_path().join(format!("{}.log", merged_id))).unwrap();
+		let decoded = zstd::decode_all(Cursor::new(compressed)).unwrap();
+		let mut cursor = Cursor::new(decoded);
+		let seg = LogSegment::parse(&mut cursor);
+		assert_eq!(seg.buffer.len(), 2);
+		assert!(seg.buffer[0].timestamp <= seg.buffer[1].timestamp);
+	}
+}
