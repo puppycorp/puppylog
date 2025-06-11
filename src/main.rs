@@ -103,8 +103,9 @@ async fn main() {
 	let ctx = Context::new(log_path).await;
 	let ctx = Arc::new(ctx);
 
-	// Spawn background worker that ingests staged log uploads
+	// Spawn background workers
 	tokio::spawn(background::process_log_uploads(ctx.clone()));
+	tokio::spawn(background::merge_segments(ctx.clone()));
 
 	let cors = CorsLayer::new()
 		.allow_origin(Any) // Allow requests from any origin
