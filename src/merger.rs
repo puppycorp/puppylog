@@ -86,8 +86,9 @@ async fn merge_once(ctx: &Arc<Context>) -> anyhow::Result<()> {
 	let log_dir = ctx.logs_dir();
 	for (lo, hi) in windows {
 		let mut logs = Vec::new();
+		let slice = &segments[lo..hi];
 		let mut ids = Vec::new();
-		for meta in &segments[lo..hi] {
+		for meta in slice {
 			let path = log_dir.join(format!("{}.log", meta.id));
 			let compressed = tokio::fs::read(&path).await?;
 			let decoded = zstd::decode_all(Cursor::new(compressed))?;
@@ -96,7 +97,9 @@ async fn merge_once(ctx: &Arc<Context>) -> anyhow::Result<()> {
 			logs.extend(seg.buffer.into_iter());
 			ids.push(meta.id);
 		}
-		write_segment(ctx, &logs, &ids, log_dir).await?;
+		log::info!("merging segments: {:?}", ids);
+		let new_id = write_segment(ctx, &logs, &ids, log_dir).await?;
+		log::info!("created merged segment {} from {:?}", new_id, ids);
 	}
 	Ok(())
 }
@@ -106,10 +109,7 @@ async fn write_segment(
 	logs: &[LogEntry],
 	old_ids: &[u32],
 	log_dir: &std::path::Path,
-) -> anyhow::Result<()> {
-	if logs.is_empty() {
-		return Ok(());
-	}
+) -> anyhow::Result<u32> {
 	let mut segment = LogSegment::with_logs(logs.to_vec());
 	segment.sort();
 	let first_timestamp = segment.buffer.first().unwrap().timestamp;
@@ -148,10 +148,11 @@ async fn write_segment(
 	ctx.db.upsert_segment_props(new_id, props.iter()).await?;
 	tokio::fs::rename(&tmp_path, log_dir.join(format!("{}.log", new_id))).await?;
 	for id in old_ids {
+		log::info!("removing segment {}", id);
 		ctx.db.delete_segment(*id).await?;
 		let _ = tokio::fs::remove_file(log_dir.join(format!("{}.log", id))).await;
 	}
-	Ok(())
+	Ok(new_id)
 }
 
 #[cfg(test)]
