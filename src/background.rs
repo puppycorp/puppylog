@@ -181,7 +181,7 @@ async fn merge_once(ctx: &Arc<Context>) -> anyhow::Result<()> {
 		return Ok(());
 	}
 
-	let log_dir = log_path();
+	let log_dir = ctx.logs_dir().to_path_buf();
 	let mut merged_logs = Vec::new();
 	let mut to_delete = Vec::new();
 
@@ -264,6 +264,7 @@ mod tests {
 	use crate::context::Context;
 	use chrono::Utc;
 	use puppylog::{LogEntry, LogLevel, Prop};
+	use serial_test::serial;
 	use std::fs;
 	use tempfile::tempdir;
 
@@ -271,7 +272,6 @@ mod tests {
 		let dir = tempdir().unwrap();
 		let logs_dir = dir.path().join("logs");
 		fs::create_dir_all(&logs_dir).unwrap();
-		std::env::set_var("LOG_PATH", &logs_dir);
 		let ctx = Arc::new(Context::new(&logs_dir).await);
 		(ctx, dir)
 	}
@@ -309,13 +309,14 @@ mod tests {
 			)
 			.await
 			.unwrap();
-		tokio::fs::write(log_path().join(format!("{}.log", id)), compressed)
+		tokio::fs::write(ctx.logs_dir().join(format!("{}.log", id)), compressed)
 			.await
 			.unwrap();
 		id
 	}
 
 	#[tokio::test]
+	#[serial]
 	async fn merge_segments_combines_old_segments() {
 		let (ctx, _dir) = prepare_test_ctx().await;
 		let now = Utc::now();
@@ -373,15 +374,51 @@ mod tests {
 		assert_eq!(metas[0].logs_count, 2);
 
 		// Old segment files should be gone
-		assert!(!log_path().join(format!("{}.log", id1)).exists());
-		assert!(!log_path().join(format!("{}.log", id2)).exists());
-		assert!(log_path().join(format!("{}.log", merged_id)).exists());
+		assert!(!ctx.logs_dir().join(format!("{}.log", id1)).exists());
+		assert!(!ctx.logs_dir().join(format!("{}.log", id2)).exists());
+		assert!(ctx.logs_dir().join(format!("{}.log", merged_id)).exists());
 
-		let compressed = fs::read(log_path().join(format!("{}.log", merged_id))).unwrap();
+		let compressed = fs::read(ctx.logs_dir().join(format!("{}.log", merged_id))).unwrap();
 		let decoded = zstd::decode_all(Cursor::new(compressed)).unwrap();
 		let mut cursor = Cursor::new(decoded);
 		let seg = LogSegment::parse(&mut cursor);
 		assert_eq!(seg.buffer.len(), 2);
 		assert!(seg.buffer[0].timestamp <= seg.buffer[1].timestamp);
+	}
+
+	#[tokio::test]
+	#[serial]
+	async fn merge_segments_leaves_no_tmp_files() {
+		let (ctx, _dir) = prepare_test_ctx().await;
+		let now = Utc::now();
+
+		create_segment(
+			&ctx,
+			LogEntry {
+				timestamp: now - chrono::Duration::seconds(1),
+				level: LogLevel::Info,
+				msg: "one".into(),
+				..Default::default()
+			},
+		)
+		.await;
+		create_segment(
+			&ctx,
+			LogEntry {
+				timestamp: now,
+				level: LogLevel::Info,
+				msg: "two".into(),
+				..Default::default()
+			},
+		)
+		.await;
+
+		merge_once(&ctx).await.unwrap();
+
+		let entries: Vec<_> = fs::read_dir(ctx.logs_dir()).unwrap().collect();
+		assert_eq!(entries.len(), 1);
+		let name = entries[0].as_ref().unwrap().file_name();
+		let fname = name.to_string_lossy();
+		assert!(fname.ends_with(".log"));
 	}
 }

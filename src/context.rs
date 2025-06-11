@@ -78,6 +78,10 @@ impl Context {
 		}
 	}
 
+	pub fn logs_dir(&self) -> &std::path::Path {
+		&self.logs_path
+	}
+
 	pub async fn save_logs(&self, logs: &[LogEntry]) {
 		let mut current = self.current.lock().await;
 		current.buffer.extend_from_slice(logs);
