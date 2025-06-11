@@ -146,6 +146,7 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
 	}
 }
 
+use rand::Rng;
 use std::collections::HashSet;
 use std::io::Cursor;
 
@@ -223,6 +224,11 @@ async fn write_segment(
 	buff.set_position(0);
 	let compressed = zstd::encode_all(buff, 0)?;
 	let compressed_size = compressed.len();
+
+	let tmp_name = format!("merge-{}.tmp", rand::thread_rng().gen::<u64>());
+	let tmp_path = log_dir.join(&tmp_name);
+	tokio::fs::write(&tmp_path, &compressed).await?;
+
 	let new_id = ctx
 		.db
 		.new_segment(NewSegmentArgs {
@@ -244,7 +250,7 @@ async fn write_segment(
 		});
 	}
 	ctx.db.upsert_segment_props(new_id, props.iter()).await?;
-	tokio::fs::write(log_dir.join(format!("{}.log", new_id)), &compressed).await?;
+	tokio::fs::rename(&tmp_path, log_dir.join(format!("{}.log", new_id))).await?;
 	for id in old_ids {
 		ctx.db.delete_segment(*id).await?;
 		let _ = tokio::fs::remove_file(log_dir.join(format!("{}.log", id))).await;
