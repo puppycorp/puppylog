@@ -99,6 +99,7 @@ impl Context {
 			let segment_id = self
 				.db
 				.new_segment(NewSegmentArgs {
+					device_id: None,
 					first_timestamp,
 					last_timestamp,
 					logs_count: current.buffer.len() as u64,
@@ -296,6 +297,10 @@ impl Context {
 	pub fn upload_guard(&self) -> Result<UploadGuard<'_>, &str> {
 		UploadGuard::new(&self.upload_queue, CONCURRENCY_LIMIT)
 	}
+
+	pub fn logs_path(&self) -> &Path {
+		&self.logs_path
+	}
 }
 
 #[cfg(test)]
@@ -377,6 +382,7 @@ mod tests {
 		let segment_id = ctx
 			.db
 			.new_segment(NewSegmentArgs {
+				device_id: None,
 				first_timestamp: entry.timestamp,
 				last_timestamp: entry.timestamp,
 				original_size,
@@ -460,6 +466,7 @@ mod tests {
 		let old_seg_id = ctx
 			.db
 			.new_segment(NewSegmentArgs {
+				device_id: None,
 				first_timestamp: entry_old.timestamp - Duration::hours(10),
 				last_timestamp: entry_old.timestamp + Duration::hours(10),
 				original_size: orig_size,
@@ -502,6 +509,7 @@ mod tests {
 		let new_seg_id = ctx
 			.db
 			.new_segment(NewSegmentArgs {
+				device_id: None,
 				first_timestamp: entry_new.timestamp,
 				last_timestamp: entry_new.timestamp,
 				original_size: orig_size,
@@ -583,6 +591,7 @@ mod tests {
 			let id = ctx
 				.db
 				.new_segment(NewSegmentArgs {
+					device_id: None,
 					first_timestamp: skip_entry.timestamp,
 					last_timestamp: skip_entry.timestamp,
 					original_size,
@@ -625,6 +634,7 @@ mod tests {
 			let id = ctx
 				.db
 				.new_segment(NewSegmentArgs {
+					device_id: None,
 					first_timestamp: want_entry.timestamp,
 					last_timestamp: want_entry.timestamp,
 					original_size,

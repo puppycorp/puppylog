@@ -67,14 +67,21 @@ const MIGRATIONS: &[Migration] = &[
 		id: 20250321,
 		name: "segment_props",
 		sql: r#"
-			CREATE TABLE segment_props (
-				segment_id INTEGER NOT NULL,
-				key TEXT NOT NULL,
-				value TEXT NOT NULL,
-				PRIMARY KEY (segment_id, key, value),
-				FOREIGN KEY (segment_id) REFERENCES log_segments(id)
-			);
-		"#,
+                        CREATE TABLE segment_props (
+                                segment_id INTEGER NOT NULL,
+                                key TEXT NOT NULL,
+                                value TEXT NOT NULL,
+                                PRIMARY KEY (segment_id, key, value),
+                                FOREIGN KEY (segment_id) REFERENCES log_segments(id)
+                        );
+                "#,
+	},
+	Migration {
+		id: 20250720,
+		name: "segment_device_id",
+		sql: r#"
+                       ALTER TABLE log_segments ADD COLUMN device_id TEXT;
+               "#,
 	},
 ];
 
@@ -91,6 +98,7 @@ pub fn open_db() -> Connection {
 }
 
 pub struct NewSegmentArgs {
+	pub device_id: Option<String>,
 	pub first_timestamp: chrono::DateTime<chrono::Utc>,
 	pub last_timestamp: chrono::DateTime<chrono::Utc>,
 	pub original_size: usize,
@@ -388,10 +396,11 @@ impl DB {
 		let tx = conn.transaction()?;
 		let new_id = {
 			let mut stmt = tx.prepare(
-				"INSERT INTO log_segments (first_timestamp, last_timestamp, original_size, compressed_size, logs_count)
-				 VALUES (?1, ?2, ?3, ?4, ?5)"
-			)?;
+                               "INSERT INTO log_segments (device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count)
+                                VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+                        )?;
 			stmt.execute([
+				&args.device_id as &dyn ToSql,
 				&args.first_timestamp as &dyn ToSql,
 				&args.last_timestamp as &dyn ToSql,
 				&args.original_size as &dyn ToSql,
@@ -410,7 +419,7 @@ impl DB {
 	) -> anyhow::Result<Vec<SegmentMeta>> {
 		let conn = self.conn.lock().await;
 		let mut sql = String::from(
-			"SELECT id, first_timestamp, last_timestamp, \
+			"SELECT id, device_id, first_timestamp, last_timestamp, \
              original_size, compressed_size, logs_count, created_at \
              FROM log_segments",
 		);
@@ -458,12 +467,13 @@ impl DB {
 		while let Some(row) = rows.next()? {
 			metas.push(SegmentMeta {
 				id: row.get(0)?,
-				first_timestamp: row.get(1)?,
-				last_timestamp: row.get(2)?,
-				original_size: row.get(3)?,
-				compressed_size: row.get(4)?,
-				logs_count: row.get(5)?,
-				created_at: row.get(6)?,
+				device_id: row.get(1)?,
+				first_timestamp: row.get(2)?,
+				last_timestamp: row.get(3)?,
+				original_size: row.get(4)?,
+				compressed_size: row.get(5)?,
+				logs_count: row.get(6)?,
+				created_at: row.get(7)?,
 			});
 		}
 
@@ -512,22 +522,24 @@ impl DB {
 
 	pub async fn fetch_segment(&self, segment: u32) -> anyhow::Result<SegmentMeta> {
 		let conn = self.conn.lock().await;
-		let segment = conn.query_row("select first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at from log_segments where id = ?1", [segment], |row| {
-			let first_timestamp: DateTime<Utc> = row.get(0)?;
-			let last_timestamp: DateTime<Utc> = row.get(1)?;
-			let original_size: usize = row.get(2)?;
-			let compressed_size: usize = row.get(3)?;
-			let logs_count: u64 = row.get(4)?;
-			let created_at: DateTime<Utc> = row.get(5)?;
-			Ok(SegmentMeta {
-				id: segment,
-				first_timestamp,
-				last_timestamp,
-				original_size,
-				compressed_size,
-				logs_count,
-				created_at,
-			})
+		let segment = conn.query_row("select device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at from log_segments where id = ?1", [segment], |row| {
+                       let device_id: Option<String> = row.get(0)?;
+                       let first_timestamp: DateTime<Utc> = row.get(1)?;
+                       let last_timestamp: DateTime<Utc> = row.get(2)?;
+                       let original_size: usize = row.get(3)?;
+                       let compressed_size: usize = row.get(4)?;
+                       let logs_count: u64 = row.get(5)?;
+                       let created_at: DateTime<Utc> = row.get(6)?;
+                       Ok(SegmentMeta {
+                               id: segment,
+                               device_id,
+                               first_timestamp,
+                               last_timestamp,
+                               original_size,
+                               compressed_size,
+                               logs_count,
+                               created_at,
+                       })
 		})?;
 		Ok(segment)
 	}
@@ -641,7 +653,7 @@ impl DB {
 		query: &QueryAst,
 	) -> anyhow::Result<Vec<SegmentMeta>> {
 		let conn = self.conn.lock().await;
-		let mut stmt = conn.prepare("SELECT id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE first_timestamp <= ? ORDER BY last_timestamp DESC LIMIT ?")?;
+		let mut stmt = conn.prepare("SELECT id, device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE first_timestamp <= ? ORDER BY last_timestamp DESC LIMIT ?")?;
 		let mut get_props_query =
 			conn.prepare("SELECT key, value FROM segment_props WHERE segment_id = ?1")?;
 		let mut rows = stmt.query(rusqlite::params![query.end_date, 50])?;
@@ -649,12 +661,13 @@ impl DB {
 		while let Some(row) = rows.next()? {
 			let meta = SegmentMeta {
 				id: row.get(0)?,
-				first_timestamp: row.get(1)?,
-				last_timestamp: row.get(2)?,
-				original_size: row.get(3)?,
-				compressed_size: row.get(4)?,
-				logs_count: row.get(5)?,
-				created_at: row.get(6)?,
+				device_id: row.get(1)?,
+				first_timestamp: row.get(2)?,
+				last_timestamp: row.get(3)?,
+				original_size: row.get(4)?,
+				compressed_size: row.get(5)?,
+				logs_count: row.get(6)?,
+				created_at: row.get(7)?,
 			};
 			let mut prop_rows = get_props_query.query(rusqlite::params![meta.id])?;
 			let mut props = Vec::new();
@@ -670,6 +683,7 @@ impl DB {
 			}
 			metas.push(SegmentMeta {
 				id: meta.id,
+				device_id: meta.device_id.clone(),
 				first_timestamp: meta.first_timestamp,
 				last_timestamp: meta.last_timestamp,
 				original_size: meta.original_size,
@@ -733,6 +747,7 @@ mod tests {
 		let now = Utc::now();
 		let segment = db
 			.new_segment(NewSegmentArgs {
+				device_id: None,
 				first_timestamp: now,
 				last_timestamp: now,
 				original_size: 1,
@@ -770,6 +785,7 @@ mod tests {
 		let last_ts = now - chrono::Duration::hours(1);
 		let seg_id = db
 			.new_segment(NewSegmentArgs {
+				device_id: None,
 				first_timestamp: first_ts,
 				last_timestamp: last_ts,
 				original_size: 100,
@@ -810,6 +826,7 @@ mod tests {
 
 		let info_id = db
 			.new_segment(NewSegmentArgs {
+				device_id: None,
 				first_timestamp: now - Duration::hours(3),
 				last_timestamp: now - Duration::hours(2),
 				original_size: 1,
@@ -831,6 +848,7 @@ mod tests {
 
 		let error_id = db
 			.new_segment(NewSegmentArgs {
+				device_id: None,
 				first_timestamp: now - Duration::hours(1),
 				last_timestamp: now,
 				original_size: 1,
