@@ -78,7 +78,7 @@ const MIGRATIONS: &[Migration] = &[
 		"#,
 	},
 	Migration {
-		id: 20250720,
+		id: 20250614,
 		name: "segment_device_id",
 		sql: r#"
 			ALTER TABLE log_segments ADD COLUMN device_id TEXT;
