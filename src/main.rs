@@ -104,9 +104,7 @@ async fn main() {
 	let ctx = Context::new(log_path).await;
 	let ctx = Arc::new(ctx);
 
-	// Spawn background worker that ingests staged log uploads
 	tokio::spawn(background::process_log_uploads(ctx.clone()));
-	// Spawn device log merger
 	tokio::spawn(merger::run_device_merger(ctx.clone()));
 
 	let cors = CorsLayer::new()
