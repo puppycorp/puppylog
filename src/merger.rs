@@ -6,6 +6,7 @@ use crate::context::Context;
 use crate::db::NewSegmentArgs;
 use crate::segment::LogSegment;
 use puppylog::{LogEntry, Prop};
+use tokio::fs::remove_file;
 
 pub const TARGET_SEGMENT_SIZE: usize = 300_000;
 
@@ -69,8 +70,6 @@ impl DeviceMerger {
 	}
 
 	pub async fn run_once(&mut self) -> anyhow::Result<bool> {
-		use tokio::fs::remove_file;
-
 		let segments = self.ctx.db.find_segments_without_device(None).await?;
 		let mut processed = false;
 		for seg in segments {
@@ -79,6 +78,7 @@ impl DeviceMerger {
 				Ok(f) => f,
 				Err(_) => continue,
 			};
+			log::info!("process segment {} from {}", seg.id, path.display());
 			let mut decoder = zstd::Decoder::new(file)?;
 			let log_seg = LogSegment::parse(&mut decoder);
 			for log in log_seg.buffer {
