@@ -107,10 +107,10 @@ impl DeviceMerger {
 pub async fn run_device_merger(ctx: Arc<Context>) {
 	let mut merger = DeviceMerger::new(ctx);
 	loop {
-		let processed = merger.run_once().await.unwrap_or(false);
-		if !processed {
-			tokio::time::sleep(Duration::from_secs(5)).await;
+		if let Err(err) = merger.run_once().await {
+			log::error!("failed to merge logs: {}", err);
 		}
+		tokio::time::sleep(Duration::from_secs(10)).await;
 	}
 }
 
