@@ -131,7 +131,7 @@ impl Context {
 	pub async fn find_logs(
 		&self,
 		query: QueryAst,
-		mut cb: impl FnMut(&LogEntry) -> bool,
+		tx: &mpsc::Sender<LogEntry>,
 	) -> anyhow::Result<()> {
 		let mut end = query.end_date.unwrap_or(Utc::now());
 		let tz = query
@@ -147,6 +147,9 @@ impl Context {
 			let current = self.current.lock().await;
 			let iter = current.iter();
 			for entry in iter {
+				if tx.is_closed() {
+					return Ok(());
+				}
 				if entry.timestamp > end {
 					continue;
 				}
@@ -160,7 +163,7 @@ impl Context {
 					Ok(true) => {}
 					_ => continue,
 				}
-				if !cb(entry) {
+				if tx.send(entry.clone()).await.is_err() {
 					return Ok(());
 				}
 			}
@@ -171,6 +174,9 @@ impl Context {
 		let mut processed_segments: HashSet<u32> = HashSet::new();
 
 		'outer: loop {
+			if tx.is_closed() {
+				break;
+			}
 			let mut end = match self.db.prev_segment_end(prev_end).await? {
 				Some(e) => e,
 				None => {
@@ -213,6 +219,9 @@ impl Context {
 				timer.elapsed()
 			);
 			for segment in &segments {
+				if tx.is_closed() {
+					break 'outer;
+				}
 				if !processed_segments.insert(segment.id) {
 					continue;
 				}
@@ -260,6 +269,9 @@ impl Context {
 				let segment = LogSegment::parse(&mut decoder);
 				let iter = segment.iter();
 				for entry in iter {
+					if tx.is_closed() {
+						break 'outer;
+					}
 					if entry.timestamp > end {
 						continue;
 					}
@@ -267,7 +279,7 @@ impl Context {
 						Ok(true) => {}
 						_ => continue,
 					}
-					if !cb(entry) {
+					if tx.send(entry.clone()).await.is_err() {
 						log::info!("stopped searching logs at {:?}", entry);
 						break 'outer;
 					}
@@ -325,13 +337,13 @@ mod tests {
 		ctx.save_logs(&[entry.clone()]).await;
 
 		let query = parse_log_query("msg = \"match me\"").unwrap();
+		let (tx, mut rx) = mpsc::channel(10);
+		ctx.find_logs(query, &tx).await.unwrap();
+		drop(tx);
 		let mut found = Vec::new();
-		ctx.find_logs(query, |log| {
-			found.push(log.clone());
-			true
-		})
-		.await
-		.unwrap();
+		while let Some(log) = rx.recv().await {
+			found.push(log);
+		}
 
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "match me");
@@ -387,15 +399,15 @@ mod tests {
 		let path = ctx.logs_path.join(format!("{}.log", segment_id));
 		fs::write(path, compressed).unwrap();
 
-		let mut found = Vec::new();
 		let mut query = parse_log_query("msg = \"segment log\"").unwrap();
 		query.end_date = Some(Utc::now());
-		ctx.find_logs(query, |log| {
-			found.push(log.clone());
-			true
-		})
-		.await
-		.unwrap();
+		let (tx, mut rx) = mpsc::channel(10);
+		ctx.find_logs(query, &tx).await.unwrap();
+		drop(tx);
+		let mut found = Vec::new();
+		while let Some(log) = rx.recv().await {
+			found.push(log);
+		}
 
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "segment log");
@@ -408,13 +420,13 @@ mod tests {
 
 		// Search for a message that does not exist anywhere.
 		let query = parse_log_query("msg = \"non‑existent log\"").unwrap();
+		let (tx, mut rx) = mpsc::channel(10);
+		ctx.find_logs(query, &tx).await.unwrap();
+		drop(tx);
 		let mut found = Vec::<LogEntry>::new();
-		ctx.find_logs(query, |log| {
-			found.push(log.clone());
-			true
-		})
-		.await
-		.unwrap();
+		while let Some(log) = rx.recv().await {
+			found.push(log);
+		}
 
 		// We expect to find **no** matching entries.
 		assert!(found.is_empty(), "unexpectedly found logs: {:?}", found);
@@ -512,13 +524,13 @@ mod tests {
 
 		let mut query = parse_log_query("msg = \"duplicate\"").unwrap();
 		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(10);
+		ctx.find_logs(query, &tx).await.unwrap();
+		drop(tx);
 		let mut found = Vec::new();
-		ctx.find_logs(query, |log| {
-			found.push(log.clone());
-			true
-		})
-		.await
-		.unwrap();
+		while let Some(log) = rx.recv().await {
+			found.push(log);
+		}
 
 		assert_eq!(found.len(), 1, "log returned more than once");
 		assert_eq!(found[0].msg, "duplicate");
@@ -634,26 +646,26 @@ mod tests {
 		}
 
 		let q_skip = parse_log_query("msg = \"should_not_be_seen\"").unwrap();
+		let (tx_skip, mut rx_skip) = mpsc::channel(10);
+		ctx.find_logs(q_skip, &tx_skip).await.unwrap();
+		drop(tx_skip);
 		let mut seen = Vec::<LogEntry>::new();
-		ctx.find_logs(q_skip, |e| {
-			seen.push(e.clone());
-			true
-		})
-		.await
-		.unwrap();
+		while let Some(e) = rx_skip.recv().await {
+			seen.push(e);
+		}
 		assert!(
 			seen.is_empty(),
 			"search incorrectly visited segment {new_seg_id} that is newer than in-memory logs"
 		);
 
 		let q_target = parse_log_query("msg = \"target\"").unwrap();
+		let (tx_target, mut rx_target) = mpsc::channel(10);
+		ctx.find_logs(q_target, &tx_target).await.unwrap();
+		drop(tx_target);
 		let mut found = Vec::<LogEntry>::new();
-		ctx.find_logs(q_target, |e| {
-			found.push(e.clone());
-			true
-		})
-		.await
-		.unwrap();
+		while let Some(e) = rx_target.recv().await {
+			found.push(e);
+		}
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "target");
 		drop(dir);
