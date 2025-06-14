@@ -13,6 +13,7 @@ pub enum SortDir {
 pub struct GetSegmentsQuery {
 	pub start: Option<DateTime<Utc>>,
 	pub end: Option<DateTime<Utc>>,
+	pub device_ids: Option<Vec<String>>,
 	pub count: Option<usize>,
 	pub sort: Option<SortDir>,
 }

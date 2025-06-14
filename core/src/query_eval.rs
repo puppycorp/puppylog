@@ -434,6 +434,51 @@ pub fn extract_date_conditions(expr: &Expr) -> Vec<Condition> {
 	out
 }
 
+pub fn extract_device_ids(expr: &Expr) -> Vec<String> {
+	fn add_id_from_value(vec: &mut Vec<String>, val: &Value) {
+		match val {
+			Value::String(s) => vec.push(s.clone()),
+			Value::Number(n) => vec.push(n.to_string()),
+			Value::List(list) => {
+				for v in list {
+					add_id_from_value(vec, v);
+				}
+			}
+			_ => {}
+		}
+	}
+
+	let mut ids = Vec::new();
+	match expr {
+		Expr::Condition(cond) => {
+			if let (Expr::Value(Value::String(left)), Expr::Value(right)) =
+				(cond.left.as_ref(), cond.right.as_ref())
+			{
+				if left == "deviceId" {
+					if matches!(cond.operator, Operator::Equal | Operator::In) {
+						add_id_from_value(&mut ids, right);
+					}
+				}
+			} else if let (Expr::Value(left), Expr::Value(Value::String(right))) =
+				(cond.left.as_ref(), cond.right.as_ref())
+			{
+				if right == "deviceId" {
+					if matches!(cond.operator, Operator::Equal | Operator::In) {
+						add_id_from_value(&mut ids, left);
+					}
+				}
+			}
+		}
+		Expr::And(l, r) | Expr::Or(l, r) => {
+			ids.extend(extract_device_ids(l));
+			ids.extend(extract_device_ids(r));
+		}
+		_ => {}
+	}
+
+	ids
+}
+
 pub fn timestamp_bounds(expr: &Expr) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
 	let mut start: Option<DateTime<Utc>> = None;
 	let mut end: Option<DateTime<Utc>> = None;
@@ -727,6 +772,21 @@ mod tests {
 		assert_eq!(conds.len(), 1);
 		if let Expr::FieldAccess(_) = *conds[0].left {}
 		assert_eq!(conds[0].operator, Operator::Equal);
+	}
+
+	#[test]
+	fn extract_device_ids_basic() {
+		let ast =
+			crate::parse_log_query("deviceId = 1 or 2 = deviceId or deviceId in (3 , 4)").unwrap();
+		let ids = extract_device_ids(&ast.root);
+		assert_eq!(ids, vec!["1", "2", "3", "4"]);
+	}
+
+	#[test]
+	fn extract_device_ids_negative() {
+		let ast = crate::parse_log_query("deviceId != 5 and deviceId not in (6)").unwrap();
+		let ids = extract_device_ids(&ast.root);
+		assert!(ids.is_empty());
 	}
 	#[test]
 	fn match_date_range_month() {
