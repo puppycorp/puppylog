@@ -69,18 +69,11 @@ impl DeviceMerger {
 	}
 
 	pub async fn run_once(&mut self) -> anyhow::Result<bool> {
-		use crate::types::GetSegmentsQuery;
 		use tokio::fs::remove_file;
 
-		let segments = self
-			.ctx
-			.db
-			.find_segments(&GetSegmentsQuery {
-				..Default::default()
-			})
-			.await?;
+		let segments = self.ctx.db.find_segments_without_device(None).await?;
 		let mut processed = false;
-		for seg in segments.into_iter().filter(|s| s.device_id.is_none()) {
+		for seg in segments {
 			let path = self.ctx.logs_path().join(format!("{}.log", seg.id));
 			let file = match std::fs::File::open(&path) {
 				Ok(f) => f,

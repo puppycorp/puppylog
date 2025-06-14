@@ -544,6 +544,42 @@ impl DB {
 		Ok(segment)
 	}
 
+	pub async fn find_segments_without_device(
+		&self,
+		limit: Option<u32>,
+	) -> anyhow::Result<Vec<SegmentMeta>> {
+		let conn = self.conn.lock().await;
+		let mut sql = String::from(
+                        "SELECT id, device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE device_id IS NULL ORDER BY id",
+                );
+		let mut limit_param: i64 = 0;
+		let params: Vec<&dyn ToSql> = if let Some(lim) = limit {
+			sql.push_str(" LIMIT ?");
+			limit_param = lim as i64;
+			vec![&limit_param]
+		} else {
+			Vec::new()
+		};
+
+		let mut stmt = conn.prepare(&sql)?;
+		let mut rows = stmt.query(params.as_slice())?;
+		let mut metas = Vec::new();
+		while let Some(row) = rows.next()? {
+			metas.push(SegmentMeta {
+				id: row.get(0)?,
+				device_id: row.get(1)?,
+				first_timestamp: row.get(2)?,
+				last_timestamp: row.get(3)?,
+				original_size: row.get(4)?,
+				compressed_size: row.get(5)?,
+				logs_count: row.get(6)?,
+				created_at: row.get(7)?,
+			});
+		}
+
+		Ok(metas)
+	}
+
 	pub async fn delete_segment(&self, segment: u32) -> anyhow::Result<()> {
 		let mut conn = self.conn.lock().await;
 		let tx = conn.transaction()?;
@@ -883,5 +919,42 @@ mod tests {
 			metas_error.iter().map(|m| m.id).collect::<Vec<_>>(),
 			vec![error_id]
 		);
+	}
+
+	#[tokio::test]
+	async fn find_segments_without_device() {
+		let conn = Connection::open_in_memory().unwrap();
+		let db = DB::new(conn);
+
+		let now = Utc::now();
+
+		let no_dev = db
+			.new_segment(NewSegmentArgs {
+				device_id: None,
+				first_timestamp: now,
+				last_timestamp: now,
+				original_size: 1,
+				compressed_size: 1,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+
+		let _with_dev = db
+			.new_segment(NewSegmentArgs {
+				device_id: Some("dev1".into()),
+				first_timestamp: now,
+				last_timestamp: now,
+				original_size: 1,
+				compressed_size: 1,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+
+		let metas = db.find_segments_without_device(None).await.unwrap();
+		assert_eq!(metas.len(), 1);
+		assert_eq!(metas[0].id, no_dev);
+		assert!(metas[0].device_id.is_none());
 	}
 }
