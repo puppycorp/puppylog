@@ -614,28 +614,10 @@ async fn get_logs(
 	};
 
 	let (tx, rx) = mpsc::channel(100);
-	let producer_query = query.clone();
 	let ctx_clone = Arc::clone(&ctx);
+	let q = query.clone();
 	spawn_blocking(move || {
-		let end = producer_query
-			.end_date
-			.unwrap_or_else(|| chrono::Utc::now() + chrono::Duration::days(200));
-		let count = producer_query.limit.unwrap_or(200);
-		let mut sent = 0;
-		block_on(ctx_clone.find_logs(query, |entry| {
-			if tx.is_closed() {
-				return false;
-			}
-			let log_json = logentry_to_json(entry);
-			if tx.blocking_send(log_json).is_err() {
-				return false;
-			}
-			sent += 1;
-			if sent >= count {
-				return false;
-			}
-			true
-		}));
+		let _ = block_on(ctx_clone.find_logs(q, &tx));
 	});
 
 	let wants_stream = headers
@@ -644,14 +626,26 @@ async fn get_logs(
 		.map(|s| s.contains("text/event-stream"))
 		.unwrap_or(false);
 
+	let limit = query.limit.unwrap_or(200) as usize;
+
 	let res = if wants_stream {
-		let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(|log| {
-			let data = to_string(&log).unwrap();
-			Ok::<Event, std::convert::Infallible>(Event::default().data(data))
-		});
+		use tokio_stream::StreamExt;
+		let stream = tokio_stream::StreamExt::map(
+			tokio_stream::StreamExt::take(tokio_stream::wrappers::ReceiverStream::new(rx), limit),
+			|log| {
+				let data = to_string(&logentry_to_json(&log)).unwrap();
+				Ok::<Event, std::convert::Infallible>(Event::default().data(data))
+			},
+		);
 		Sse::new(stream).into_response()
 	} else {
-		let logs: Vec<_> = ReceiverStream::new(rx).collect::<Vec<_>>().await;
+		use tokio_stream::StreamExt;
+		let logs: Vec<_> =
+			tokio_stream::StreamExt::collect::<Vec<_>>(tokio_stream::StreamExt::map(
+				tokio_stream::StreamExt::take(ReceiverStream::new(rx), limit),
+				|log| logentry_to_json(&log),
+			))
+			.await;
 		Json(serde_json::to_value(&logs).unwrap()).into_response()
 	};
 	Ok(res)
@@ -697,25 +691,30 @@ async fn get_histogram(
 		query.tz_offset = chrono::FixedOffset::east_opt(-offset * 60);
 	}
 	let (tx, rx) = mpsc::channel(100);
+	let (entry_tx, mut entry_rx) = mpsc::channel(100);
 	let ctx_clone = Arc::clone(&ctx);
-	let producer_query = query.clone();
+	let q = query.clone();
 	spawn_blocking(move || {
+		let _ = block_on(ctx_clone.find_logs(q, &entry_tx));
+	});
+
+	tokio::spawn(async move {
 		let mut current_bucket: Option<i64> = None;
 		let mut count: u64 = 0;
-		block_on(ctx_clone.find_logs(producer_query, |entry| {
+		while let Some(entry) = entry_rx.recv().await {
 			let ts = entry.timestamp.timestamp();
 			let bucket = ts - ts % bucket_secs as i64;
 			if let Some(cb) = current_bucket {
 				if bucket != cb {
 					if tx.is_closed() {
-						return false;
+						break;
 					}
 					let item = json!({
 					"timestamp": DateTime::<Utc>::from_timestamp(cb, 0).unwrap(),
 					"count": count,
 					});
-					if tx.blocking_send(item).is_err() {
-						return false;
+					if tx.send(item).await.is_err() {
+						break;
 					}
 					current_bucket = Some(bucket);
 					count = 1;
@@ -726,14 +725,13 @@ async fn get_histogram(
 				current_bucket = Some(bucket);
 				count = 1;
 			}
-			true
-		}));
+		}
 		if let Some(cb) = current_bucket {
 			let item = json!({
 			"timestamp": DateTime::<Utc>::from_timestamp(cb, 0).unwrap(),
 			"count": count,
 			});
-			let _ = tx.blocking_send(item);
+			let _ = tx.send(item).await;
 		}
 	});
 
@@ -743,7 +741,6 @@ async fn get_histogram(
 	});
 	Ok(Sse::new(stream))
 }
-
 #[cfg(test)]
 mod tests {
 	use super::*;
