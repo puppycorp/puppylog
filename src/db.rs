@@ -1,6 +1,7 @@
 use chrono::DateTime;
 use chrono::Utc;
 use puppylog::check_props;
+use puppylog::extract_device_ids;
 use puppylog::LogLevel;
 use puppylog::Prop;
 use puppylog::QueryAst;
@@ -443,6 +444,21 @@ impl DB {
 			conditions.push(condition);
 		}
 
+		if let Some(ids) = &query.device_ids {
+			if !ids.is_empty() {
+				let placeholders = std::iter::repeat("?")
+					.take(ids.len())
+					.collect::<Vec<_>>()
+					.join(", ");
+				conditions.push(format!("device_id IN ({})", placeholders));
+				for id in ids {
+					params.push(id as &dyn ToSql);
+				}
+			} else {
+				conditions.push("1 = 0".to_string());
+			}
+		}
+
 		if !conditions.is_empty() {
 			sql.push_str(" WHERE ");
 			sql.push_str(&conditions.join(" AND "));
@@ -689,10 +705,26 @@ impl DB {
 		query: &QueryAst,
 	) -> anyhow::Result<Vec<SegmentMeta>> {
 		let conn = self.conn.lock().await;
-		let mut stmt = conn.prepare("SELECT id, device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE first_timestamp <= ? ORDER BY last_timestamp DESC LIMIT ?")?;
+		let device_ids = puppylog::extract_device_ids(&query.root);
+		let mut sql = String::from("SELECT id, device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE first_timestamp <= ?");
+		if !device_ids.is_empty() {
+			let placeholders = std::iter::repeat("?")
+				.take(device_ids.len())
+				.collect::<Vec<_>>()
+				.join(", ");
+			sql.push_str(&format!(" AND device_id IN ({})", placeholders));
+		}
+		sql.push_str(" ORDER BY last_timestamp DESC LIMIT ?");
+		let mut stmt = conn.prepare(&sql)?;
 		let mut get_props_query =
 			conn.prepare("SELECT key, value FROM segment_props WHERE segment_id = ?1")?;
-		let mut rows = stmt.query(rusqlite::params![query.end_date, 50])?;
+		let mut params: Vec<&dyn rusqlite::ToSql> = vec![&query.end_date as &dyn rusqlite::ToSql];
+		for id in &device_ids {
+			params.push(id as &dyn rusqlite::ToSql);
+		}
+		let limit_param: i64 = 50;
+		params.push(&limit_param);
+		let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
 		let mut metas = Vec::new();
 		while let Some(row) = rows.next()? {
 			let meta = SegmentMeta {
@@ -837,6 +869,7 @@ mod tests {
 			.find_segments(&GetSegmentsQuery {
 				start: Some(now - chrono::Duration::minutes(90)),
 				end: Some(now),
+				device_ids: None,
 				count: None,
 				sort: None,
 			})
