@@ -16,7 +16,7 @@ use puppylog::LogEntry;
 use puppylog::Prop;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
-use puppylog::{check_expr, check_props, timestamp_bounds};
+use puppylog::{check_expr, check_props, extract_device_ids, timestamp_bounds};
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Cursor;
@@ -135,6 +135,7 @@ impl Context {
 		tx: &mpsc::Sender<LogEntry>,
 	) -> anyhow::Result<()> {
 		let mut end = query.end_date.unwrap_or(Utc::now());
+		let device_ids = extract_device_ids(&query.root);
 		let tz = query
 			.tz_offset
 			.unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
@@ -204,6 +205,11 @@ impl Context {
 				.find_segments(&GetSegmentsQuery {
 					start: Some(start),
 					end: Some(end),
+					device_ids: if device_ids.is_empty() {
+						None
+					} else {
+						Some(device_ids.clone())
+					},
 					..Default::default()
 				})
 				.await
@@ -653,6 +659,114 @@ mod tests {
 				.await
 				.unwrap();
 			fs::write(ctx.logs_path.join(format!("{}.log", id)), compressed).unwrap();
+		}
+
+		#[tokio::test]
+		async fn find_logs_filter_device_id() {
+			use chrono::{Duration, Utc};
+			use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
+			use std::fs;
+			use std::io::Cursor;
+			use zstd;
+
+			let (ctx, dir) = prepare_test_ctx().await;
+			let now = Utc::now();
+
+			let entry1 = LogEntry {
+				timestamp: now - Duration::hours(30),
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "deviceId".into(),
+					value: "dev1".into(),
+				}],
+				msg: "d1".into(),
+				..Default::default()
+			};
+			let mut seg1 = LogSegment::new();
+			seg1.add_log_entry(entry1.clone());
+			seg1.sort();
+			let mut buff = Vec::new();
+			seg1.serialize(&mut buff);
+			let orig_size = buff.len();
+			let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+			let comp_size = compressed.len();
+			let seg_id1 = ctx
+				.db
+				.new_segment(NewSegmentArgs {
+					device_id: Some("dev1".into()),
+					first_timestamp: entry1.timestamp,
+					last_timestamp: entry1.timestamp,
+					original_size: orig_size,
+					compressed_size: comp_size,
+					logs_count: 1,
+				})
+				.await
+				.unwrap();
+			let mut props_vec: Vec<Prop> = entry1.props.clone();
+			props_vec.push(Prop {
+				key: "level".into(),
+				value: entry1.level.to_string(),
+			});
+			ctx.db
+				.upsert_segment_props(seg_id1, props_vec.iter())
+				.await
+				.unwrap();
+			fs::write(ctx.logs_path.join(format!("{}.log", seg_id1)), compressed).unwrap();
+
+			let entry2 = LogEntry {
+				timestamp: now - Duration::hours(25),
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "deviceId".into(),
+					value: "dev2".into(),
+				}],
+				msg: "d2".into(),
+				..Default::default()
+			};
+			let mut seg2 = LogSegment::new();
+			seg2.add_log_entry(entry2.clone());
+			seg2.sort();
+			let mut buff = Vec::new();
+			seg2.serialize(&mut buff);
+			let orig_size = buff.len();
+			let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+			let comp_size = compressed.len();
+			let seg_id2 = ctx
+				.db
+				.new_segment(NewSegmentArgs {
+					device_id: Some("dev2".into()),
+					first_timestamp: entry2.timestamp,
+					last_timestamp: entry2.timestamp,
+					original_size: orig_size,
+					compressed_size: comp_size,
+					logs_count: 1,
+				})
+				.await
+				.unwrap();
+			let mut props_vec: Vec<Prop> = entry2.props.clone();
+			props_vec.push(Prop {
+				key: "level".into(),
+				value: entry2.level.to_string(),
+			});
+			ctx.db
+				.upsert_segment_props(seg_id2, props_vec.iter())
+				.await
+				.unwrap();
+			fs::write(ctx.logs_path.join(format!("{}.log", seg_id2)), compressed).unwrap();
+
+			let mut query = parse_log_query("deviceId = dev1").unwrap();
+			query.end_date = Some(now);
+			let (tx, mut rx) = mpsc::channel(10);
+			ctx.find_logs(query, &tx).await.unwrap();
+			drop(tx);
+			let mut found = Vec::new();
+			while let Some(log) = rx.recv().await {
+				found.push(log);
+			}
+
+			assert_eq!(found.len(), 1);
+			assert_eq!(found[0].msg, "d1");
+			drop(dir);
 		}
 
 		let q_skip = parse_log_query("msg = \"should_not_be_seen\"").unwrap();
