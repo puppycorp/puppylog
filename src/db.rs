@@ -67,21 +67,21 @@ const MIGRATIONS: &[Migration] = &[
 		id: 20250321,
 		name: "segment_props",
 		sql: r#"
-                        CREATE TABLE segment_props (
-                                segment_id INTEGER NOT NULL,
-                                key TEXT NOT NULL,
-                                value TEXT NOT NULL,
-                                PRIMARY KEY (segment_id, key, value),
-                                FOREIGN KEY (segment_id) REFERENCES log_segments(id)
-                        );
-                "#,
+			CREATE TABLE segment_props (
+					segment_id INTEGER NOT NULL,
+					key TEXT NOT NULL,
+					value TEXT NOT NULL,
+					PRIMARY KEY (segment_id, key, value),
+					FOREIGN KEY (segment_id) REFERENCES log_segments(id)
+			);
+		"#,
 	},
 	Migration {
 		id: 20250720,
 		name: "segment_device_id",
 		sql: r#"
-                       ALTER TABLE log_segments ADD COLUMN device_id TEXT;
-               "#,
+			ALTER TABLE log_segments ADD COLUMN device_id TEXT;
+		"#,
 	},
 ];
 
