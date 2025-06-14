@@ -399,6 +399,7 @@ async fn import_segments(path: &str) -> anyhow::Result<()> {
 
 		let segment_id = db
 			.new_segment(db::NewSegmentArgs {
+				device_id: None,
 				first_timestamp,
 				last_timestamp,
 				original_size,

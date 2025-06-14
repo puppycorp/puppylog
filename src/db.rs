@@ -1,6 +1,7 @@
 use chrono::DateTime;
 use chrono::Utc;
 use puppylog::check_props;
+use puppylog::extract_device_ids;
 use puppylog::LogLevel;
 use puppylog::Prop;
 use puppylog::QueryAst;
@@ -68,12 +69,19 @@ const MIGRATIONS: &[Migration] = &[
 		name: "segment_props",
 		sql: r#"
 			CREATE TABLE segment_props (
-				segment_id INTEGER NOT NULL,
-				key TEXT NOT NULL,
-				value TEXT NOT NULL,
-				PRIMARY KEY (segment_id, key, value),
-				FOREIGN KEY (segment_id) REFERENCES log_segments(id)
+					segment_id INTEGER NOT NULL,
+					key TEXT NOT NULL,
+					value TEXT NOT NULL,
+					PRIMARY KEY (segment_id, key, value),
+					FOREIGN KEY (segment_id) REFERENCES log_segments(id)
 			);
+		"#,
+	},
+	Migration {
+		id: 20250614,
+		name: "segment_device_id",
+		sql: r#"
+			ALTER TABLE log_segments ADD COLUMN device_id TEXT;
 		"#,
 	},
 ];
@@ -91,6 +99,7 @@ pub fn open_db() -> Connection {
 }
 
 pub struct NewSegmentArgs {
+	pub device_id: Option<String>,
 	pub first_timestamp: chrono::DateTime<chrono::Utc>,
 	pub last_timestamp: chrono::DateTime<chrono::Utc>,
 	pub original_size: usize,
@@ -388,10 +397,11 @@ impl DB {
 		let tx = conn.transaction()?;
 		let new_id = {
 			let mut stmt = tx.prepare(
-				"INSERT INTO log_segments (first_timestamp, last_timestamp, original_size, compressed_size, logs_count)
-				 VALUES (?1, ?2, ?3, ?4, ?5)"
-			)?;
+                               "INSERT INTO log_segments (device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count)
+                                VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+                        )?;
 			stmt.execute([
+				&args.device_id as &dyn ToSql,
 				&args.first_timestamp as &dyn ToSql,
 				&args.last_timestamp as &dyn ToSql,
 				&args.original_size as &dyn ToSql,
@@ -410,7 +420,7 @@ impl DB {
 	) -> anyhow::Result<Vec<SegmentMeta>> {
 		let conn = self.conn.lock().await;
 		let mut sql = String::from(
-			"SELECT id, first_timestamp, last_timestamp, \
+			"SELECT id, device_id, first_timestamp, last_timestamp, \
              original_size, compressed_size, logs_count, created_at \
              FROM log_segments",
 		);
@@ -432,6 +442,21 @@ impl DB {
 				params.push(end);
 			}
 			conditions.push(condition);
+		}
+
+		if let Some(ids) = &query.device_ids {
+			if !ids.is_empty() {
+				let placeholders = std::iter::repeat("?")
+					.take(ids.len())
+					.collect::<Vec<_>>()
+					.join(", ");
+				conditions.push(format!("device_id IN ({})", placeholders));
+				for id in ids {
+					params.push(id as &dyn ToSql);
+				}
+			} else {
+				conditions.push("1 = 0".to_string());
+			}
 		}
 
 		if !conditions.is_empty() {
@@ -458,12 +483,13 @@ impl DB {
 		while let Some(row) = rows.next()? {
 			metas.push(SegmentMeta {
 				id: row.get(0)?,
-				first_timestamp: row.get(1)?,
-				last_timestamp: row.get(2)?,
-				original_size: row.get(3)?,
-				compressed_size: row.get(4)?,
-				logs_count: row.get(5)?,
-				created_at: row.get(6)?,
+				device_id: row.get(1)?,
+				first_timestamp: row.get(2)?,
+				last_timestamp: row.get(3)?,
+				original_size: row.get(4)?,
+				compressed_size: row.get(5)?,
+				logs_count: row.get(6)?,
+				created_at: row.get(7)?,
 			});
 		}
 
@@ -512,24 +538,62 @@ impl DB {
 
 	pub async fn fetch_segment(&self, segment: u32) -> anyhow::Result<SegmentMeta> {
 		let conn = self.conn.lock().await;
-		let segment = conn.query_row("select first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at from log_segments where id = ?1", [segment], |row| {
-			let first_timestamp: DateTime<Utc> = row.get(0)?;
-			let last_timestamp: DateTime<Utc> = row.get(1)?;
-			let original_size: usize = row.get(2)?;
-			let compressed_size: usize = row.get(3)?;
-			let logs_count: u64 = row.get(4)?;
-			let created_at: DateTime<Utc> = row.get(5)?;
-			Ok(SegmentMeta {
-				id: segment,
-				first_timestamp,
-				last_timestamp,
-				original_size,
-				compressed_size,
-				logs_count,
-				created_at,
-			})
+		let segment = conn.query_row("select device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at from log_segments where id = ?1", [segment], |row| {
+                       let device_id: Option<String> = row.get(0)?;
+                       let first_timestamp: DateTime<Utc> = row.get(1)?;
+                       let last_timestamp: DateTime<Utc> = row.get(2)?;
+                       let original_size: usize = row.get(3)?;
+                       let compressed_size: usize = row.get(4)?;
+                       let logs_count: u64 = row.get(5)?;
+                       let created_at: DateTime<Utc> = row.get(6)?;
+                       Ok(SegmentMeta {
+                               id: segment,
+                               device_id,
+                               first_timestamp,
+                               last_timestamp,
+                               original_size,
+                               compressed_size,
+                               logs_count,
+                               created_at,
+                       })
 		})?;
 		Ok(segment)
+	}
+
+	pub async fn find_segments_without_device(
+		&self,
+		limit: Option<u32>,
+	) -> anyhow::Result<Vec<SegmentMeta>> {
+		let conn = self.conn.lock().await;
+		let mut sql = String::from(
+                        "SELECT id, device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE device_id IS NULL ORDER BY id",
+                );
+		let mut limit_param: i64 = 0;
+		let params: Vec<&dyn ToSql> = if let Some(lim) = limit {
+			sql.push_str(" LIMIT ?");
+			limit_param = lim as i64;
+			vec![&limit_param]
+		} else {
+			Vec::new()
+		};
+
+		let mut stmt = conn.prepare(&sql)?;
+		let mut rows = stmt.query(params.as_slice())?;
+		let mut metas = Vec::new();
+		while let Some(row) = rows.next()? {
+			metas.push(SegmentMeta {
+				id: row.get(0)?,
+				device_id: row.get(1)?,
+				first_timestamp: row.get(2)?,
+				last_timestamp: row.get(3)?,
+				original_size: row.get(4)?,
+				compressed_size: row.get(5)?,
+				logs_count: row.get(6)?,
+				created_at: row.get(7)?,
+			});
+		}
+
+		Ok(metas)
 	}
 
 	pub async fn delete_segment(&self, segment: u32) -> anyhow::Result<()> {
@@ -641,20 +705,37 @@ impl DB {
 		query: &QueryAst,
 	) -> anyhow::Result<Vec<SegmentMeta>> {
 		let conn = self.conn.lock().await;
-		let mut stmt = conn.prepare("SELECT id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE first_timestamp <= ? ORDER BY last_timestamp DESC LIMIT ?")?;
+		let device_ids = puppylog::extract_device_ids(&query.root);
+		let mut sql = String::from("SELECT id, device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE first_timestamp <= ?");
+		if !device_ids.is_empty() {
+			let placeholders = std::iter::repeat("?")
+				.take(device_ids.len())
+				.collect::<Vec<_>>()
+				.join(", ");
+			sql.push_str(&format!(" AND device_id IN ({})", placeholders));
+		}
+		sql.push_str(" ORDER BY last_timestamp DESC LIMIT ?");
+		let mut stmt = conn.prepare(&sql)?;
 		let mut get_props_query =
 			conn.prepare("SELECT key, value FROM segment_props WHERE segment_id = ?1")?;
-		let mut rows = stmt.query(rusqlite::params![query.end_date, 50])?;
+		let mut params: Vec<&dyn rusqlite::ToSql> = vec![&query.end_date as &dyn rusqlite::ToSql];
+		for id in &device_ids {
+			params.push(id as &dyn rusqlite::ToSql);
+		}
+		let limit_param: i64 = 50;
+		params.push(&limit_param);
+		let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
 		let mut metas = Vec::new();
 		while let Some(row) = rows.next()? {
 			let meta = SegmentMeta {
 				id: row.get(0)?,
-				first_timestamp: row.get(1)?,
-				last_timestamp: row.get(2)?,
-				original_size: row.get(3)?,
-				compressed_size: row.get(4)?,
-				logs_count: row.get(5)?,
-				created_at: row.get(6)?,
+				device_id: row.get(1)?,
+				first_timestamp: row.get(2)?,
+				last_timestamp: row.get(3)?,
+				original_size: row.get(4)?,
+				compressed_size: row.get(5)?,
+				logs_count: row.get(6)?,
+				created_at: row.get(7)?,
 			};
 			let mut prop_rows = get_props_query.query(rusqlite::params![meta.id])?;
 			let mut props = Vec::new();
@@ -670,6 +751,7 @@ impl DB {
 			}
 			metas.push(SegmentMeta {
 				id: meta.id,
+				device_id: meta.device_id.clone(),
 				first_timestamp: meta.first_timestamp,
 				last_timestamp: meta.last_timestamp,
 				original_size: meta.original_size,
@@ -733,6 +815,7 @@ mod tests {
 		let now = Utc::now();
 		let segment = db
 			.new_segment(NewSegmentArgs {
+				device_id: None,
 				first_timestamp: now,
 				last_timestamp: now,
 				original_size: 1,
@@ -770,6 +853,7 @@ mod tests {
 		let last_ts = now - chrono::Duration::hours(1);
 		let seg_id = db
 			.new_segment(NewSegmentArgs {
+				device_id: None,
 				first_timestamp: first_ts,
 				last_timestamp: last_ts,
 				original_size: 100,
@@ -785,6 +869,7 @@ mod tests {
 			.find_segments(&GetSegmentsQuery {
 				start: Some(now - chrono::Duration::minutes(90)),
 				end: Some(now),
+				device_ids: None,
 				count: None,
 				sort: None,
 			})
@@ -810,6 +895,7 @@ mod tests {
 
 		let info_id = db
 			.new_segment(NewSegmentArgs {
+				device_id: None,
 				first_timestamp: now - Duration::hours(3),
 				last_timestamp: now - Duration::hours(2),
 				original_size: 1,
@@ -831,6 +917,7 @@ mod tests {
 
 		let error_id = db
 			.new_segment(NewSegmentArgs {
+				device_id: None,
 				first_timestamp: now - Duration::hours(1),
 				last_timestamp: now,
 				original_size: 1,
@@ -865,5 +952,42 @@ mod tests {
 			metas_error.iter().map(|m| m.id).collect::<Vec<_>>(),
 			vec![error_id]
 		);
+	}
+
+	#[tokio::test]
+	async fn find_segments_without_device() {
+		let conn = Connection::open_in_memory().unwrap();
+		let db = DB::new(conn);
+
+		let now = Utc::now();
+
+		let no_dev = db
+			.new_segment(NewSegmentArgs {
+				device_id: None,
+				first_timestamp: now,
+				last_timestamp: now,
+				original_size: 1,
+				compressed_size: 1,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+
+		let _with_dev = db
+			.new_segment(NewSegmentArgs {
+				device_id: Some("dev1".into()),
+				first_timestamp: now,
+				last_timestamp: now,
+				original_size: 1,
+				compressed_size: 1,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+
+		let metas = db.find_segments_without_device(None).await.unwrap();
+		assert_eq!(metas.len(), 1);
+		assert_eq!(metas[0].id, no_dev);
+		assert!(metas[0].device_id.is_none());
 	}
 }
