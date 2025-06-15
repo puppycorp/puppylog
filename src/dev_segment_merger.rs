@@ -31,7 +31,7 @@ impl DeviceMerger {
 			logs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
 			let first = logs.first().unwrap().timestamp;
 			let last = logs.last().unwrap().timestamp;
-			let mut seg = LogSegment { buffer: logs };
+			let seg = LogSegment { buffer: logs };
 			let mut buf = Vec::new();
 			seg.serialize(&mut buf);
 			let orig_size = buf.len();
@@ -118,7 +118,7 @@ impl DeviceMerger {
 	}
 }
 
-pub async fn run_device_merger(ctx: Arc<Context>) {
+pub async fn run_dev_segment_merger(ctx: Arc<Context>) {
 	let mut merger = DeviceMerger::new(ctx);
 	loop {
 		if let Err(err) = merger.run_once().await {
@@ -277,8 +277,6 @@ mod tests {
 	/// without losing any entries.
 	#[tokio::test]
 	async fn large_buffer_split_no_loss() {
-		use super::TARGET_SEGMENT_SIZE;
-
 		let (ctx, _dir) = prepare_ctx().await;
 		let base_ts = chrono::Utc::now();
 		let total_logs = TARGET_SEGMENT_SIZE + 1; // guarantees at least two flushes
@@ -441,5 +439,117 @@ mod tests {
 				other => panic!("unexpected device_id {:?}", other),
 			}
 		}
+	}
+
+	/// Create a bunch of orphan segments, each containing logs for several
+	/// devices, and ensure the merger produces the correct per‑device
+	/// segments without dropping or duplicating any entries.
+	#[tokio::test]
+	async fn many_segments_many_devices_no_loss() {
+		use std::collections::HashMap;
+
+		const DEVICES: &[&str] = &["dev1", "dev2", "dev3", "dev4"];
+		const SEGMENTS: usize = 10; // how many orphan segments to create
+		const LOGS_PER_DEVICE_PER_SEG: usize = 5; // logs/device/segment
+
+		let (ctx, _dir) = prepare_ctx().await;
+		let base_ts = chrono::Utc::now();
+
+		// Track how many logs we expect to persist for every device.
+		let mut expected: HashMap<String, usize> = HashMap::new();
+
+		for seg_idx in 0..SEGMENTS {
+			let mut seg = LogSegment::new();
+
+			for &device in DEVICES {
+				for i in 0..LOGS_PER_DEVICE_PER_SEG {
+					let ts = base_ts
+						+ chrono::Duration::seconds(
+							(seg_idx * 1_000 + i/* just spread the timestamps */) as i64,
+						);
+
+					let entry = LogEntry {
+						timestamp: ts,
+						level: LogLevel::Info,
+						props: vec![Prop {
+							key: "deviceId".into(),
+							value: device.to_string(),
+						}],
+						msg: format!("{}‑{}", device, i),
+						..Default::default()
+					};
+
+					seg.add_log_entry(entry);
+
+					*expected.entry(device.to_string()).or_default() += 1;
+				}
+			}
+
+			seg.sort();
+			let mut buf = Vec::new();
+			seg.serialize(&mut buf);
+			let orig_size = buf.len();
+			let comp = zstd::encode_all(std::io::Cursor::new(buf), 0).unwrap();
+			let comp_size = comp.len();
+
+			// Persist as an *orphan* (no device_id).
+			let seg_id = ctx
+				.db
+				.new_segment(NewSegmentArgs {
+					device_id: None,
+					first_timestamp: seg.buffer.first().unwrap().timestamp,
+					last_timestamp: seg.buffer.last().unwrap().timestamp,
+					original_size: orig_size,
+					compressed_size: comp_size,
+					logs_count: seg.buffer.len() as u64,
+				})
+				.await
+				.unwrap();
+
+			std::fs::write(ctx.logs_path().join(format!("{}.log", seg_id)), comp).unwrap();
+		}
+
+		let mut merger = DeviceMerger::new(ctx.clone());
+		assert!(
+			merger.run_once().await.unwrap(),
+			"merger should report that it processed work"
+		);
+
+		let orphans = ctx.db.find_segments_without_device(None).await.unwrap();
+		assert!(
+			orphans.is_empty(),
+			"all orphan segments should have been consumed"
+		);
+
+		let segs = ctx
+			.db
+			.find_segments(&crate::types::GetSegmentsQuery::default())
+			.await
+			.unwrap();
+
+		// Aggregate per‑device log counts that were actually persisted.
+		let mut actual: HashMap<String, u64> = HashMap::new();
+		for seg in &segs {
+			let dev = seg
+				.device_id
+				.as_deref()
+				.expect("all remaining segments must have device_id");
+			*actual.entry(dev.to_string()).or_default() += seg.logs_count;
+		}
+
+		for (dev, &exp_cnt) in &expected {
+			let act_cnt = actual.get(dev).copied().unwrap_or(0);
+			assert_eq!(
+				act_cnt, exp_cnt as u64,
+				"device {dev} should have exactly {exp_cnt} logs after merge"
+			);
+		}
+
+		// Additionally ensure we did not introduce an unexpected device.
+		assert_eq!(
+			expected.len(),
+			actual.len(),
+			"no extra device segments should appear"
+		);
 	}
 }

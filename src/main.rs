@@ -61,7 +61,7 @@ mod config;
 mod context;
 mod db;
 mod logline;
-mod merger;
+mod dev_segment_merger;
 mod segment;
 mod settings;
 mod slack;
@@ -105,7 +105,7 @@ async fn main() {
 	let ctx = Arc::new(ctx);
 
 	tokio::spawn(background::process_log_uploads(ctx.clone()));
-	tokio::spawn(merger::run_device_merger(ctx.clone()));
+	tokio::spawn(dev_segment_merger::run_dev_segment_merger(ctx.clone()));
 
 	let cors = CorsLayer::new()
 		.allow_origin(Any) // Allow requests from any origin
