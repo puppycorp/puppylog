@@ -64,7 +64,7 @@ impl DeviceMerger {
 				.upsert_segment_props(segment_id, unique.iter())
 				.await?;
 			let path = self.ctx.logs_path().join(format!("{}.log", segment_id));
-			std::fs::write(path, compressed)?;
+			tokio::fs::write(path, compressed).await?;
 		}
 		Ok(())
 	}
@@ -90,15 +90,29 @@ impl DeviceMerger {
 					}
 				}
 			}
+			// Flush buffers that reached the target size before deleting the segment
+			let to_flush: Vec<String> = self
+				.buffers
+				.iter()
+				.filter_map(|(id, logs)| {
+					if logs.len() >= TARGET_SEGMENT_SIZE {
+						Some(id.clone())
+					} else {
+						None
+					}
+				})
+				.collect();
+			for id in to_flush {
+				self.flush_device(&id).await?;
+			}
 			self.ctx.db.delete_segment(seg.id).await?;
 			let _ = remove_file(path).await;
 			processed = true;
 		}
+		// Flush remaining buffers unconditionally
 		let keys: Vec<String> = self.buffers.keys().cloned().collect();
 		for k in keys {
-			if processed || self.buffers.get(&k).map_or(0, |v| v.len()) >= TARGET_SEGMENT_SIZE {
-				self.flush_device(&k).await?;
-			}
+			self.flush_device(&k).await?;
 		}
 		Ok(processed)
 	}
