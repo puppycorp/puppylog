@@ -40,6 +40,7 @@ pub const HEADER_SIZE: usize = 13;
 #[serde(rename_all = "camelCase")]
 pub struct SegmentMeta {
 	pub id: u32,
+	pub device_id: Option<String>,
 	pub first_timestamp: DateTime<Utc>,
 	pub last_timestamp: DateTime<Utc>,
 	pub original_size: usize,
