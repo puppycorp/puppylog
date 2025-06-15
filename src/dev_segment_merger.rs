@@ -5,27 +5,44 @@ use std::time::Duration;
 use crate::context::Context;
 use crate::db::NewSegmentArgs;
 use crate::segment::LogSegment;
+use lru::LruCache;
 use puppylog::{LogEntry, Prop};
 use tokio::fs::remove_file;
 
 pub const TARGET_SEGMENT_SIZE: usize = 300_000;
 pub const MERGER_BATCH_SIZE: u32 = 100;
+pub const PER_DEVICE_MAX: usize = 1_000;
+pub const MAX_IN_CORE: usize = 50_000;
 
 pub struct DeviceMerger {
 	ctx: Arc<Context>,
 	buffers: HashMap<String, Vec<LogEntry>>, // deviceId -> buffered logs
+	lru: LruCache<String, ()>,
+	total_buffered: usize,
+	per_device_max: usize,
+	max_in_core: usize,
 }
 
 impl DeviceMerger {
 	pub fn new(ctx: Arc<Context>) -> Self {
+		Self::with_limits(ctx, PER_DEVICE_MAX, MAX_IN_CORE)
+	}
+
+	pub fn with_limits(ctx: Arc<Context>, per_device_max: usize, max_in_core: usize) -> Self {
 		Self {
 			ctx,
 			buffers: HashMap::new(),
+			lru: LruCache::unbounded(),
+			total_buffered: 0,
+			per_device_max,
+			max_in_core,
 		}
 	}
 
 	async fn flush_device(&mut self, device_id: &str) -> anyhow::Result<()> {
 		if let Some(mut logs) = self.buffers.remove(device_id) {
+			self.lru.pop(device_id);
+			self.total_buffered = self.total_buffered.saturating_sub(logs.len());
 			if logs.is_empty() {
 				return Ok(());
 			}
@@ -70,6 +87,27 @@ impl DeviceMerger {
 		Ok(())
 	}
 
+	async fn handle_log(&mut self, log: LogEntry) -> anyhow::Result<()> {
+		if let Some(prop) = log.props.iter().find(|p| p.key == "deviceId").cloned() {
+			let buf = self.buffers.entry(prop.value.clone()).or_default();
+			buf.push(log);
+			self.lru.push(prop.value.clone(), ());
+			self.total_buffered += 1;
+
+			if buf.len() >= TARGET_SEGMENT_SIZE || buf.len() >= self.per_device_max {
+				self.flush_device(&prop.value).await?;
+			}
+			while self.total_buffered > self.max_in_core {
+				if let Some((oldest, _)) = self.lru.pop_lru() {
+					self.flush_device(&oldest).await?;
+				} else {
+					break;
+				}
+			}
+		}
+		Ok(())
+	}
+
 	pub async fn run_once(&mut self) -> anyhow::Result<bool> {
 		let mut processed = false;
 
@@ -94,28 +132,7 @@ impl DeviceMerger {
 				let mut decoder = zstd::Decoder::new(file)?;
 				let log_seg = LogSegment::parse(&mut decoder);
 				for log in log_seg.buffer {
-					if let Some(prop) = log.props.iter().find(|p| p.key == "deviceId").cloned() {
-						let buf = self.buffers.entry(prop.value.clone()).or_default();
-						buf.push(log);
-						if buf.len() >= TARGET_SEGMENT_SIZE {
-							self.flush_device(&prop.value).await?;
-						}
-					}
-				}
-				// Flush buffers that reached the target size before deleting the segment
-				let to_flush: Vec<String> = self
-					.buffers
-					.iter()
-					.filter_map(|(id, logs)| {
-						if logs.len() >= TARGET_SEGMENT_SIZE {
-							Some(id.clone())
-						} else {
-							None
-						}
-					})
-					.collect();
-				for id in to_flush {
-					self.flush_device(&id).await?;
+					self.handle_log(log).await?;
 				}
 				self.ctx.db.delete_segment(seg.id).await?;
 				let _ = remove_file(path).await;
@@ -564,5 +581,31 @@ mod tests {
 			actual.len(),
 			"no extra device segments should appear"
 		);
+	}
+	#[tokio::test]
+	async fn lru_eviction_respects_limits() {
+		let (ctx, _dir) = prepare_ctx().await;
+		let mut merger = DeviceMerger::with_limits(ctx.clone(), 10, 3);
+		for i in 0..4 {
+			let log = LogEntry {
+				timestamp: Utc::now(),
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "deviceId".into(),
+					value: format!("dev{i}"),
+				}],
+				msg: "x".into(),
+				..Default::default()
+			};
+			merger.handle_log(log).await.unwrap();
+		}
+		assert!(merger.total_buffered <= 3);
+		assert_eq!(merger.buffers.len(), 3);
+		let segs = ctx
+			.db
+			.find_segments(&crate::types::GetSegmentsQuery::default())
+			.await
+			.unwrap();
+		assert!(segs.iter().any(|s| s.device_id.as_deref() == Some("dev0")));
 	}
 }

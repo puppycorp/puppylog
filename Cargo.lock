@@ -1688,6 +1688,7 @@ dependencies = [
  "hyper",
  "libc",
  "log",
+ "lru",
  "puppylog",
  "rand 0.9.1",
  "reqwest",
