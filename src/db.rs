@@ -1,10 +1,7 @@
 use chrono::DateTime;
 use chrono::Utc;
-use puppylog::check_props;
-use puppylog::extract_device_ids;
 use puppylog::LogLevel;
 use puppylog::Prop;
-use puppylog::QueryAst;
 use rusqlite::Connection;
 use rusqlite::ToSql;
 use serde::Deserialize;
@@ -82,6 +79,7 @@ const MIGRATIONS: &[Migration] = &[
 		name: "segment_device_id",
 		sql: r#"
 			ALTER TABLE log_segments ADD COLUMN device_id TEXT;
+			CREATE INDEX IF NOT EXISTS log_segments_device_id_idx ON log_segments(device_id);
 		"#,
 	},
 ];
@@ -445,6 +443,7 @@ impl DB {
 		}
 
 		if let Some(ids) = &query.device_ids {
+			log::info!("device_ids: {:?}", ids);
 			if !ids.is_empty() {
 				let placeholders = std::iter::repeat("?")
 					.take(ids.len())
@@ -699,69 +698,6 @@ impl DB {
 
 		Ok(map)
 	}
-
-	pub async fn find_segments_with_query(
-		&self,
-		query: &QueryAst,
-	) -> anyhow::Result<Vec<SegmentMeta>> {
-		let conn = self.conn.lock().await;
-		let device_ids = puppylog::extract_device_ids(&query.root);
-		let mut sql = String::from("SELECT id, device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE first_timestamp <= ?");
-		if !device_ids.is_empty() {
-			let placeholders = std::iter::repeat("?")
-				.take(device_ids.len())
-				.collect::<Vec<_>>()
-				.join(", ");
-			sql.push_str(&format!(" AND device_id IN ({})", placeholders));
-		}
-		sql.push_str(" ORDER BY last_timestamp DESC LIMIT ?");
-		let mut stmt = conn.prepare(&sql)?;
-		let mut get_props_query =
-			conn.prepare("SELECT key, value FROM segment_props WHERE segment_id = ?1")?;
-		let mut params: Vec<&dyn rusqlite::ToSql> = vec![&query.end_date as &dyn rusqlite::ToSql];
-		for id in &device_ids {
-			params.push(id as &dyn rusqlite::ToSql);
-		}
-		let limit_param: i64 = 50;
-		params.push(&limit_param);
-		let mut rows = stmt.query(rusqlite::params_from_iter(params))?;
-		let mut metas = Vec::new();
-		while let Some(row) = rows.next()? {
-			let meta = SegmentMeta {
-				id: row.get(0)?,
-				device_id: row.get(1)?,
-				first_timestamp: row.get(2)?,
-				last_timestamp: row.get(3)?,
-				original_size: row.get(4)?,
-				compressed_size: row.get(5)?,
-				logs_count: row.get(6)?,
-				created_at: row.get(7)?,
-			};
-			let mut prop_rows = get_props_query.query(rusqlite::params![meta.id])?;
-			let mut props = Vec::new();
-			while let Some(p_row) = prop_rows.next()? {
-				let prop = Prop {
-					key: p_row.get(0)?,
-					value: p_row.get(1)?,
-				};
-				props.push(prop);
-			}
-			if !check_props(&query.root, &props).unwrap_or_default() {
-				continue;
-			}
-			metas.push(SegmentMeta {
-				id: meta.id,
-				device_id: meta.device_id.clone(),
-				first_timestamp: meta.first_timestamp,
-				last_timestamp: meta.last_timestamp,
-				original_size: meta.original_size,
-				compressed_size: meta.compressed_size,
-				logs_count: meta.logs_count,
-				created_at: meta.created_at,
-			});
-		}
-		Ok(metas)
-	}
 }
 
 pub fn run_migrations(conn: &mut Connection) -> anyhow::Result<()> {
@@ -880,77 +816,6 @@ mod tests {
 			metas.iter().map(|m| m.id).collect::<Vec<_>>(),
 			vec![seg_id],
 			"segment should be returned when query start is inside its time span"
-		);
-	}
-
-	#[tokio::test]
-	async fn find_segments_by_level() {
-		use chrono::Duration;
-		use puppylog::{parse_log_query, LogLevel, Prop};
-
-		let conn = Connection::open_in_memory().unwrap();
-		let db = DB::new(conn);
-
-		let now = Utc::now();
-
-		let info_id = db
-			.new_segment(NewSegmentArgs {
-				device_id: None,
-				first_timestamp: now - Duration::hours(3),
-				last_timestamp: now - Duration::hours(2),
-				original_size: 1,
-				compressed_size: 1,
-				logs_count: 1,
-			})
-			.await
-			.unwrap();
-		db.upsert_segment_props(
-			info_id,
-			[Prop {
-				key: "level".into(),
-				value: LogLevel::Info.to_string(),
-			}]
-			.iter(),
-		)
-		.await
-		.unwrap();
-
-		let error_id = db
-			.new_segment(NewSegmentArgs {
-				device_id: None,
-				first_timestamp: now - Duration::hours(1),
-				last_timestamp: now,
-				original_size: 1,
-				compressed_size: 1,
-				logs_count: 1,
-			})
-			.await
-			.unwrap();
-		db.upsert_segment_props(
-			error_id,
-			[Prop {
-				key: "level".into(),
-				value: LogLevel::Error.to_string(),
-			}]
-			.iter(),
-		)
-		.await
-		.unwrap();
-
-		let mut q_info = parse_log_query("level = info").unwrap();
-		q_info.end_date = Some(now);
-		let metas_info = db.find_segments_with_query(&q_info).await.unwrap();
-		assert_eq!(
-			metas_info.iter().map(|m| m.id).collect::<Vec<_>>(),
-			vec![info_id]
-		);
-
-		let mut q_error = parse_log_query("level = error").unwrap();
-		q_error.end_date = Some(now);
-		let metas_error = db.find_segments_with_query(&q_error).await.unwrap();
-		assert_eq!(
-			metas_error.iter().map(|m| m.id).collect::<Vec<_>>(),
-			vec![error_id]
 		);
 	}
 

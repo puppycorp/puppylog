@@ -476,6 +476,8 @@ pub fn extract_device_ids(expr: &Expr) -> Vec<String> {
 		_ => {}
 	}
 
+	ids.sort();
+	ids.dedup();
 	ids
 }
 
