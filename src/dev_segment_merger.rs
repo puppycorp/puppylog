@@ -12,7 +12,7 @@ use tokio::fs::remove_file;
 pub const TARGET_SEGMENT_SIZE: usize = 300_000;
 pub const MERGER_BATCH_SIZE: u32 = 2000;
 pub const PER_DEVICE_MAX: usize = 1_000;
-pub const MAX_IN_CORE: usize = 50_000;
+pub const MAX_IN_CORE: usize = 10_000_000;
 /// Fallback device identifier used when a log entry has no explicit `deviceId`.
 pub const UNKNOWN_DEVICE_ID: &str = "unknown";
 
@@ -21,22 +21,20 @@ pub struct DeviceMerger {
 	buffers: HashMap<String, Vec<LogEntry>>, // deviceId -> buffered logs
 	lru: LruCache<String, ()>,
 	total_buffered: usize,
-	per_device_max: usize,
 	max_in_core: usize,
 }
 
 impl DeviceMerger {
 	pub fn new(ctx: Arc<Context>) -> Self {
-		Self::with_limits(ctx, PER_DEVICE_MAX, MAX_IN_CORE)
+		Self::with_limits(ctx, MAX_IN_CORE)
 	}
 
-	pub fn with_limits(ctx: Arc<Context>, per_device_max: usize, max_in_core: usize) -> Self {
+	pub fn with_limits(ctx: Arc<Context>, max_in_core: usize) -> Self {
 		Self {
 			ctx,
 			buffers: HashMap::new(),
 			lru: LruCache::unbounded(),
 			total_buffered: 0,
-			per_device_max,
 			max_in_core,
 		}
 	}
@@ -108,11 +106,12 @@ impl DeviceMerger {
         self.lru.push(device_id.clone(), ());
         self.total_buffered += 1;
 
-        if buf.len() >= TARGET_SEGMENT_SIZE || buf.len() >= self.per_device_max {
+        if buf.len() >= TARGET_SEGMENT_SIZE {
             self.flush_device(&device_id).await?;
         }
         while self.total_buffered > self.max_in_core {
             if let Some((oldest, _)) = self.lru.pop_lru() {
+				log::info!("flushing oldest device: {}", oldest);
                 self.flush_device(&oldest).await?;
             } else {
                 break;
@@ -124,6 +123,7 @@ impl DeviceMerger {
 	pub async fn run_once(&mut self) -> anyhow::Result<bool> {
 		let mut processed = false;
 		let mut to_delete = Vec::new();
+		let mut device_ids = HashSet::new();
 
 		loop {
 			let segments = self
@@ -136,6 +136,7 @@ impl DeviceMerger {
 			}
 			processed = true;
 
+			log::info!("processing {} segments", segments.len());
 			for seg in segments {
 				let path = self.ctx.logs_path().join(format!("{}.log", seg.id));
 				let file = match std::fs::File::open(&path) {
@@ -146,6 +147,14 @@ impl DeviceMerger {
 				let mut decoder = zstd::Decoder::new(file)?;
 				let log_seg = LogSegment::parse(&mut decoder);
 				for log in log_seg.buffer {
+					let device_id = log
+						.props
+						.iter()
+						.find(|p| p.key == "deviceId")
+						.map_or(UNKNOWN_DEVICE_ID.to_string(), |p| p.value.clone());
+					if device_ids.insert(device_id.clone()) {
+						log::info!("[{}] devices", device_ids.len());
+					}
 					self.handle_log(log).await?;
 				}
 				to_delete.push((seg.id, path));
@@ -157,6 +166,7 @@ impl DeviceMerger {
 				self.flush_device(&k).await?;
 			}
 
+			log::info!("removing {} old segments", to_delete.len());
 			for (seg_id, path) in &to_delete {
 				self.ctx.db.delete_segment(*seg_id).await?;
 				let _ = remove_file(path).await;
@@ -606,7 +616,7 @@ mod tests {
 	#[tokio::test]
 	async fn lru_eviction_respects_limits() {
 		let (ctx, _dir) = prepare_ctx().await;
-		let mut merger = DeviceMerger::with_limits(ctx.clone(), 10, 3);
+		let mut merger = DeviceMerger::with_limits(ctx.clone(), 3);
 		for i in 0..4 {
 			let log = LogEntry {
 				timestamp: Utc::now(),
