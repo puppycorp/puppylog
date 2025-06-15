@@ -9,6 +9,7 @@ use puppylog::{LogEntry, Prop};
 use tokio::fs::remove_file;
 
 pub const TARGET_SEGMENT_SIZE: usize = 300_000;
+pub const MERGER_BATCH_SIZE: u32 = 100;
 
 pub struct DeviceMerger {
 	ctx: Arc<Context>,
@@ -70,45 +71,57 @@ impl DeviceMerger {
 	}
 
 	pub async fn run_once(&mut self) -> anyhow::Result<bool> {
-		let segments = self.ctx.db.find_segments_without_device(None).await?;
 		let mut processed = false;
-		for seg in segments {
-			let path = self.ctx.logs_path().join(format!("{}.log", seg.id));
-			let file = match std::fs::File::open(&path) {
-				Ok(f) => f,
-				Err(_) => continue,
-			};
-			log::info!("process segment {} from {}", seg.id, path.display());
-			let mut decoder = zstd::Decoder::new(file)?;
-			let log_seg = LogSegment::parse(&mut decoder);
-			for log in log_seg.buffer {
-				if let Some(prop) = log.props.iter().find(|p| p.key == "deviceId").cloned() {
-					let buf = self.buffers.entry(prop.value.clone()).or_default();
-					buf.push(log);
-					if buf.len() >= TARGET_SEGMENT_SIZE {
-						self.flush_device(&prop.value).await?;
+
+		loop {
+			let segments = self
+				.ctx
+				.db
+				.find_segments_without_device(Some(MERGER_BATCH_SIZE))
+				.await?;
+			if segments.is_empty() {
+				break;
+			}
+			processed = true;
+
+			for seg in segments {
+				let path = self.ctx.logs_path().join(format!("{}.log", seg.id));
+				let file = match std::fs::File::open(&path) {
+					Ok(f) => f,
+					Err(_) => continue,
+				};
+				log::info!("process segment {} from {}", seg.id, path.display());
+				let mut decoder = zstd::Decoder::new(file)?;
+				let log_seg = LogSegment::parse(&mut decoder);
+				for log in log_seg.buffer {
+					if let Some(prop) = log.props.iter().find(|p| p.key == "deviceId").cloned() {
+						let buf = self.buffers.entry(prop.value.clone()).or_default();
+						buf.push(log);
+						if buf.len() >= TARGET_SEGMENT_SIZE {
+							self.flush_device(&prop.value).await?;
+						}
 					}
 				}
+				// Flush buffers that reached the target size before deleting the segment
+				let to_flush: Vec<String> = self
+					.buffers
+					.iter()
+					.filter_map(|(id, logs)| {
+						if logs.len() >= TARGET_SEGMENT_SIZE {
+							Some(id.clone())
+						} else {
+							None
+						}
+					})
+					.collect();
+				for id in to_flush {
+					self.flush_device(&id).await?;
+				}
+				self.ctx.db.delete_segment(seg.id).await?;
+				let _ = remove_file(path).await;
 			}
-			// Flush buffers that reached the target size before deleting the segment
-			let to_flush: Vec<String> = self
-				.buffers
-				.iter()
-				.filter_map(|(id, logs)| {
-					if logs.len() >= TARGET_SEGMENT_SIZE {
-						Some(id.clone())
-					} else {
-						None
-					}
-				})
-				.collect();
-			for id in to_flush {
-				self.flush_device(&id).await?;
-			}
-			self.ctx.db.delete_segment(seg.id).await?;
-			let _ = remove_file(path).await;
-			processed = true;
 		}
+
 		// Flush remaining buffers unconditionally
 		let keys: Vec<String> = self.buffers.keys().cloned().collect();
 		for k in keys {
