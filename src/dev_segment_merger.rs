@@ -10,7 +10,7 @@ use puppylog::{LogEntry, Prop};
 use tokio::fs::remove_file;
 
 pub const TARGET_SEGMENT_SIZE: usize = 300_000;
-pub const MERGER_BATCH_SIZE: u32 = 100;
+pub const MERGER_BATCH_SIZE: u32 = 2000;
 pub const PER_DEVICE_MAX: usize = 1_000;
 pub const MAX_IN_CORE: usize = 50_000;
 /// Fallback device identifier used when a log entry has no explicit `deviceId`.
@@ -123,6 +123,7 @@ impl DeviceMerger {
 
 	pub async fn run_once(&mut self) -> anyhow::Result<bool> {
 		let mut processed = false;
+		let mut to_delete = Vec::new();
 
 		loop {
 			let segments = self
@@ -147,16 +148,22 @@ impl DeviceMerger {
 				for log in log_seg.buffer {
 					self.handle_log(log).await?;
 				}
-				self.ctx.db.delete_segment(seg.id).await?;
+				to_delete.push((seg.id, path));
+			}
+
+			// Flush remaining buffers unconditionally
+			let keys: Vec<String> = self.buffers.keys().cloned().collect();
+			for k in keys {
+				self.flush_device(&k).await?;
+			}
+
+			for (seg_id, path) in &to_delete {
+				self.ctx.db.delete_segment(*seg_id).await?;
 				let _ = remove_file(path).await;
 			}
+			to_delete.clear();
 		}
 
-		// Flush remaining buffers unconditionally
-		let keys: Vec<String> = self.buffers.keys().cloned().collect();
-		for k in keys {
-			self.flush_device(&k).await?;
-		}
 		Ok(processed)
 	}
 }
@@ -172,9 +179,9 @@ pub async fn run_dev_segment_merger(ctx: Arc<Context>) {
 }
 
 #[cfg(test)]
-	mod tests {
-	use super::*;
+mod tests {
 	use super::UNKNOWN_DEVICE_ID;
+	use super::*;
 	use chrono::Utc;
 	use puppylog::{LogEntry, LogLevel};
 	use tempfile::tempdir;
@@ -623,56 +630,56 @@ pub async fn run_dev_segment_merger(ctx: Arc<Context>) {
 		assert!(segs.iter().any(|s| s.device_id.as_deref() == Some("dev0")));
 	}
 
-	    /// Logs that carry no `deviceId` should be merged under `UNKNOWN_DEVICE_ID`.
-    #[tokio::test]
-    async fn no_device_id_uses_unknown() {
-        let (ctx, _dir) = prepare_ctx().await;
-        let ts = chrono::Utc::now();
+	/// Logs that carry no `deviceId` should be merged under `UNKNOWN_DEVICE_ID`.
+	#[tokio::test]
+	async fn no_device_id_uses_unknown() {
+		let (ctx, _dir) = prepare_ctx().await;
+		let ts = chrono::Utc::now();
 
-        // A single log entry without any `deviceId` property.
-        let log = LogEntry {
-            timestamp: ts,
-            level: LogLevel::Info,
-            props: vec![], // <- intentionally empty
-            msg: "orphan".into(),
-            ..Default::default()
-        };
+		// A single log entry without any `deviceId` property.
+		let log = LogEntry {
+			timestamp: ts,
+			level: LogLevel::Info,
+			props: vec![], // <- intentionally empty
+			msg: "orphan".into(),
+			..Default::default()
+		};
 
-        // Wrap it into one orphan segment.
-        let mut seg = LogSegment::new();
-        seg.add_log_entry(log.clone());
-        seg.sort();
-        let mut buf = Vec::new();
-        seg.serialize(&mut buf);
-        let orig = buf.len();
-        let comp = zstd::encode_all(std::io::Cursor::new(buf), 0).unwrap();
-        let comp_size = comp.len();
-        let seg_id = ctx
-            .db
-            .new_segment(NewSegmentArgs {
-                device_id: None,
-                first_timestamp: ts,
-                last_timestamp: ts,
-                original_size: orig,
-                compressed_size: comp_size,
-                logs_count: 1,
-            })
-            .await
-            .unwrap();
-        std::fs::write(ctx.logs_path().join(format!("{}.log", seg_id)), comp).unwrap();
+		// Wrap it into one orphan segment.
+		let mut seg = LogSegment::new();
+		seg.add_log_entry(log.clone());
+		seg.sort();
+		let mut buf = Vec::new();
+		seg.serialize(&mut buf);
+		let orig = buf.len();
+		let comp = zstd::encode_all(std::io::Cursor::new(buf), 0).unwrap();
+		let comp_size = comp.len();
+		let seg_id = ctx
+			.db
+			.new_segment(NewSegmentArgs {
+				device_id: None,
+				first_timestamp: ts,
+				last_timestamp: ts,
+				original_size: orig,
+				compressed_size: comp_size,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+		std::fs::write(ctx.logs_path().join(format!("{}.log", seg_id)), comp).unwrap();
 
-        // Run the merger.
-        let mut merger = DeviceMerger::new(ctx.clone());
-        assert!(merger.run_once().await.unwrap());
+		// Run the merger.
+		let mut merger = DeviceMerger::new(ctx.clone());
+		assert!(merger.run_once().await.unwrap());
 
-        // The resulting segment should use the fallback device ID.
-        let segs = ctx
-            .db
-            .find_segments(&crate::types::GetSegmentsQuery::default())
-            .await
-            .unwrap();
-        assert_eq!(segs.len(), 1);
-        assert_eq!(segs[0].device_id.as_deref(), Some(UNKNOWN_DEVICE_ID));
-        assert_eq!(segs[0].logs_count, 1);
-    }
+		// The resulting segment should use the fallback device ID.
+		let segs = ctx
+			.db
+			.find_segments(&crate::types::GetSegmentsQuery::default())
+			.await
+			.unwrap();
+		assert_eq!(segs.len(), 1);
+		assert_eq!(segs[0].device_id.as_deref(), Some(UNKNOWN_DEVICE_ID));
+		assert_eq!(segs[0].logs_count, 1);
+	}
 }

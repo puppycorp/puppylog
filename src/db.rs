@@ -565,8 +565,8 @@ impl DB {
 	) -> anyhow::Result<Vec<SegmentMeta>> {
 		let conn = self.conn.lock().await;
 		let mut sql = String::from(
-                        "SELECT id, device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE device_id IS NULL ORDER BY id",
-                );
+			"SELECT id, device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at FROM log_segments WHERE device_id IS NULL ORDER BY id",
+		);
 		let mut limit_param: i64 = 0;
 		let params: Vec<&dyn ToSql> = if let Some(lim) = limit {
 			sql.push_str(" LIMIT ?");
