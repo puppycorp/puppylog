@@ -87,38 +87,38 @@ impl DeviceMerger {
 		Ok(())
 	}
 
-    async fn handle_log(&mut self, mut log: LogEntry) -> anyhow::Result<()> {
-        // Determine the device ID, falling back to the special constant.
-        let device_id = if let Some(prop) = log.props.iter().find(|p| p.key == "deviceId") {
-            prop.value.clone()
-        } else {
-            // Attach a synthetic `deviceId` so that downstream logic and tests
-            // can treat it like any normal device‑specific log.
-            log.props.push(Prop {
-                key: "deviceId".into(),
-                value: UNKNOWN_DEVICE_ID.into(),
-            });
-            UNKNOWN_DEVICE_ID.to_string()
-        };
+	async fn handle_log(&mut self, mut log: LogEntry) -> anyhow::Result<()> {
+		// Determine the device ID, falling back to the special constant.
+		let device_id = if let Some(prop) = log.props.iter().find(|p| p.key == "deviceId") {
+			prop.value.clone()
+		} else {
+			// Attach a synthetic `deviceId` so that downstream logic and tests
+			// can treat it like any normal device‑specific log.
+			log.props.push(Prop {
+				key: "deviceId".into(),
+				value: UNKNOWN_DEVICE_ID.into(),
+			});
+			UNKNOWN_DEVICE_ID.to_string()
+		};
 
-        let buf = self.buffers.entry(device_id.clone()).or_default();
-        buf.push(log);
-        self.lru.push(device_id.clone(), ());
-        self.total_buffered += 1;
+		let buf = self.buffers.entry(device_id.clone()).or_default();
+		buf.push(log);
+		self.lru.push(device_id.clone(), ());
+		self.total_buffered += 1;
 
-        if buf.len() >= TARGET_SEGMENT_SIZE {
-            self.flush_device(&device_id).await?;
-        }
-        while self.total_buffered > self.max_in_core {
-            if let Some((oldest, _)) = self.lru.pop_lru() {
+		if buf.len() >= TARGET_SEGMENT_SIZE {
+			self.flush_device(&device_id).await?;
+		}
+		while self.total_buffered > self.max_in_core {
+			if let Some((oldest, _)) = self.lru.pop_lru() {
 				log::info!("flushing oldest device: {}", oldest);
-                self.flush_device(&oldest).await?;
-            } else {
-                break;
-            }
-        }
-        Ok(())
-    }
+				self.flush_device(&oldest).await?;
+			} else {
+				break;
+			}
+		}
+		Ok(())
+	}
 
 	pub async fn run_once(&mut self) -> anyhow::Result<bool> {
 		let mut processed = false;
@@ -141,7 +141,16 @@ impl DeviceMerger {
 				let path = self.ctx.logs_path().join(format!("{}.log", seg.id));
 				let file = match std::fs::File::open(&path) {
 					Ok(f) => f,
-					Err(_) => continue,
+					Err(err) => {
+						log::warn!(
+							"cannot open {} for segment {}: {err}",
+							path.display(),
+							seg.id
+						);
+						self.ctx.db.delete_segment(seg.id).await?;
+						let _ = remove_file(&path).await;
+						continue;
+					}
 				};
 				log::info!("process segment {} from {}", seg.id, path.display());
 				let mut decoder = zstd::Decoder::new(file)?;
@@ -331,6 +340,33 @@ mod tests {
 		assert_eq!(segs.len(), 1);
 		assert_eq!(segs[0].device_id.as_deref(), Some("dev_small"));
 		assert_eq!(segs[0].logs_count, logs.len() as u64);
+	}
+
+	/// Orphan segments whose log files are missing should be purged.
+	#[tokio::test]
+	async fn orphan_without_file_removed() {
+		let (ctx, _dir) = prepare_ctx().await;
+		let ts = chrono::Utc::now();
+
+		// Insert orphan metadata without creating the log file.
+		ctx.db
+			.new_segment(NewSegmentArgs {
+				device_id: None,
+				first_timestamp: ts,
+				last_timestamp: ts,
+				original_size: 0,
+				compressed_size: 0,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+
+		let mut merger = DeviceMerger::new(ctx.clone());
+		assert!(merger.run_once().await.unwrap());
+
+		// The orphan entry must be gone even though the file was missing.
+		let orphan = ctx.db.find_segments_without_device(None).await.unwrap();
+		assert!(orphan.is_empty(), "orphan segment should have been removed");
 	}
 
 	/// A very large orphan segment (more than `TARGET_SEGMENT_SIZE` logs for a
