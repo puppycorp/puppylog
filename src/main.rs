@@ -236,9 +236,12 @@ async fn delete_segment(
 ) -> &'static str {
 	log::info!("delete_segment: {:?}", segment_id);
 	ctx.db.delete_segment(segment_id).await.unwrap();
-	fs::remove_file(log_path().join(format!("{}.log", segment_id)))
-		.await
-		.unwrap();
+	let path = log_path().join(format!("{segment_id}.log"));
+	if !path.exists() {
+		log::warn!("segment file {} does not exist, skipping deletion", path.display());
+		return "ok";
+	}
+	fs::remove_file(path).await.unwrap();
 	"ok"
 }
 
