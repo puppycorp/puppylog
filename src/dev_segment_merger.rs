@@ -40,50 +40,57 @@ impl DeviceMerger {
 	}
 
 	async fn flush_device(&mut self, device_id: &str) -> anyhow::Result<()> {
-		if let Some(mut logs) = self.buffers.remove(device_id) {
-			self.lru.pop(device_id);
-			self.total_buffered = self.total_buffered.saturating_sub(logs.len());
-			if logs.is_empty() {
-				return Ok(());
-			}
-			logs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-			let first = logs.first().unwrap().timestamp;
-			let last = logs.last().unwrap().timestamp;
-			let seg = LogSegment { buffer: logs };
-			let mut buf = Vec::new();
-			seg.serialize(&mut buf);
-			let orig_size = buf.len();
-			let compressed = zstd::encode_all(std::io::Cursor::new(buf), 0)?;
-			let comp_size = compressed.len();
-			let segment_id = self
-				.ctx
-				.db
-				.new_segment(NewSegmentArgs {
-					device_id: Some(device_id.to_string()),
-					first_timestamp: first,
-					last_timestamp: last,
-					original_size: orig_size,
-					compressed_size: comp_size,
-					logs_count: seg.buffer.len() as u64,
-				})
-				.await?;
-			let mut unique = HashSet::new();
-			for log in &seg.buffer {
-				for p in &log.props {
-					unique.insert(p.clone());
-				}
-				unique.insert(Prop {
-					key: "level".into(),
-					value: log.level.to_string(),
-				});
-			}
-			self.ctx
-				.db
-				.upsert_segment_props(segment_id, unique.iter())
-				.await?;
-			let path = self.ctx.logs_path().join(format!("{}.log", segment_id));
-			tokio::fs::write(path, compressed).await?;
+		let logs = match self.buffers.get(device_id) {
+			Some(logs) if !logs.is_empty() => logs.clone(),
+			_ => return Ok(()),
+		};
+
+		let mut logs = logs;
+		logs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+		let first = logs.first().unwrap().timestamp;
+		let last = logs.last().unwrap().timestamp;
+		let seg = LogSegment { buffer: logs };
+
+		let mut buf = Vec::new();
+		seg.serialize(&mut buf);
+		let orig_size = buf.len();
+		let compressed = zstd::encode_all(std::io::Cursor::new(buf), 0)?;
+		let comp_size = compressed.len();
+
+		let segment_id = self
+			.ctx
+			.db
+			.new_segment(NewSegmentArgs {
+				device_id: Some(device_id.to_string()),
+				first_timestamp: first,
+				last_timestamp: last,
+				original_size: orig_size,
+				compressed_size: comp_size,
+				logs_count: seg.buffer.len() as u64,
+			})
+			.await?;
+
+		let mut unique = HashSet::new();
+		for log in &seg.buffer {
+			unique.extend(log.props.iter().cloned());
+			unique.insert(Prop {
+				key: "level".into(),
+				value: log.level.to_string(),
+			});
 		}
+		self.ctx
+			.db
+			.upsert_segment_props(segment_id, unique.iter())
+			.await?;
+
+		let path = self.ctx.logs_path().join(format!("{}.log", segment_id));
+		tokio::fs::write(path, compressed).await?;
+
+		if let Some(old_logs) = self.buffers.remove(device_id) {
+			self.lru.pop(device_id);
+			self.total_buffered = self.total_buffered.saturating_sub(old_logs.len());
+		}
+
 		Ok(())
 	}
 
