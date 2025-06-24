@@ -504,33 +504,46 @@ impl DB {
 	pub async fn prev_segment_end(
 		&self,
 		before: Option<chrono::DateTime<chrono::Utc>>,
+		device_ids: Option<&[String]>,
 	) -> anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> {
 		use rusqlite::OptionalExtension;
 
 		let conn = self.conn.lock().await;
 
-		let ts: Option<chrono::DateTime<chrono::Utc>> = if let Some(b) = before {
-			conn.query_row(
-				"SELECT last_timestamp
-				FROM log_segments
-				WHERE last_timestamp < ?1
-			ORDER BY last_timestamp DESC
-				LIMIT 1",
-				[b],
-				|row| row.get(0),
-			)
-			.optional()?
-		} else {
-			conn.query_row(
-				"SELECT last_timestamp
-				FROM log_segments
-			ORDER BY last_timestamp DESC
-				LIMIT 1",
-				[],
-				|row| row.get(0),
-			)
-			.optional()?
-		};
+		let mut sql = String::from("SELECT last_timestamp FROM log_segments");
+		let mut conditions: Vec<String> = Vec::new();
+		let mut params: Vec<&dyn ToSql> = Vec::new();
+
+		if let Some(ref b) = before {
+			conditions.push("last_timestamp < ?".into());
+			params.push(b as &dyn ToSql);
+		}
+
+		if let Some(ids) = device_ids {
+			if ids.is_empty() {
+				return Ok(None);
+			}
+			let placeholders = std::iter::repeat("?")
+				.take(ids.len())
+				.collect::<Vec<_>>()
+				.join(", ");
+			conditions.push(format!("device_id IN ({})", placeholders));
+			for id in ids {
+				params.push(id as &dyn ToSql);
+			}
+		}
+
+		if !conditions.is_empty() {
+			sql.push_str(" WHERE ");
+			sql.push_str(&conditions.join(" AND "));
+		}
+
+		sql.push_str(" ORDER BY last_timestamp DESC LIMIT 1");
+
+		let mut stmt = conn.prepare(&sql)?;
+		let ts: Option<chrono::DateTime<chrono::Utc>> = stmt
+			.query_row(params.as_slice(), |row| row.get(0))
+			.optional()?;
 
 		Ok(ts)
 	}
@@ -854,5 +867,45 @@ mod tests {
 		assert_eq!(metas.len(), 1);
 		assert_eq!(metas[0].id, no_dev);
 		assert!(metas[0].device_id.is_none());
+	}
+
+	#[tokio::test]
+	async fn prev_segment_end_filters_device() {
+		let conn = Connection::open_in_memory().unwrap();
+		let db = DB::new(conn);
+
+		let now = Utc::now();
+		let ts_dev1 = now - chrono::Duration::hours(30);
+		let ts_dev2 = now - chrono::Duration::hours(5);
+
+		db.new_segment(NewSegmentArgs {
+			device_id: Some("dev1".into()),
+			first_timestamp: ts_dev1,
+			last_timestamp: ts_dev1,
+			original_size: 1,
+			compressed_size: 1,
+			logs_count: 1,
+		})
+		.await
+		.unwrap();
+
+		db.new_segment(NewSegmentArgs {
+			device_id: Some("dev2".into()),
+			first_timestamp: ts_dev2,
+			last_timestamp: ts_dev2,
+			original_size: 1,
+			compressed_size: 1,
+			logs_count: 1,
+		})
+		.await
+		.unwrap();
+
+		let found = db
+			.prev_segment_end(Some(now), Some(&["dev1".to_string()]))
+			.await
+			.unwrap()
+			.unwrap();
+
+		assert_eq!(found, ts_dev1);
 	}
 }
