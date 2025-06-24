@@ -782,12 +782,6 @@ mod tests {
 
 		#[tokio::test]
 		async fn find_logs_device_gap() {
-			use chrono::{Duration, Utc};
-			use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
-			use std::fs;
-			use std::io::Cursor;
-			use zstd;
-
 			let (ctx, dir) = prepare_test_ctx().await;
 			let now = Utc::now();
 
