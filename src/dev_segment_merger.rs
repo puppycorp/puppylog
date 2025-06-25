@@ -28,7 +28,11 @@ pub struct DeviceMerger {
 
 impl DeviceMerger {
 	pub fn new(ctx: Arc<Context>) -> Self {
-		Self::with_limits(ctx, MAX_IN_CORE)
+		let max_in_core = std::env::var("MERGER_MAX_IN_CORE")
+			.ok()
+			.and_then(|v| v.parse::<usize>().ok())
+			.unwrap_or(MAX_IN_CORE);
+		Self::with_limits(ctx, max_in_core)
 	}
 
 	pub fn with_limits(ctx: Arc<Context>, max_in_core: usize) -> Self {
@@ -119,7 +123,11 @@ impl DeviceMerger {
 		self.lru.push(device_id.clone(), ());
 		self.total_buffered += 1;
 
-		if buf.len() >= TARGET_SEGMENT_SIZE {
+		let target_segment_size = std::env::var("MERGER_TARGET_SEGMENT_SIZE")
+			.ok()
+			.and_then(|v| v.parse::<usize>().ok())
+			.unwrap_or(TARGET_SEGMENT_SIZE);
+		if buf.len() >= target_segment_size {
 			self.flush_device(&device_id).await?;
 		}
 		while self.total_buffered > self.max_in_core {
@@ -139,10 +147,14 @@ impl DeviceMerger {
 		let mut device_ids = HashSet::new();
 
 		loop {
+			let batch_size = std::env::var("MERGER_BATCH_SIZE")
+				.ok()
+				.and_then(|v| v.parse::<u32>().ok())
+				.unwrap_or(MERGER_BATCH_SIZE);
 			let segments = self
 				.ctx
 				.db
-				.find_segments_without_device(Some(MERGER_BATCH_SIZE))
+				.find_segments_without_device(Some(batch_size))
 				.await?;
 			if segments.is_empty() {
 				break;
