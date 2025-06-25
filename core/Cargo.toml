@@ -15,6 +15,7 @@ webpki-roots = { version = "0.26", optional = true }
 rustls = { version = "0.23", optional = true }
 native-tls = { version = "0.2", optional = true }
 tungstenite = { version = "0.26", features = ["native-tls"]}
+lru = "0.14"
 
 [dev-dependencies]
 criterion = "0.5"

@@ -60,6 +60,7 @@ mod cache;
 mod config;
 mod context;
 mod db;
+mod dev_segment_merger;
 mod logline;
 mod segment;
 mod settings;
@@ -103,8 +104,8 @@ async fn main() {
 	let ctx = Context::new(log_path).await;
 	let ctx = Arc::new(ctx);
 
-	// Spawn background worker that ingests staged log uploads
 	tokio::spawn(background::process_log_uploads(ctx.clone()));
+	tokio::spawn(dev_segment_merger::run_dev_segment_merger(ctx.clone()));
 
 	let cors = CorsLayer::new()
 		.allow_origin(Any) // Allow requests from any origin
