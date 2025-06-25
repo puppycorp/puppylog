@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,6 +9,7 @@ use crate::segment::LogSegment;
 use lru::LruCache;
 use puppylog::{LogEntry, Prop};
 use tokio::fs::remove_file;
+use zstd::Encoder;
 
 pub const TARGET_SEGMENT_SIZE: usize = 300_000;
 pub const MERGER_BATCH_SIZE: u32 = 2000;
@@ -54,7 +56,11 @@ impl DeviceMerger {
 		let mut buf = Vec::new();
 		seg.serialize(&mut buf);
 		let orig_size = buf.len();
-		let compressed = zstd::encode_all(std::io::Cursor::new(buf), 0)?;
+
+		let mut encoder = Encoder::new(Vec::new(), 14)?;
+		encoder.multithread(num_cpus::get() as u32)?;
+		encoder.write_all(&buf)?;
+		let compressed = encoder.finish()?;
 		let comp_size = compressed.len();
 
 		let segment_id = self
