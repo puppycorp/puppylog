@@ -17,7 +17,7 @@ use puppylog::Prop;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
 use puppylog::{check_expr, check_props, extract_device_ids, timestamp_bounds};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Cursor;
 use std::io::Write;
@@ -88,44 +88,59 @@ impl Context {
 		if current.buffer.len() > 50_000 {
 			log::info!("flushing segment with {} logs", current.buffer.len());
 			self.wal.clear();
-			let first_timestamp = current.buffer.first().unwrap().timestamp;
-			let last_timestamp = current.buffer.last().unwrap().timestamp;
-			let mut buff = Cursor::new(Vec::new());
-			current.serialize(&mut buff);
-			let original_size = buff.position() as usize;
-			buff.set_position(0);
-			let buff = zstd::encode_all(buff, 0).unwrap();
-			let compressed_size = buff.len();
-			let segment_id = self
-				.db
-				.new_segment(NewSegmentArgs {
-					device_id: None,
-					first_timestamp,
-					last_timestamp,
-					logs_count: current.buffer.len() as u64,
-					original_size,
-					compressed_size,
-				})
-				.await
-				.unwrap();
-			let mut unique_props = HashSet::new();
-			for log in &current.buffer {
-				for prop in &log.props {
-					unique_props.insert(prop.clone());
-				}
-				unique_props.insert(Prop {
-					key: "level".into(),
-					value: log.level.to_string(),
-				});
+
+			// Group logs by device ID (or UNKNOWN_DEVICE_ID)
+			let mut by_device: HashMap<String, Vec<LogEntry>> = HashMap::new();
+			for log in current.buffer.drain(..) {
+				let device_id = log
+					.props
+					.iter()
+					.find(|p| p.key == "deviceId")
+					.map(|p| p.value.clone())
+					.unwrap_or_else(|| crate::dev_segment_merger::UNKNOWN_DEVICE_ID.to_string());
+				by_device.entry(device_id).or_default().push(log);
 			}
-			self.db
-				.upsert_segment_props(segment_id, unique_props.iter())
-				.await
-				.unwrap();
-			let path = self.logs_path.join(format!("{}.log", segment_id));
-			let mut file = File::create(&path).unwrap();
-			file.write_all(&buff).unwrap();
-			current.buffer.clear();
+
+			for (device_id, mut logs) in by_device {
+				logs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+				let first_timestamp = logs.first().unwrap().timestamp;
+				let last_timestamp = logs.last().unwrap().timestamp;
+				let seg = LogSegment { buffer: logs };
+
+				let mut buff = Cursor::new(Vec::new());
+				seg.serialize(&mut buff);
+				let original_size = buff.position() as usize;
+				buff.set_position(0);
+				let buff = zstd::encode_all(buff, 0).unwrap();
+				let compressed_size = buff.len();
+				let segment_id = self
+					.db
+					.new_segment(NewSegmentArgs {
+						device_id: Some(device_id.clone()),
+						first_timestamp,
+						last_timestamp,
+						logs_count: seg.buffer.len() as u64,
+						original_size,
+						compressed_size,
+					})
+					.await
+					.unwrap();
+				let mut unique_props = HashSet::new();
+				for log in &seg.buffer {
+					unique_props.extend(log.props.iter().cloned());
+					unique_props.insert(Prop {
+						key: "level".into(),
+						value: log.level.to_string(),
+					});
+				}
+				self.db
+					.upsert_segment_props(segment_id, unique_props.iter())
+					.await
+					.unwrap();
+				let path = self.logs_path.join(format!("{}.log", segment_id));
+				let mut file = File::create(&path).unwrap();
+				file.write_all(&buff).unwrap();
+			}
 		}
 	}
 
@@ -914,5 +929,92 @@ mod tests {
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "target");
 		drop(dir);
+	}
+
+	#[tokio::test]
+	async fn save_logs_flushes_by_device() {
+		use chrono::{Duration, Utc};
+		use puppylog::{LogEntry, LogLevel, Prop};
+
+		let (ctx, _dir) = prepare_test_ctx().await;
+		let now = Utc::now();
+
+		const PER_DEVICE: usize = 25_001; // ensures total > 50_000
+		let mut logs = Vec::with_capacity(PER_DEVICE * 2);
+		for i in 0..PER_DEVICE {
+			logs.push(LogEntry {
+				timestamp: now + Duration::seconds(i as i64),
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "deviceId".into(),
+					value: "devA".into(),
+				}],
+				msg: String::new(),
+				..Default::default()
+			});
+		}
+		for i in 0..PER_DEVICE {
+			logs.push(LogEntry {
+				timestamp: now + Duration::seconds((PER_DEVICE + i) as i64),
+				level: LogLevel::Warn,
+				props: vec![Prop {
+					key: "deviceId".into(),
+					value: "devB".into(),
+				}],
+				msg: String::new(),
+				..Default::default()
+			});
+		}
+
+		ctx.save_logs(&logs).await;
+
+		let segs = ctx
+			.db
+			.find_segments(&GetSegmentsQuery::default())
+			.await
+			.unwrap();
+		assert_eq!(segs.len(), 2); // one per device
+		for seg in &segs {
+			match seg.device_id.as_deref() {
+				Some("devA") => assert_eq!(seg.logs_count, PER_DEVICE as u64),
+				Some("devB") => assert_eq!(seg.logs_count, PER_DEVICE as u64),
+				other => panic!("unexpected device id {other:?}"),
+			}
+		}
+	}
+
+	#[tokio::test]
+	async fn save_logs_unknown_device() {
+		use chrono::{Duration, Utc};
+		use puppylog::{LogEntry, LogLevel};
+
+		let (ctx, _dir) = prepare_test_ctx().await;
+		let now = Utc::now();
+
+		const COUNT: usize = 50_001; // trigger flush
+		let mut logs = Vec::with_capacity(COUNT);
+		for i in 0..COUNT {
+			logs.push(LogEntry {
+				timestamp: now + Duration::seconds(i as i64),
+				level: LogLevel::Info,
+				props: vec![],
+				msg: String::new(),
+				..Default::default()
+			});
+		}
+
+		ctx.save_logs(&logs).await;
+
+		let segs = ctx
+			.db
+			.find_segments(&GetSegmentsQuery::default())
+			.await
+			.unwrap();
+		assert_eq!(segs.len(), 1);
+		assert_eq!(
+			segs[0].device_id.as_deref(),
+			Some(crate::dev_segment_merger::UNKNOWN_DEVICE_ID)
+		);
+		assert_eq!(segs[0].logs_count, COUNT as u64);
 	}
 }
