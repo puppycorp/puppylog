@@ -31,6 +31,8 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 
 const CONCURRENCY_LIMIT: usize = 10;
+/// Default number of buffered log entries before logs are flushed to disk.
+pub const UPLOAD_FLUSH_THRESHOLD: usize = 50_000;
 
 #[derive(Debug)]
 pub struct Context {
@@ -85,7 +87,11 @@ impl Context {
 			self.wal.write(entry.clone());
 		}
 		current.sort();
-		if current.buffer.len() > 50_000 {
+		let flush_threshold = std::env::var("UPLOAD_FLUSH_THRESHOLD")
+			.ok()
+			.and_then(|v| v.parse::<usize>().ok())
+			.unwrap_or(UPLOAD_FLUSH_THRESHOLD);
+		if current.buffer.len() > flush_threshold {
 			log::info!("flushing segment with {} logs", current.buffer.len());
 			self.wal.clear();
 
@@ -938,8 +944,9 @@ mod tests {
 
 		let (ctx, _dir) = prepare_test_ctx().await;
 		let now = Utc::now();
+		std::env::set_var("UPLOAD_FLUSH_THRESHOLD", "10");
 
-		const PER_DEVICE: usize = 25_001; // ensures total > 50_000
+		const PER_DEVICE: usize = 6; // ensures total > threshold
 		let mut logs = Vec::with_capacity(PER_DEVICE * 2);
 		for i in 0..PER_DEVICE {
 			logs.push(LogEntry {
@@ -967,6 +974,7 @@ mod tests {
 		}
 
 		ctx.save_logs(&logs).await;
+		std::env::remove_var("UPLOAD_FLUSH_THRESHOLD");
 
 		let segs = ctx
 			.db
@@ -990,8 +998,9 @@ mod tests {
 
 		let (ctx, _dir) = prepare_test_ctx().await;
 		let now = Utc::now();
+		std::env::set_var("UPLOAD_FLUSH_THRESHOLD", "10");
 
-		const COUNT: usize = 50_001; // trigger flush
+		const COUNT: usize = 11; // trigger flush
 		let mut logs = Vec::with_capacity(COUNT);
 		for i in 0..COUNT {
 			logs.push(LogEntry {
@@ -1004,6 +1013,7 @@ mod tests {
 		}
 
 		ctx.save_logs(&logs).await;
+		std::env::remove_var("UPLOAD_FLUSH_THRESHOLD");
 
 		let segs = ctx
 			.db
