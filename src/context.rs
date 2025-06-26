@@ -165,7 +165,7 @@ impl Context {
 		let tz = query
 			.tz_offset
 			.unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
-		let (mut start_bound, mut end_bound) = timestamp_bounds(&query.root);
+		let (start_bound, end_bound) = timestamp_bounds(&query.root);
 		log::info!(
 			"start_bound = {:?}, end_bound = {:?}",
 			start_bound,
@@ -177,6 +177,7 @@ impl Context {
 			}
 		}
 		{
+			let mut end = end;
 			let current = self.current.lock().await;
 			let iter = current.iter();
 			for entry in iter {
