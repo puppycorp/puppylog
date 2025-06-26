@@ -32,7 +32,7 @@ use tokio::sync::Mutex;
 
 const CONCURRENCY_LIMIT: usize = 10;
 /// Default number of buffered log entries before logs are flushed to disk.
-pub const UPLOAD_FLUSH_THRESHOLD: usize = 1_000_000;
+pub const UPLOAD_FLUSH_THRESHOLD: usize = 3_000_000;
 
 #[derive(Debug)]
 pub struct Context {
@@ -350,10 +350,10 @@ impl Context {
 mod tests {
 	use super::*;
 	use crate::db::NewSegmentArgs;
+	use crate::segment::compress_segment;
 	use chrono::{Duration, Utc};
 	use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
 	use std::fs;
-	use std::io::Cursor;
 
 	// Helper to set up an isolated temp environment & Context for tests.
 	async fn prepare_test_ctx() -> (Context, tempfile::TempDir) {
@@ -419,7 +419,7 @@ mod tests {
 		let mut buff = Vec::new();
 		segment.serialize(&mut buff);
 		let original_size = buff.len();
-		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let compressed = compress_segment(&buff).unwrap();
 		let compressed_size = compressed.len();
 
 		let segment_id = ctx
@@ -504,7 +504,7 @@ mod tests {
 		let mut buff = Vec::new();
 		old_seg.serialize(&mut buff);
 		let orig_size = buff.len();
-		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let compressed = compress_segment(&buff).unwrap();
 		let comp_size = compressed.len();
 		let old_seg_id = ctx
 			.db
@@ -547,7 +547,7 @@ mod tests {
 		let mut buff = Vec::new();
 		new_seg.serialize(&mut buff);
 		let orig_size = buff.len();
-		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let compressed = compress_segment(&buff).unwrap();
 		let comp_size = compressed.len();
 		let new_seg_id = ctx
 			.db
@@ -628,7 +628,7 @@ mod tests {
 			let mut buff = Vec::new();
 			seg.serialize(&mut buff);
 			let original_size = buff.len();
-			let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+			let compressed = compress_segment(&buff).unwrap();
 			let compressed_size = compressed.len();
 
 			let id = ctx
@@ -671,7 +671,7 @@ mod tests {
 			let mut buff = Vec::new();
 			seg.serialize(&mut buff);
 			let original_size = buff.len();
-			let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+			let compressed = compress_segment(&buff).unwrap();
 			let compressed_size = compressed.len();
 
 			let id = ctx
@@ -751,7 +751,7 @@ mod tests {
 		let mut buff = Vec::new();
 		seg1.serialize(&mut buff);
 		let orig_size = buff.len();
-		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let compressed = compress_segment(&buff).unwrap();
 		let comp_size = compressed.len();
 		let seg_id1 = ctx
 			.db
@@ -792,7 +792,7 @@ mod tests {
 		let mut buff = Vec::new();
 		seg2.serialize(&mut buff);
 		let orig_size = buff.len();
-		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let compressed = compress_segment(&buff).unwrap();
 		let comp_size = compressed.len();
 		let seg_id2 = ctx
 			.db
@@ -853,7 +853,7 @@ mod tests {
 		let mut buff = Vec::new();
 		seg_old.serialize(&mut buff);
 		let orig_size = buff.len();
-		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let compressed = compress_segment(&buff).unwrap();
 		let comp_size = compressed.len();
 		let seg_old_id = ctx
 			.db
@@ -898,7 +898,7 @@ mod tests {
 		let mut buff = Vec::new();
 		seg_other.serialize(&mut buff);
 		let orig_size = buff.len();
-		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let compressed = compress_segment(&buff).unwrap();
 		let comp_size = compressed.len();
 		let seg_other_id = ctx
 			.db

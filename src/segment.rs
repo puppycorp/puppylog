@@ -3,6 +3,7 @@ use chrono::Utc;
 use puppylog::LogEntry;
 use puppylog::LogentryDeserializerError;
 use serde::Serialize;
+use zstd::Encoder;
 use std::cmp::Ordering;
 use std::io::Read;
 use std::io::Write;
@@ -143,6 +144,13 @@ impl LogSegment {
 		let first = self.buffer.first().unwrap();
 		date >= first.timestamp
 	}
+}
+
+pub fn compress_segment(buf: &[u8]) -> anyhow::Result<Vec<u8>> {
+	let mut encoder = Encoder::new(Vec::new(), 14)?;
+	encoder.multithread(num_cpus::get() as u32)?;
+	encoder.write_all(&buf)?;
+	Ok(encoder.finish()?)
 }
 
 #[cfg(test)]
