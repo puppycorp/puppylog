@@ -640,15 +640,46 @@ async fn main() -> Result<(), Box<dyn Error>> {
 						let file_path = output_path.join(format!("segment_{}.zstd", id));
 						if !file_path.exists() {
 							println!("downloading: {}", url);
-							let response = client.get(url).send().await?.bytes().await?;
+							let response = loop {
+								let res = match client.get(url.clone()).send().await {
+									Ok(res) => res,
+									Err(e) => {
+										eprintln!("Error downloading segment: {}", e);
+										tokio::time::sleep(Duration::from_secs(1)).await;
+										continue;
+									}
+								};
+
+								match res.bytes().await {
+									Ok(bytes) => break bytes,
+									Err(e) => {
+										eprintln!("Error downloading segment: {}", e);
+										tokio::time::sleep(Duration::from_secs(1)).await;
+									}
+								}
+							};
 							println!("saving to file: {}", file_path.display());
 							let mut file = std::fs::File::create(file_path)?;
 							file.write_all(&response)?;
 						}
 
-						let url =
-							Url::parse(&format!("{}/api/v1/segment/{}", base_addr, id)).unwrap();
-						client.delete(url).send().await?;
+						let url = Url::parse(&format!("{}/api/v1/segment/{}", base_addr, id)).unwrap();
+						loop {
+							let resp = match client.delete(url.clone()).send().await {
+								Ok(r) => r,
+								Err(e) => {
+									eprintln!("Error deleting segment {}: {}", id, e);
+									tokio::time::sleep(Duration::from_secs(1)).await;
+									continue;
+								}
+							};
+							if resp.status().is_success() {
+								break;
+							} else {
+								eprintln!("Delete failed for segment {}: {}", id, resp.status());
+								tokio::time::sleep(Duration::from_secs(1)).await;
+							}
+						}
 						println!("deleted segment: {}", id);
 					}
 				}
