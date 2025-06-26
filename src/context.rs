@@ -32,7 +32,7 @@ use tokio::sync::Mutex;
 
 const CONCURRENCY_LIMIT: usize = 10;
 /// Default number of buffered log entries before logs are flushed to disk.
-pub const UPLOAD_FLUSH_THRESHOLD: usize = 50_000;
+pub const UPLOAD_FLUSH_THRESHOLD: usize = 1_000_000;
 
 #[derive(Debug)]
 pub struct Context {
@@ -698,224 +698,6 @@ mod tests {
 			fs::write(ctx.logs_path.join(format!("{}.log", id)), compressed).unwrap();
 		}
 
-		#[tokio::test]
-		async fn find_logs_filter_device_id() {
-			use chrono::{Duration, Utc};
-			use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
-			use std::fs;
-			use std::io::Cursor;
-			use zstd;
-
-			let (ctx, dir) = prepare_test_ctx().await;
-			let now = Utc::now();
-
-			let entry1 = LogEntry {
-				timestamp: now - Duration::hours(30),
-				level: LogLevel::Info,
-				props: vec![Prop {
-					key: "deviceId".into(),
-					value: "dev1".into(),
-				}],
-				msg: "d1".into(),
-				..Default::default()
-			};
-			let mut seg1 = LogSegment::new();
-			seg1.add_log_entry(entry1.clone());
-			seg1.sort();
-			let mut buff = Vec::new();
-			seg1.serialize(&mut buff);
-			let orig_size = buff.len();
-			let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
-			let comp_size = compressed.len();
-			let seg_id1 = ctx
-				.db
-				.new_segment(NewSegmentArgs {
-					device_id: Some("dev1".into()),
-					first_timestamp: entry1.timestamp,
-					last_timestamp: entry1.timestamp,
-					original_size: orig_size,
-					compressed_size: comp_size,
-					logs_count: 1,
-				})
-				.await
-				.unwrap();
-			let mut props_vec: Vec<Prop> = entry1.props.clone();
-			props_vec.push(Prop {
-				key: "level".into(),
-				value: entry1.level.to_string(),
-			});
-			ctx.db
-				.upsert_segment_props(seg_id1, props_vec.iter())
-				.await
-				.unwrap();
-			fs::write(ctx.logs_path.join(format!("{}.log", seg_id1)), compressed).unwrap();
-
-			let entry2 = LogEntry {
-				timestamp: now - Duration::hours(25),
-				level: LogLevel::Info,
-				props: vec![Prop {
-					key: "deviceId".into(),
-					value: "dev2".into(),
-				}],
-				msg: "d2".into(),
-				..Default::default()
-			};
-			let mut seg2 = LogSegment::new();
-			seg2.add_log_entry(entry2.clone());
-			seg2.sort();
-			let mut buff = Vec::new();
-			seg2.serialize(&mut buff);
-			let orig_size = buff.len();
-			let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
-			let comp_size = compressed.len();
-			let seg_id2 = ctx
-				.db
-				.new_segment(NewSegmentArgs {
-					device_id: Some("dev2".into()),
-					first_timestamp: entry2.timestamp,
-					last_timestamp: entry2.timestamp,
-					original_size: orig_size,
-					compressed_size: comp_size,
-					logs_count: 1,
-				})
-				.await
-				.unwrap();
-			let mut props_vec: Vec<Prop> = entry2.props.clone();
-			props_vec.push(Prop {
-				key: "level".into(),
-				value: entry2.level.to_string(),
-			});
-			ctx.db
-				.upsert_segment_props(seg_id2, props_vec.iter())
-				.await
-				.unwrap();
-			fs::write(ctx.logs_path.join(format!("{}.log", seg_id2)), compressed).unwrap();
-
-			let mut query = parse_log_query("deviceId = dev1").unwrap();
-			query.end_date = Some(now);
-			let (tx, mut rx) = mpsc::channel(10);
-			ctx.find_logs(query, &tx).await.unwrap();
-			drop(tx);
-			let mut found = Vec::new();
-			while let Some(log) = rx.recv().await {
-				found.push(log);
-			}
-
-			assert_eq!(found.len(), 1);
-			assert_eq!(found[0].msg, "d1");
-			drop(dir);
-		}
-
-		#[tokio::test]
-		async fn find_logs_device_gap() {
-			let (ctx, dir) = prepare_test_ctx().await;
-			let now = Utc::now();
-
-			let entry_old = LogEntry {
-				timestamp: now - Duration::hours(30),
-				level: LogLevel::Info,
-				props: vec![Prop {
-					key: "deviceId".into(),
-					value: "dev1".into(),
-				}],
-				msg: "old".into(),
-				..Default::default()
-			};
-			let mut seg_old = LogSegment::new();
-			seg_old.add_log_entry(entry_old.clone());
-			seg_old.sort();
-			let mut buff = Vec::new();
-			seg_old.serialize(&mut buff);
-			let orig_size = buff.len();
-			let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
-			let comp_size = compressed.len();
-			let seg_old_id = ctx
-				.db
-				.new_segment(NewSegmentArgs {
-					device_id: Some("dev1".into()),
-					first_timestamp: entry_old.timestamp,
-					last_timestamp: entry_old.timestamp,
-					original_size: orig_size,
-					compressed_size: comp_size,
-					logs_count: 1,
-				})
-				.await
-				.unwrap();
-			let mut props_vec: Vec<Prop> = entry_old.props.clone();
-			props_vec.push(Prop {
-				key: "level".into(),
-				value: entry_old.level.to_string(),
-			});
-			ctx.db
-				.upsert_segment_props(seg_old_id, props_vec.iter())
-				.await
-				.unwrap();
-			fs::write(
-				ctx.logs_path.join(format!("{}.log", seg_old_id)),
-				compressed,
-			)
-			.unwrap();
-
-			let entry_other = LogEntry {
-				timestamp: now - Duration::hours(5),
-				level: LogLevel::Info,
-				props: vec![Prop {
-					key: "deviceId".into(),
-					value: "dev2".into(),
-				}],
-				msg: "other".into(),
-				..Default::default()
-			};
-			let mut seg_other = LogSegment::new();
-			seg_other.add_log_entry(entry_other.clone());
-			seg_other.sort();
-			let mut buff = Vec::new();
-			seg_other.serialize(&mut buff);
-			let orig_size = buff.len();
-			let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
-			let comp_size = compressed.len();
-			let seg_other_id = ctx
-				.db
-				.new_segment(NewSegmentArgs {
-					device_id: Some("dev2".into()),
-					first_timestamp: entry_other.timestamp,
-					last_timestamp: entry_other.timestamp,
-					original_size: orig_size,
-					compressed_size: comp_size,
-					logs_count: 1,
-				})
-				.await
-				.unwrap();
-			let mut props_vec2: Vec<Prop> = entry_other.props.clone();
-			props_vec2.push(Prop {
-				key: "level".into(),
-				value: entry_other.level.to_string(),
-			});
-			ctx.db
-				.upsert_segment_props(seg_other_id, props_vec2.iter())
-				.await
-				.unwrap();
-			fs::write(
-				ctx.logs_path.join(format!("{}.log", seg_other_id)),
-				compressed,
-			)
-			.unwrap();
-
-			let mut query = parse_log_query("deviceId = dev1").unwrap();
-			query.end_date = Some(now);
-			let (tx, mut rx) = mpsc::channel(10);
-			ctx.find_logs(query, &tx).await.unwrap();
-			drop(tx);
-			let mut found = Vec::new();
-			while let Some(log) = rx.recv().await {
-				found.push(log);
-			}
-
-			assert_eq!(found.len(), 1);
-			assert_eq!(found[0].msg, "old");
-			drop(dir);
-		}
-
 		let q_skip = parse_log_query("msg = \"should_not_be_seen\"").unwrap();
 		let (tx_skip, mut rx_skip) = mpsc::channel(10);
 		ctx.find_logs(q_skip, &tx_skip).await.unwrap();
@@ -939,6 +721,224 @@ mod tests {
 		}
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "target");
+		drop(dir);
+	}
+
+	#[tokio::test]
+	async fn find_logs_filter_device_id() {
+		use chrono::{Duration, Utc};
+		use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
+		use std::fs;
+		use std::io::Cursor;
+		use zstd;
+
+		let (ctx, dir) = prepare_test_ctx().await;
+		let now = Utc::now();
+
+		let entry1 = LogEntry {
+			timestamp: now - Duration::hours(30),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "deviceId".into(),
+				value: "dev1".into(),
+			}],
+			msg: "d1".into(),
+			..Default::default()
+		};
+		let mut seg1 = LogSegment::new();
+		seg1.add_log_entry(entry1.clone());
+		seg1.sort();
+		let mut buff = Vec::new();
+		seg1.serialize(&mut buff);
+		let orig_size = buff.len();
+		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let comp_size = compressed.len();
+		let seg_id1 = ctx
+			.db
+			.new_segment(NewSegmentArgs {
+				device_id: Some("dev1".into()),
+				first_timestamp: entry1.timestamp,
+				last_timestamp: entry1.timestamp,
+				original_size: orig_size,
+				compressed_size: comp_size,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+		let mut props_vec: Vec<Prop> = entry1.props.clone();
+		props_vec.push(Prop {
+			key: "level".into(),
+			value: entry1.level.to_string(),
+		});
+		ctx.db
+			.upsert_segment_props(seg_id1, props_vec.iter())
+			.await
+			.unwrap();
+		fs::write(ctx.logs_path.join(format!("{}.log", seg_id1)), compressed).unwrap();
+
+		let entry2 = LogEntry {
+			timestamp: now - Duration::hours(25),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "deviceId".into(),
+				value: "dev2".into(),
+			}],
+			msg: "d2".into(),
+			..Default::default()
+		};
+		let mut seg2 = LogSegment::new();
+		seg2.add_log_entry(entry2.clone());
+		seg2.sort();
+		let mut buff = Vec::new();
+		seg2.serialize(&mut buff);
+		let orig_size = buff.len();
+		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let comp_size = compressed.len();
+		let seg_id2 = ctx
+			.db
+			.new_segment(NewSegmentArgs {
+				device_id: Some("dev2".into()),
+				first_timestamp: entry2.timestamp,
+				last_timestamp: entry2.timestamp,
+				original_size: orig_size,
+				compressed_size: comp_size,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+		let mut props_vec: Vec<Prop> = entry2.props.clone();
+		props_vec.push(Prop {
+			key: "level".into(),
+			value: entry2.level.to_string(),
+		});
+		ctx.db
+			.upsert_segment_props(seg_id2, props_vec.iter())
+			.await
+			.unwrap();
+		fs::write(ctx.logs_path.join(format!("{}.log", seg_id2)), compressed).unwrap();
+
+		let mut query = parse_log_query("deviceId = dev1").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(10);
+		ctx.find_logs(query, &tx).await.unwrap();
+		drop(tx);
+		let mut found = Vec::new();
+		while let Some(log) = rx.recv().await {
+			found.push(log);
+		}
+
+		assert_eq!(found.len(), 1);
+		assert_eq!(found[0].msg, "d1");
+		drop(dir);
+	}
+
+	#[tokio::test]
+	async fn find_logs_device_gap() {
+		let (ctx, dir) = prepare_test_ctx().await;
+		let now = Utc::now();
+
+		let entry_old = LogEntry {
+			timestamp: now - Duration::hours(30),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "deviceId".into(),
+				value: "dev1".into(),
+			}],
+			msg: "old".into(),
+			..Default::default()
+		};
+		let mut seg_old = LogSegment::new();
+		seg_old.add_log_entry(entry_old.clone());
+		seg_old.sort();
+		let mut buff = Vec::new();
+		seg_old.serialize(&mut buff);
+		let orig_size = buff.len();
+		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let comp_size = compressed.len();
+		let seg_old_id = ctx
+			.db
+			.new_segment(NewSegmentArgs {
+				device_id: Some("dev1".into()),
+				first_timestamp: entry_old.timestamp,
+				last_timestamp: entry_old.timestamp,
+				original_size: orig_size,
+				compressed_size: comp_size,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+		let mut props_vec: Vec<Prop> = entry_old.props.clone();
+		props_vec.push(Prop {
+			key: "level".into(),
+			value: entry_old.level.to_string(),
+		});
+		ctx.db
+			.upsert_segment_props(seg_old_id, props_vec.iter())
+			.await
+			.unwrap();
+		fs::write(
+			ctx.logs_path.join(format!("{}.log", seg_old_id)),
+			compressed,
+		)
+		.unwrap();
+
+		let entry_other = LogEntry {
+			timestamp: now - Duration::hours(5),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "deviceId".into(),
+				value: "dev2".into(),
+			}],
+			msg: "other".into(),
+			..Default::default()
+		};
+		let mut seg_other = LogSegment::new();
+		seg_other.add_log_entry(entry_other.clone());
+		seg_other.sort();
+		let mut buff = Vec::new();
+		seg_other.serialize(&mut buff);
+		let orig_size = buff.len();
+		let compressed = zstd::encode_all(Cursor::new(buff), 0).unwrap();
+		let comp_size = compressed.len();
+		let seg_other_id = ctx
+			.db
+			.new_segment(NewSegmentArgs {
+				device_id: Some("dev2".into()),
+				first_timestamp: entry_other.timestamp,
+				last_timestamp: entry_other.timestamp,
+				original_size: orig_size,
+				compressed_size: comp_size,
+				logs_count: 1,
+			})
+			.await
+			.unwrap();
+		let mut props_vec2: Vec<Prop> = entry_other.props.clone();
+		props_vec2.push(Prop {
+			key: "level".into(),
+			value: entry_other.level.to_string(),
+		});
+		ctx.db
+			.upsert_segment_props(seg_other_id, props_vec2.iter())
+			.await
+			.unwrap();
+		fs::write(
+			ctx.logs_path.join(format!("{}.log", seg_other_id)),
+			compressed,
+		)
+		.unwrap();
+
+		let mut query = parse_log_query("deviceId = dev1").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(10);
+		ctx.find_logs(query, &tx).await.unwrap();
+		drop(tx);
+		let mut found = Vec::new();
+		while let Some(log) = rx.recv().await {
+			found.push(log);
+		}
+
+		assert_eq!(found.len(), 1);
+		assert_eq!(found[0].msg, "old");
 		drop(dir);
 	}
 
