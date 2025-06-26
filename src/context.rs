@@ -44,6 +44,7 @@ pub struct Context {
 	pub current: Mutex<LogSegment>,
 	pub wal: Wal,
 	pub upload_queue: AtomicUsize,
+	upload_flush_threshold: AtomicUsize,
 	logs_path: PathBuf,
 }
 
@@ -76,8 +77,15 @@ impl Context {
 			current: Mutex::new(LogSegment::with_logs(logs)),
 			wal,
 			upload_queue: AtomicUsize::new(0),
+			upload_flush_threshold: AtomicUsize::new(UPLOAD_FLUSH_THRESHOLD),
 			logs_path: logs_path.as_ref().to_owned(),
 		}
+	}
+
+	/// Override the default flush threshold for uploaded logs.
+	pub fn set_upload_flush_threshold(&self, threshold: usize) {
+		self.upload_flush_threshold
+			.store(threshold, Ordering::Relaxed);
 	}
 
 	pub async fn save_logs(&self, logs: &[LogEntry]) {
@@ -87,10 +95,7 @@ impl Context {
 			self.wal.write(entry.clone());
 		}
 		current.sort();
-		let flush_threshold = std::env::var("UPLOAD_FLUSH_THRESHOLD")
-			.ok()
-			.and_then(|v| v.parse::<usize>().ok())
-			.unwrap_or(UPLOAD_FLUSH_THRESHOLD);
+		let flush_threshold = self.upload_flush_threshold.load(Ordering::Relaxed);
 		if current.buffer.len() > flush_threshold {
 			log::info!("flushing segment with {} logs", current.buffer.len());
 			self.wal.clear();
@@ -944,7 +949,7 @@ mod tests {
 
 		let (ctx, _dir) = prepare_test_ctx().await;
 		let now = Utc::now();
-		std::env::set_var("UPLOAD_FLUSH_THRESHOLD", "10");
+		ctx.set_upload_flush_threshold(10);
 
 		const PER_DEVICE: usize = 6; // ensures total > threshold
 		let mut logs = Vec::with_capacity(PER_DEVICE * 2);
@@ -974,7 +979,6 @@ mod tests {
 		}
 
 		ctx.save_logs(&logs).await;
-		std::env::remove_var("UPLOAD_FLUSH_THRESHOLD");
 
 		let segs = ctx
 			.db
@@ -998,7 +1002,7 @@ mod tests {
 
 		let (ctx, _dir) = prepare_test_ctx().await;
 		let now = Utc::now();
-		std::env::set_var("UPLOAD_FLUSH_THRESHOLD", "10");
+		ctx.set_upload_flush_threshold(10);
 
 		const COUNT: usize = 11; // trigger flush
 		let mut logs = Vec::with_capacity(COUNT);
@@ -1013,7 +1017,6 @@ mod tests {
 		}
 
 		ctx.save_logs(&logs).await;
-		std::env::remove_var("UPLOAD_FLUSH_THRESHOLD");
 
 		let segs = ctx
 			.db
