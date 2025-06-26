@@ -3,10 +3,10 @@ use chrono::Utc;
 use puppylog::LogEntry;
 use puppylog::LogentryDeserializerError;
 use serde::Serialize;
-use zstd::Encoder;
 use std::cmp::Ordering;
 use std::io::Read;
 use std::io::Write;
+use zstd::Encoder;
 
 #[derive(Debug)]
 pub struct LogIterator<'a> {
