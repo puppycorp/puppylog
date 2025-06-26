@@ -361,6 +361,7 @@ PuppyLog supports tuning of its in-memory buffering and merge batching behavior 
 - **MERGER_MAX_IN_CORE**: Maximum number of log entries buffered in memory for device merging. Defaults to the compile-time constant `MAX_IN_CORE`.
 - **MERGER_TARGET_SEGMENT_SIZE**: Number of buffered entries per device before triggering a flush to storage. Defaults to `TARGET_SEGMENT_SIZE`.
 - **MERGER_BATCH_SIZE**: Number of orphan log segments fetched per merge iteration. Defaults to `MERGER_BATCH_SIZE`.
+- **MERGER_RUN**: Enables or disables merger background processing. Defaults to `true`.
 
 To override these at runtime, set the variables before starting the server, for example:
 

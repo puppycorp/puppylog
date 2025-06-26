@@ -213,6 +213,16 @@ impl DeviceMerger {
 }
 
 pub async fn run_dev_segment_merger(ctx: Arc<Context>) {
+	let should_run = std::env::var("MERGER_RUN")
+		.ok()
+		.and_then(|v| v.parse::<bool>().ok())
+		.unwrap_or(true);
+
+	if !should_run {
+		log::info!("Device segment merger is disabled by configuration");
+		return;
+	}
+
 	let mut merger = DeviceMerger::new(ctx);
 	loop {
 		if let Err(err) = merger.run_once().await {
