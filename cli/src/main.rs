@@ -663,7 +663,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 							file.write_all(&response)?;
 						}
 
-						let url = Url::parse(&format!("{}/api/v1/segment/{}", base_addr, id)).unwrap();
+						let url =
+							Url::parse(&format!("{}/api/v1/segment/{}", base_addr, id)).unwrap();
 						loop {
 							let resp = match client.delete(url.clone()).send().await {
 								Ok(r) => r,

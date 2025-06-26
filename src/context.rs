@@ -166,6 +166,11 @@ impl Context {
 			.tz_offset
 			.unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
 		let (mut start_bound, mut end_bound) = timestamp_bounds(&query.root);
+		log::info!(
+			"start_bound = {:?}, end_bound = {:?}",
+			start_bound,
+			end_bound
+		);
 		if let Some(e) = end_bound {
 			if e < end {
 				end = e;
@@ -200,6 +205,7 @@ impl Context {
 		let window = chrono::Duration::hours(24);
 		let mut prev_end: Option<DateTime<Utc>> = Some(end);
 		let mut processed_segments: HashSet<u32> = HashSet::new();
+		log::info!("prev_end: {:?}", prev_end);
 
 		'outer: loop {
 			if tx.is_closed() {
