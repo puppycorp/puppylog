@@ -540,6 +540,8 @@ impl DB {
 
 		sql.push_str(" ORDER BY last_timestamp DESC LIMIT 1");
 
+		log::info!("prev_segment_end SQL: {}", sql);
+
 		let mut stmt = conn.prepare(&sql)?;
 		let ts: Option<chrono::DateTime<chrono::Utc>> = stmt
 			.query_row(params.as_slice(), |row| row.get(0))
