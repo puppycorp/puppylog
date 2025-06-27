@@ -597,12 +597,6 @@ mod tests {
 
 	#[tokio::test]
 	async fn find_logs_filter_device_id() {
-		use chrono::{Duration, Utc};
-		use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
-		use std::fs;
-		use std::io::Cursor;
-		use zstd;
-
 		let (ctx, dir) = prepare_test_ctx().await;
 		let now = Utc::now();
 
@@ -815,9 +809,6 @@ mod tests {
 
 	#[tokio::test]
 	async fn save_logs_flushes_by_device() {
-		use chrono::{Duration, Utc};
-		use puppylog::{LogEntry, LogLevel, Prop};
-
 		let (ctx, _dir) = prepare_test_ctx().await;
 		let now = Utc::now();
 		ctx.set_upload_flush_threshold(10);
@@ -868,9 +859,6 @@ mod tests {
 
 	#[tokio::test]
 	async fn save_logs_unknown_device() {
-		use chrono::{Duration, Utc};
-		use puppylog::{LogEntry, LogLevel};
-
 		let (ctx, _dir) = prepare_test_ctx().await;
 		let now = Utc::now();
 		ctx.set_upload_flush_threshold(10);
