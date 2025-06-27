@@ -435,7 +435,7 @@ var saveDeviceSettings = async (device) => {
   });
 };
 var bulkEdit = async (args) => {
-  await fetch(`/api/v1/device/bulkedit`, {
+  await fetch(`/api/v1/device_bulkedit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(args)

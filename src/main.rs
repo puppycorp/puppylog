@@ -148,8 +148,6 @@ async fn main() {
 		.layer(cors.clone())
 		.route("/api/v1/logs/histogram", get(get_histogram))
 		.layer(cors.clone())
-		.route("/api/v1/device/settings", post(update_devices_settings))
-		.with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}/status", get(get_device_status))
 		.layer(cors.clone())
 		.with_state(ctx.clone())
@@ -168,7 +166,7 @@ async fn main() {
 			post(update_device_settings),
 		)
 		.with_state(ctx.clone())
-		.route("/api/v1/device/bulkedit", post(bulk_edit))
+		.route("/api/v1/device_bulkedit", post(bulk_edit))
 		.with_state(ctx.clone())
 		.route("/api/v1/settings", post(post_settings_query))
 		.with_state(ctx.clone())
@@ -425,15 +423,6 @@ async fn upload_device_logs(
 	}
 
 	(StatusCode::OK, "ok").into_response()
-}
-
-async fn update_devices_settings(
-	State(ctx): State<Arc<Context>>,
-	body: Json<UpdateDevicesSettings>,
-) -> &'static str {
-	log::info!("update_devices_settings: {:?}", body);
-	ctx.db.update_devices_settings(&body).await;
-	"ok"
 }
 
 #[derive(Debug, Serialize)]
