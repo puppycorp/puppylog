@@ -61,6 +61,7 @@ mod config;
 mod context;
 mod db;
 mod dev_segment_merger;
+mod device_segment_compactor;
 mod logline;
 mod segment;
 mod settings;
@@ -111,6 +112,9 @@ async fn main() {
 
 	tokio::spawn(background::process_log_uploads(ctx.clone()));
 	tokio::spawn(dev_segment_merger::run_dev_segment_merger(ctx.clone()));
+	tokio::spawn(device_segment_compactor::run_device_segment_compactor(
+		ctx.clone(),
+	));
 
 	let cors = CorsLayer::new()
 		.allow_origin(Any) // Allow requests from any origin
