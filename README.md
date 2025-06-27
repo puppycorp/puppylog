@@ -363,6 +363,8 @@ PuppyLog supports tuning of its in-memory buffering and merge batching behavior 
 - **MERGER_BATCH_SIZE**: Number of orphan log segments fetched per merge iteration. Defaults to `MERGER_BATCH_SIZE`.
 - **MERGER_RUN**: Enables or disables merger background processing. Defaults to `true`.
 - **UPLOAD_FLUSH_THRESHOLD**: Number of buffered log entries received via the upload API before they are persisted to storage. The server reads this value at startup. Defaults to the compile-time constant `UPLOAD_FLUSH_THRESHOLD`.
+- **RUN_SEGMENT_COMPACTOR**: Enables or disables the segment compactor background process. Defaults to `true`. It tries to compact device segment logs up to 300k entries per segment. This helps to improve compression ratio and query performance with less files on disk.
+
 
 To override these at runtime, set the variables before starting the server, for example:
 

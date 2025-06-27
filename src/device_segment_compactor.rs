@@ -163,6 +163,16 @@ impl DeviceSegmentCompactor {
 }
 
 pub async fn run_device_segment_compactor(ctx: Arc<Context>) {
+	let should_run = std::env::var("RUN_SEGMENT_COMPACTOR")
+		.ok()
+		.and_then(|v| v.parse::<bool>().ok())
+		.unwrap_or(true);
+
+	if !should_run {
+		log::info!("segment compactor is disabled");
+		return;
+	}
+
 	let compactor = DeviceSegmentCompactor::new(ctx);
 	loop {
 		if let Err(err) = compactor.run_once().await {
