@@ -102,7 +102,12 @@ async fn main() {
 		log::info!("does not exist, creating it");
 		std::fs::create_dir_all(&log_path).unwrap();
 	}
-	let ctx = Context::new(log_path).await;
+	let mut ctx = Context::new(log_path).await;
+	if let Ok(val) = std::env::var("UPLOAD_FLUSH_THRESHOLD") {
+		if let Ok(num) = val.parse::<usize>() {
+			ctx.set_upload_flush_threshold(num);
+		}
+	}
 	let ctx = Arc::new(ctx);
 
 	tokio::spawn(background::process_log_uploads(ctx.clone()));

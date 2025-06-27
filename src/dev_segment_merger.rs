@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use crate::context::Context;
 use crate::db::NewSegmentArgs;
-use crate::segment::LogSegment;
+use crate::segment::{compress_segment, LogSegment};
 use lru::LruCache;
 use puppylog::{LogEntry, Prop};
 use tokio::fs::remove_file;
@@ -61,10 +61,7 @@ impl DeviceMerger {
 		seg.serialize(&mut buf);
 		let orig_size = buf.len();
 
-		let mut encoder = Encoder::new(Vec::new(), 14)?;
-		encoder.multithread(num_cpus::get() as u32)?;
-		encoder.write_all(&buf)?;
-		let compressed = encoder.finish()?;
+		let compressed = compress_segment(&buf)?;
 		let comp_size = compressed.len();
 
 		let segment_id = self
@@ -213,6 +210,16 @@ impl DeviceMerger {
 }
 
 pub async fn run_dev_segment_merger(ctx: Arc<Context>) {
+	let should_run = std::env::var("MERGER_RUN")
+		.ok()
+		.and_then(|v| v.parse::<bool>().ok())
+		.unwrap_or(true);
+
+	if !should_run {
+		log::info!("Device segment merger is disabled by configuration");
+		return;
+	}
+
 	let mut merger = DeviceMerger::new(ctx);
 	loop {
 		if let Err(err) = merger.run_once().await {
@@ -425,7 +432,7 @@ mod tests {
 		let mut buf = Vec::new();
 		seg.serialize(&mut buf);
 		let orig_size = buf.len();
-		let comp = zstd::encode_all(std::io::Cursor::new(buf), 0).unwrap();
+		let comp = compress_segment(&buf).unwrap();
 		let comp_size = comp.len();
 		let seg_id = ctx
 			.db
@@ -518,7 +525,7 @@ mod tests {
 		let mut buf = Vec::new();
 		seg.serialize(&mut buf);
 		let orig_size = buf.len();
-		let comp = zstd::encode_all(std::io::Cursor::new(buf), 0).unwrap();
+		let comp = compress_segment(&buf).unwrap();
 		let comp_size = comp.len();
 		let seg_id = ctx
 			.db
@@ -611,7 +618,7 @@ mod tests {
 			let mut buf = Vec::new();
 			seg.serialize(&mut buf);
 			let orig_size = buf.len();
-			let comp = zstd::encode_all(std::io::Cursor::new(buf), 0).unwrap();
+			let comp = compress_segment(&buf).unwrap();
 			let comp_size = comp.len();
 
 			// Persist as an *orphan* (no device_id).
@@ -723,7 +730,7 @@ mod tests {
 		let mut buf = Vec::new();
 		seg.serialize(&mut buf);
 		let orig = buf.len();
-		let comp = zstd::encode_all(std::io::Cursor::new(buf), 0).unwrap();
+		let comp = compress_segment(&buf).unwrap();
 		let comp_size = comp.len();
 		let seg_id = ctx
 			.db
