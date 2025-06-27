@@ -1690,6 +1690,14 @@ var segmentsPage = async (root) => {
     {
       key: "Average original log size",
       value: formatBytes(averageOriginalLogSize)
+    },
+    {
+      key: "Average logs per segment",
+      value: formatNumber(segementsMetadata.logsCount / segementsMetadata.segmentCount)
+    },
+    {
+      key: "Average segment size",
+      value: formatBytes(segementsMetadata.originalSize / segementsMetadata.segmentCount)
     }
   ]);
   metadata.root.style.whiteSpace = "nowrap";

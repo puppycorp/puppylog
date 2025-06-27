@@ -22,6 +22,8 @@ type SegementsMetadata = {
 	originalSize: number
 	compressedSize: number
 	logsCount: number
+	averageLogsPerSegment: number
+	averageSegmentSize: number
 }
 
 const fetchSegments = async (end: Date) => {
@@ -69,6 +71,18 @@ export const segmentsPage = async (root: Container) => {
 		{
 			key: "Average original log size",
 			value: formatBytes(averageOriginalLogSize),
+		},
+		{
+			key: "Average logs per segment",
+			value: formatNumber(
+				segementsMetadata.logsCount / segementsMetadata.segmentCount,
+			),
+		},
+		{
+			key: "Average segment size",
+			value: formatBytes(
+				segementsMetadata.originalSize / segementsMetadata.segmentCount,
+			),
 		},
 	])
 	metadata.root.style.whiteSpace = "nowrap"

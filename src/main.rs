@@ -196,8 +196,17 @@ async fn main() {
 }
 
 async fn get_segment_metadata(State(ctx): State<Arc<Context>>) -> Json<Value> {
-	let segments = ctx.db.fetch_segments_metadata().await.unwrap();
-	Json(serde_json::to_value(&segments).unwrap())
+	let meta = ctx.db.fetch_segments_metadata().await.unwrap();
+	let avg_logs_per_segment = meta.logs_count as f64 / meta.segment_count as f64;
+	let avg_segment_size = meta.original_size as f64 / meta.segment_count as f64;
+	Json(json!({
+		"segmentCount": meta.segment_count,
+		"originalSize": meta.original_size,
+		"compressedSize": meta.compressed_size,
+		"logsCount": meta.logs_count,
+		"averageLogsPerSegment": avg_logs_per_segment,
+		"averageSegmentSize": avg_segment_size
+	}))
 }
 
 async fn get_segment(State(ctx): State<Arc<Context>>, Path(segment_id): Path<u32>) -> Json<Value> {
