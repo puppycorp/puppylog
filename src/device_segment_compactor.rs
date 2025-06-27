@@ -177,6 +177,7 @@ mod tests {
 	use super::*;
 	use chrono::Utc;
 	use puppylog::{LogLevel, Prop};
+	use puppylog_server::segment::compress_segment;
 	use tempfile::tempdir;
 	use tokio::fs;
 
@@ -212,7 +213,7 @@ mod tests {
 			let mut buf = Vec::new();
 			seg.serialize(&mut buf);
 			let orig = buf.len();
-			let comp = zstd::encode_all(std::io::Cursor::new(buf), 0).unwrap();
+			let comp = compress_segment(&buf).unwrap();
 			let comp_size = comp.len();
 			let seg_id = ctx
 				.db
