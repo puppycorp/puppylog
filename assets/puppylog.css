@@ -16,7 +16,7 @@ body {
 	align-items: center;
 	gap: 10px;
 	background-color: #fff;
-	padding: 16px;
+	padding: 8px;
 	border-bottom: 1px solid #e5e7eb;
 	z-index: 10;
 }
@@ -34,10 +34,20 @@ body {
 	border: 1px solid #d1d5db;
 	border-radius: 4px;
 	font-family: inherit;
-	height: 120px;
+	height: 87px;
 }
 .logs-button,
 button {
+	padding: 8px 16px;
+	background-color: #f3f4f6;
+	border: 1px solid #d1d5db;
+	border-radius: 4px;
+	cursor: pointer;
+	white-space: pre-line;
+	transition: background-color 0.2s ease;
+}
+
+.link {
 	padding: 8px 16px;
 	background-color: #f3f4f6;
 	border: 1px solid #d1d5db;
@@ -159,15 +169,11 @@ body {
 	padding: 16px;
 }
 .list-row {
-	border: 1px solid #e5e7eb;
-	border-radius: 4px;
-	padding: 8px;
+	border-bottom: 1px solid #e5e7eb;
+	padding: 2px;
 	background-color: #fff;
 	transition: box-shadow 0.2s ease;
 	cursor: pointer;
-}
-.list-row:hover {
-	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 .logs-list-row-msg {
 	position: relative;

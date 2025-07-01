@@ -1120,9 +1120,10 @@ var logsSearchPage = (args) => {
   const optionsRightPanel = document.createElement("div");
   optionsRightPanel.className = "logs-options-right-panel";
   logsOptions.appendChild(optionsRightPanel);
-  const settingsButton = document.createElement("button");
-  settingsButton.innerHTML = settingsSvg;
-  settingsButton.onclick = () => navigate("/settings");
+  const settingsLink = document.createElement("a");
+  settingsLink.className = "link";
+  settingsLink.href = "/settings";
+  settingsLink.innerHTML = settingsSvg;
   const saveButton = document.createElement("button");
   saveButton.textContent = "Save";
   saveButton.onclick = () => {
@@ -1148,7 +1149,7 @@ var logsSearchPage = (args) => {
     buttonText: "Options",
     content: featuresList
   });
-  optionsRightPanel.append(settingsButton, saveButton, searchButton, featuresDropdown.root);
+  optionsRightPanel.append(settingsLink, searchButton);
   const histogramContainer = document.createElement("div");
   histogramContainer.style.display = "none";
   const histogram = new Histogram;
@@ -1221,16 +1222,17 @@ var logsSearchPage = (args) => {
 					</div>
 				</div>
 			`).join("");
-      document.querySelectorAll(".list-row").forEach((el, key) => {
+      document.querySelectorAll(".msg-summary").forEach((el, key) => {
         el.addEventListener("click", () => {
           const entry = logEntries[key];
-          const copyButton = new Button({ text: "Copy" });
-          copyButton.onClick = () => navigator.clipboard.writeText(entry.msg);
-          const closeButton = new Button({ text: "Close" });
+          const isTruncated = entry.msg.length > MESSAGE_TRUNCATE_LENGTH;
+          if (!isTruncated) {
+            return;
+          }
           showModal({
             title: "Log Message",
             content: formatLogMsg(entry.msg),
-            footer: [copyButton]
+            footer: []
           });
         });
       });
@@ -1289,7 +1291,6 @@ var logsSearchPage = (args) => {
     }, () => {
       currentStream = null;
       loadingIndicator.textContent = "";
-      console.log("stream rows count", streamRowsCount);
       if (streamRowsCount === 0) {
         loadingIndicator.textContent = logEntries.length === 0 ? "No logs found" : "No more logs";
         return;

@@ -91,9 +91,14 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	optionsRightPanel.className = "logs-options-right-panel"
 	logsOptions.appendChild(optionsRightPanel)
 
-	const settingsButton = document.createElement("button")
-	settingsButton.innerHTML = settingsSvg
-	settingsButton.onclick = () => navigate("/settings")
+	// const settingsButton = document.createElement("button")
+	// settingsButton.innerHTML = settingsSvg
+	// settingsButton.onclick = () => navigate("/settings")
+
+	const settingsLink = document.createElement("a")
+	settingsLink.className = "link"
+	settingsLink.href = "/settings"
+	settingsLink.innerHTML = settingsSvg
 
 	const saveButton = document.createElement("button")
 	saveButton.textContent = "Save"
@@ -123,10 +128,10 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	})
 
 	optionsRightPanel.append(
-		settingsButton,
-		saveButton,
+		settingsLink,
+		// saveButton,
 		searchButton,
-		featuresDropdown.root,
+		// featuresDropdown.root,
 	)
 
 	// histogram container setup
@@ -209,17 +214,17 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			`,
 				)
 				.join("")
-			document.querySelectorAll(".list-row").forEach((el, key) => {
+			document.querySelectorAll(".msg-summary").forEach((el, key) => {
 				el.addEventListener("click", () => {
 					const entry = logEntries[key]
-					const copyButton = new Button({ text: "Copy" })
-					copyButton.onClick = () =>
-						navigator.clipboard.writeText(entry.msg)
-					const closeButton = new Button({ text: "Close" })
+					const isTruncated = entry.msg.length > MESSAGE_TRUNCATE_LENGTH
+					if (!isTruncated) {
+						return
+					}
 					showModal({
 						title: "Log Message",
 						content: formatLogMsg(entry.msg),
-						footer: [copyButton],
+						footer: [],
 					})
 				})
 			})
@@ -276,7 +281,6 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			() => {
 				currentStream = null
 				loadingIndicator.textContent = ""
-				console.log("stream rows count", streamRowsCount)
 				if (streamRowsCount === 0) {
 					loadingIndicator.textContent =
 						logEntries.length === 0
