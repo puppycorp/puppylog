@@ -212,22 +212,37 @@ impl Context {
 			if tx.is_closed() {
 				break;
 			}
-			let mut end = match self
+			let end_exists = self
 				.db
-				.prev_segment_end(
-					prev_end,
+				.segment_exists_at(
+					prev_end.unwrap(),
 					if device_ids.is_empty() {
 						None
 					} else {
 						Some(&device_ids)
 					},
 				)
-				.await?
-			{
-				Some(e) => e,
-				None => {
-					log::info!("no more segments to load");
-					break;
+				.await?;
+			let mut end = if end_exists {
+				prev_end.unwrap()
+			} else {
+				match self
+					.db
+					.prev_segment_end(
+						prev_end,
+						if device_ids.is_empty() {
+							None
+						} else {
+							Some(&device_ids)
+						},
+					)
+					.await?
+				{
+					Some(e) => e,
+					None => {
+						log::info!("no more segments to load");
+						break;
+					}
 				}
 			};
 			if let Some(start) = start_bound {
@@ -888,5 +903,121 @@ mod tests {
 			Some(crate::dev_segment_merger::UNKNOWN_DEVICE_ID)
 		);
 		assert_eq!(segs[0].logs_count, COUNT as u64);
+	}
+
+	#[tokio::test]
+	async fn find_logs_pagination_resume_segment() {
+		use std::sync::Arc;
+
+		let (ctx, dir) = prepare_test_ctx().await;
+		let ctx = Arc::new(ctx);
+		let now = Utc::now();
+
+		let ts0 = now - Duration::hours(5);
+		let ts1 = now - Duration::hours(6);
+		let ts2 = now - Duration::hours(7);
+
+		let logs = vec![
+			LogEntry {
+				timestamp: ts0,
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "deviceId".into(),
+					value: "dev1".into(),
+				}],
+				msg: "l0".into(),
+				..Default::default()
+			},
+			LogEntry {
+				timestamp: ts1,
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "deviceId".into(),
+					value: "dev1".into(),
+				}],
+				msg: "l1".into(),
+				..Default::default()
+			},
+			LogEntry {
+				timestamp: ts2,
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "deviceId".into(),
+					value: "dev1".into(),
+				}],
+				msg: "l2".into(),
+				..Default::default()
+			},
+		];
+
+		let mut seg = LogSegment::new();
+		for log in &logs {
+			seg.add_log_entry(log.clone());
+		}
+		seg.sort();
+		let mut buff = Vec::new();
+		seg.serialize(&mut buff);
+		let orig_size = buff.len();
+		let compressed = compress_segment(&buff).unwrap();
+		let comp_size = compressed.len();
+		let seg_id = ctx
+			.db
+			.new_segment(NewSegmentArgs {
+				device_id: Some("dev1".into()),
+				first_timestamp: ts2,
+				last_timestamp: ts0,
+				original_size: orig_size,
+				compressed_size: comp_size,
+				logs_count: logs.len() as u64,
+			})
+			.await
+			.unwrap();
+		ctx.db
+			.upsert_segment_props(
+				seg_id,
+				[
+					Prop {
+						key: "deviceId".into(),
+						value: "dev1".into(),
+					},
+					Prop {
+						key: "level".into(),
+						value: LogLevel::Info.to_string(),
+					},
+				]
+				.iter(),
+			)
+			.await
+			.unwrap();
+		fs::write(ctx.logs_path.join(format!("{}.log", seg_id)), compressed).unwrap();
+
+		let mut query = parse_log_query("deviceId = dev1").unwrap();
+		query.end_date = Some(ts0);
+		let (tx, mut rx) = mpsc::channel(10);
+		let ctx_clone = Arc::clone(&ctx);
+		let handle = tokio::spawn(async move {
+			ctx_clone.find_logs(query, &tx).await.unwrap();
+		});
+		let first = rx.recv().await.unwrap();
+		drop(rx);
+		handle.await.unwrap();
+
+		assert_eq!(first.timestamp.timestamp_millis(), ts0.timestamp_millis());
+
+		let mut query2 = parse_log_query("deviceId = dev1").unwrap();
+		query2.end_date = Some(first.timestamp - Duration::microseconds(1));
+		let (tx2, mut rx2) = mpsc::channel(10);
+		ctx.find_logs(query2, &tx2).await.unwrap();
+		drop(tx2);
+		let mut remaining = Vec::new();
+		while let Some(log) = rx2.recv().await {
+			remaining.push(log.timestamp);
+		}
+
+		remaining.sort();
+		assert_eq!(remaining.len(), 2);
+		assert_eq!(remaining[0].timestamp_millis(), ts2.timestamp_millis());
+		assert_eq!(remaining[1].timestamp_millis(), ts1.timestamp_millis());
+		drop(dir);
 	}
 }

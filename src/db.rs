@@ -555,6 +555,49 @@ impl DB {
 		Ok(ts)
 	}
 
+	pub async fn segment_exists_at(
+		&self,
+		ts: chrono::DateTime<chrono::Utc>,
+		device_ids: Option<&[String]>,
+	) -> anyhow::Result<bool> {
+		use rusqlite::OptionalExtension;
+
+		let conn = self.conn.lock().await;
+		let mut sql = String::from("SELECT 1 FROM log_segments");
+		let mut conditions: Vec<String> = Vec::new();
+		let mut params: Vec<&dyn ToSql> = Vec::new();
+
+		conditions.push("first_timestamp <= ?".into());
+		params.push(&ts as &dyn ToSql);
+		conditions.push("last_timestamp >= ?".into());
+		params.push(&ts as &dyn ToSql);
+
+		if let Some(ids) = device_ids {
+			if ids.is_empty() {
+				return Ok(false);
+			}
+			let placeholders = std::iter::repeat("?")
+				.take(ids.len())
+				.collect::<Vec<_>>()
+				.join(", ");
+			conditions.push(format!("device_id IN ({})", placeholders));
+			for id in ids {
+				params.push(id as &dyn ToSql);
+			}
+		}
+
+		sql.push_str(" WHERE ");
+		sql.push_str(&conditions.join(" AND "));
+		sql.push_str(" LIMIT 1");
+
+		let mut stmt = conn.prepare(&sql)?;
+		let res: Option<i64> = stmt
+			.query_row(params.as_slice(), |row| row.get(0))
+			.optional()?;
+
+		Ok(res.is_some())
+	}
+
 	pub async fn fetch_segment(&self, segment: u32) -> anyhow::Result<SegmentMeta> {
 		let conn = self.conn.lock().await;
 		let segment = conn.query_row("select device_id, first_timestamp, last_timestamp, original_size, compressed_size, logs_count, created_at from log_segments where id = ?1", [segment], |row| {
