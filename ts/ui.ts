@@ -336,7 +336,7 @@ type KeyValue = {
 export class KeyValueTable extends VList {
 	constructor(items: KeyValue[]) {
 		super()
-		this.root.className = "list-row"
+		this.root.className = "summary"
 		for (const item of items) {
 			const container = document.createElement("div")
 			container.className = "table-cell"
