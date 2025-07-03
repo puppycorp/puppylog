@@ -53,7 +53,7 @@ use tower_http::cors::AllowMethods;
 use tower_http::cors::Any;
 use tower_http::cors::CorsLayer;
 use tower_http::decompression::RequestDecompressionLayer;
-use types::GetSegmentsQuery;
+use types::{GetDevicesQuery, GetSegmentsQuery};
 
 mod background;
 mod cache;
@@ -332,8 +332,14 @@ async fn update_device_settings(
 	"ok"
 }
 
-async fn get_devices(State(ctx): State<Arc<Context>>) -> Json<Value> {
-	let devices = ctx.db.get_devices().await.unwrap();
+async fn get_devices(
+	State(ctx): State<Arc<Context>>,
+	Query(mut params): Query<GetDevicesQuery>,
+) -> Json<Value> {
+	if params.count.is_none() {
+		params.count = Some(100);
+	}
+	let devices = ctx.db.get_devices(&params).await.unwrap();
 	Json(serde_json::to_value(&devices).unwrap())
 }
 

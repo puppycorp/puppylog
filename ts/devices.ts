@@ -240,6 +240,9 @@ export const devicesPage = async (root: HTMLElement) => {
 		title: "Devices",
 		rightSide: summary,
 	})
+	const perPage = 20
+	let currentPage = 0
+	let idSearch = ""
 	const sendLogsSearchOption = new SelectGroup({
 		label: "Sending logs",
 		value: "all",
@@ -270,16 +273,25 @@ export const devicesPage = async (root: HTMLElement) => {
 	propsFiltters.root.style.gap = "10px"
 	propsFiltters.root.style.flexWrap = "wrap"
 
+	const idSearchInput = new TextInput({ placeholder: "Device number" })
+
 	const searchOptions = new HList()
 	searchOptions.root.style.flexWrap = "wrap"
 	searchOptions.root.style.margin = "10px"
 	searchOptions.root.style.gap = "10px"
 	searchOptions.add(sendLogsSearchOption)
 	searchOptions.add(filterLevelMultiSelect)
+	searchOptions.add(idSearchInput)
 	searchOptions.add(propsFiltters)
 	searchOptions.root.appendChild(bulkEditButton)
 	const devicesList = new DevicesList()
-	page.add(header, searchOptions, devicesList)
+	const pagination = new HList()
+	const prevPageBtn = new Button({ text: "Prev" })
+	const nextPageBtn = new Button({ text: "Next" })
+	const pageIndicator = new Label({ text: "" })
+	pagination.root.style.gap = "10px"
+	pagination.add(prevPageBtn, pageIndicator, nextPageBtn)
+	page.add(header, searchOptions, devicesList, pagination)
 
 	try {
 		const res = await fetch("/api/v1/devices")
@@ -313,13 +325,18 @@ export const devicesPage = async (root: HTMLElement) => {
 
 		const renderList = (devices: DeviceSetting[]) => {
 			devicesList.clear()
-			if (Array.isArray(devices) && devices.length > 0) {
-				for (const device of devices) {
+			const start = currentPage * perPage
+			const pageItems = devices.slice(start, start + perPage)
+			if (pageItems.length > 0) {
+				for (const device of pageItems) {
 					devicesList.add(new DeviceRow(device))
 				}
 			} else {
 				devicesList.noDevicesFound()
 			}
+			pageIndicator.root.textContent = `Page ${currentPage + 1}`
+			prevPageBtn.root.disabled = currentPage === 0
+			nextPageBtn.root.disabled = start + perPage >= devices.length
 		}
 
 		renderList(devices)
@@ -330,6 +347,7 @@ export const devicesPage = async (root: HTMLElement) => {
 
 		const filterDevices = () => {
 			filteredDevices = devices.filter((device) => {
+				if (idSearch && !device.id.includes(idSearch)) return false
 				if (
 					sendLogsFilter !== undefined &&
 					device.sendLogs !== sendLogsFilter
@@ -351,6 +369,7 @@ export const devicesPage = async (root: HTMLElement) => {
 				}
 				return true
 			})
+			currentPage = 0
 			renderList(filteredDevices)
 		}
 
@@ -390,9 +409,24 @@ export const devicesPage = async (root: HTMLElement) => {
 			filterLevel = filterLevelMultiSelect.values
 			filterDevices()
 		}
+		idSearchInput.onChange = (v) => {
+			idSearch = v
+			currentPage = 0
+			filterDevices()
+		}
 		sendLogsSearchOption.onChange = async (value) => {
 			sendLogsFilter = value === "all" ? undefined : value === "true"
 			filterDevices()
+		}
+		prevPageBtn.onClick = () => {
+			if (currentPage > 0) {
+				currentPage--
+				renderList(filteredDevices)
+			}
+		}
+		nextPageBtn.onClick = () => {
+			currentPage++
+			renderList(filteredDevices)
 		}
 
 		bulkEditButton.onclick = () => {

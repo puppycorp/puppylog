@@ -207,11 +207,13 @@ impl DB {
 		Ok(())
 	}
 
-	pub async fn get_devices(&self) -> anyhow::Result<Vec<Device>> {
+	pub async fn get_devices(
+		&self,
+		query: &crate::types::GetDevicesQuery,
+	) -> anyhow::Result<Vec<Device>> {
 		let conn = self.conn.lock().await;
-		let mut stmt = conn.prepare(
-			r#"
-            SELECT
+		let mut sql = String::from(
+			r#"SELECT
                 id,
                 send_logs,
                 filter_level,
@@ -220,10 +222,24 @@ impl DB {
                 created_at,
                 last_upload_at,
                 send_interval
-            FROM devices
-            "#,
-		)?;
-		let mut rows = stmt.query([])?;
+            FROM devices"#,
+		);
+		let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+		if let Some(search) = &query.search {
+			sql.push_str(" WHERE id LIKE ?");
+			params.push(Box::new(format!("%{}%", search)));
+		}
+		sql.push_str(" ORDER BY id");
+		if let Some(count) = query.count {
+			sql.push_str(" LIMIT ?");
+			params.push(Box::new(count as i64));
+			if let Some(page) = query.page {
+				sql.push_str(" OFFSET ?");
+				params.push(Box::new((count * page) as i64));
+			}
+		}
+		let mut stmt = conn.prepare(&sql)?;
+		let mut rows = stmt.query(rusqlite::params_from_iter(params.iter().map(|p| &**p)))?;
 		let mut list = Vec::new();
 		while let Some(row) = rows.next()? {
 			let device_id: String = row.get(0)?;

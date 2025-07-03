@@ -302,6 +302,14 @@ Bulk edit settings for multiple devices identified by their ids.
 
 Returns list of known devices in json format.
 
+#### Query
+
+| Field  | DataType | Description                                 |
+| ------ | -------- | ------------------------------------------- |
+| count  | number   | Devices per page (default 100)              |
+| page   | number   | Page number starting from 0                 |
+| search | string   | Filter devices by id containing this string |
+
 ### GET /api/v1/validate_query
 
 Validate a PQL query string. Returns `200` if valid otherwise `400` with error.
