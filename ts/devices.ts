@@ -2,7 +2,7 @@ import { showModal } from "./common"
 import {
 	Button,
 	Container,
-	Header,
+	Collapsible,
 	HList,
 	Label,
 	MultiCheckboxSelect,
@@ -12,6 +12,7 @@ import {
 	UiComponent,
 	VList,
 } from "./ui"
+import { Navbar } from "./navbar"
 import { formatBytes, formatNumber } from "./utility"
 
 const saveDeviceSettings = async (device: DeviceSetting) => {
@@ -236,10 +237,12 @@ class Summary extends UiComponent<HTMLDivElement> {
 export const devicesPage = async (root: HTMLElement) => {
 	const page = new Container(root)
 	const summary = new Summary()
-	const header = new Header({
-		title: "Devices",
-		rightSide: summary,
+	const metadataCollapsible = new Collapsible({
+		buttonText: "Metadata",
+		content: summary,
 	})
+	const navbar = new Navbar({ right: [metadataCollapsible] })
+
 	const sendLogsSearchOption = new SelectGroup({
 		label: "Sending logs",
 		value: "all",
@@ -279,7 +282,7 @@ export const devicesPage = async (root: HTMLElement) => {
 	searchOptions.add(propsFiltters)
 	searchOptions.root.appendChild(bulkEditButton)
 	const devicesList = new DevicesList()
-	page.add(header, searchOptions, devicesList)
+	page.add(navbar, searchOptions, devicesList)
 
 	try {
 		const res = await fetch("/api/v1/devices")

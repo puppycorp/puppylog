@@ -388,6 +388,48 @@ var showModal = (args) => {
   modalOverlay.appendChild(modalContent);
 };
 
+// ts/navbar.ts
+class Navbar extends HList {
+  logsLink;
+  devicesLink;
+  segmentsLink;
+  constructor(args) {
+    super();
+    this.root.classList.add("page-header");
+    this.root.style.gap = "8px";
+    this.logsLink = document.createElement("a");
+    this.logsLink.textContent = "Logs";
+    this.logsLink.href = "/logs";
+    this.logsLink.classList.add("link");
+    this.devicesLink = document.createElement("a");
+    this.devicesLink.textContent = "Devices";
+    this.devicesLink.href = "/devices";
+    this.devicesLink.classList.add("link");
+    this.segmentsLink = document.createElement("a");
+    this.segmentsLink.textContent = "Segments";
+    this.segmentsLink.href = "/segments";
+    this.segmentsLink.classList.add("link");
+    const currentPath = window.location.pathname;
+    [
+      { link: this.logsLink, path: "/logs" },
+      { link: this.devicesLink, path: "/devices" },
+      { link: this.segmentsLink, path: "/segments" }
+    ].forEach(({ link, path }) => {
+      if (currentPath === path || currentPath.startsWith(path + "/")) {
+        link.classList.add("active");
+      }
+    });
+    const leftItems = [this.logsLink, this.devicesLink, this.segmentsLink];
+    if (args?.right && args.right.length) {
+      const spacer = document.createElement("div");
+      spacer.style.flex = "1";
+      this.add(...leftItems, spacer, ...args.right.map((item) => item instanceof HTMLElement ? item : item.root));
+    } else {
+      this.add(...leftItems);
+    }
+  }
+}
+
 // ts/utility.ts
 var setQueryParam = (field, value) => {
   const url = new URL(window.location.href);
@@ -585,10 +627,11 @@ class Summary extends UiComponent {
 var devicesPage = async (root) => {
   const page = new Container(root);
   const summary = new Summary;
-  const header = new Header({
-    title: "Devices",
-    rightSide: summary
+  const metadataCollapsible = new Collapsible({
+    buttonText: "Metadata",
+    content: summary
   });
+  const navbar = new Navbar({ right: [metadataCollapsible] });
   const sendLogsSearchOption = new SelectGroup({
     label: "Sending logs",
     value: "all",
@@ -625,7 +668,7 @@ var devicesPage = async (root) => {
   searchOptions.add(propsFiltters);
   searchOptions.root.appendChild(bulkEditButton);
   const devicesList = new DevicesList;
-  page.add(header, searchOptions, devicesList);
+  page.add(navbar, searchOptions, devicesList);
   try {
     const res = await fetch("/api/v1/devices");
     const devices = await res.json();
@@ -1109,6 +1152,8 @@ var logsSearchPage = (args) => {
   const logEntries = [];
   let moreRows = true;
   args.root.innerHTML = ``;
+  const navbar = new Navbar;
+  args.root.appendChild(navbar.root);
   const logsOptions = document.createElement("div");
   logsOptions.className = "page-header";
   args.root.appendChild(logsOptions);
@@ -1706,11 +1751,8 @@ var segmentsPage = async (root) => {
     buttonText: "Metadata",
     content: metadata
   });
-  const header = new Header({
-    title: "Segments",
-    rightSide: metadataCollapsible
-  });
-  root.add(header);
+  const navbar = new Navbar({ right: [metadataCollapsible] });
+  root.add(navbar);
   const segmentList = new WrapList;
   const infiniteScroll = new InfiniteScroll({
     container: segmentList

@@ -2,11 +2,11 @@ import { Prop } from "./logs"
 import {
 	Collapsible,
 	Container,
-	Header,
 	InfiniteScroll,
 	KeyValueTable,
 	WrapList,
 } from "./ui"
+import { Navbar } from "./navbar"
 import { formatBytes, formatNumber, formatTimestamp } from "./utility"
 type Segment = {
 	id: number
@@ -90,11 +90,8 @@ export const segmentsPage = async (root: Container) => {
 		buttonText: "Metadata",
 		content: metadata,
 	})
-	const header = new Header({
-		title: "Segments",
-		rightSide: metadataCollapsible,
-	})
-	root.add(header)
+	const navbar = new Navbar({ right: [metadataCollapsible] })
+	root.add(navbar)
 
 	const segmentList = new WrapList()
 	const infiniteScroll = new InfiniteScroll({

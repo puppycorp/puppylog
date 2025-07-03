@@ -57,6 +57,12 @@ button {
 	transition: background-color 0.2s ease;
 }
 
+.link.active {
+	background-color: #e5e7eb;
+	font-weight: 600;
+	border-bottom: 2px solid #3b82f6;
+}
+
 .logs-button:hover,
 button:hover {
 	background-color: #e5e7eb;
@@ -148,9 +154,6 @@ body {
 	text-align: left;
 	border-bottom: 2px solid #e5e7eb;
 }
-.logs-table-body {
-	/* overflow-x: auto; */
-}
 .logs-table-row-msg {
 	min-width: 300px;
 	word-break: break-all;
@@ -205,4 +208,24 @@ body {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+}
+.page-header .link {
+	background: none;
+	border: none;
+	color: #374151;
+	padding: 8px 12px;
+	margin: 0 4px;
+	border-radius: 0;
+	text-decoration: none;
+}
+.page-header .link:hover {
+	color: #111827;
+	text-decoration: underline;
+	background: none;
+}
+.page-header .link.active {
+	color: #111827;
+	font-weight: 600;
+	border-bottom: 2px solid #3b82f6;
+	background: none;
 }

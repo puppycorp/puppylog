@@ -5,6 +5,7 @@ import { saveQuery } from "./queries"
 import { Button, Collapsible, VList } from "./ui"
 import { Histogram, HistogramItem } from "./histogram"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
+import { Navbar } from "./navbar"
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal"
 
@@ -76,6 +77,9 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const logEntries: LogEntry[] = []
 	let moreRows = true
 	args.root.innerHTML = ``
+
+	const navbar = new Navbar()
+	args.root.appendChild(navbar.root)
 
 	const logsOptions = document.createElement("div")
 	logsOptions.className = "page-header"
@@ -217,7 +221,8 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			document.querySelectorAll(".msg-summary").forEach((el, key) => {
 				el.addEventListener("click", () => {
 					const entry = logEntries[key]
-					const isTruncated = entry.msg.length > MESSAGE_TRUNCATE_LENGTH
+					const isTruncated =
+						entry.msg.length > MESSAGE_TRUNCATE_LENGTH
 					if (!isTruncated) {
 						return
 					}
