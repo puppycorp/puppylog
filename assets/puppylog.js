@@ -1111,7 +1111,6 @@ var LOG_COLORS = {
   error: "#EF4444",
   fatal: "#8B5CF6"
 };
-var settingsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings w-5 h-5"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
 var searchSvg = `<svg xmlns="http://www.w3.org/2000/svg"  viewBox="0 0 50 50" width="20px" height="20px"><path d="M 21 3 C 11.601563 3 4 10.601563 4 20 C 4 29.398438 11.601563 37 21 37 C 24.355469 37 27.460938 36.015625 30.09375 34.34375 L 42.375 46.625 L 46.625 42.375 L 34.5 30.28125 C 36.679688 27.421875 38 23.878906 38 20 C 38 10.601563 30.398438 3 21 3 Z M 21 7 C 28.199219 7 34 12.800781 34 20 C 34 27.199219 28.199219 33 21 33 C 13.800781 33 8 27.199219 8 20 C 8 12.800781 13.800781 7 21 7 Z"/></svg>`;
 var formatTimestamp2 = (ts) => {
   const date = new Date(ts);
@@ -1141,10 +1140,6 @@ var logsSearchPage = (args) => {
   const optionsRightPanel = document.createElement("div");
   optionsRightPanel.className = "logs-options-right-panel";
   logsOptions.appendChild(optionsRightPanel);
-  const settingsLink = document.createElement("a");
-  settingsLink.className = "link";
-  settingsLink.href = "/settings";
-  settingsLink.innerHTML = settingsSvg;
   const saveButton = document.createElement("button");
   saveButton.textContent = "Save";
   saveButton.onclick = () => {
@@ -1170,7 +1165,7 @@ var logsSearchPage = (args) => {
     buttonText: "Options",
     content: featuresList
   });
-  optionsRightPanel.append(settingsLink, searchButton);
+  optionsRightPanel.append(searchButton);
   const histogramContainer = document.createElement("div");
   histogramContainer.style.display = "none";
   const histogram = new Histogram;

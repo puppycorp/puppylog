@@ -95,15 +95,6 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	optionsRightPanel.className = "logs-options-right-panel"
 	logsOptions.appendChild(optionsRightPanel)
 
-	// const settingsButton = document.createElement("button")
-	// settingsButton.innerHTML = settingsSvg
-	// settingsButton.onclick = () => navigate("/settings")
-
-	const settingsLink = document.createElement("a")
-	settingsLink.className = "link"
-	settingsLink.href = "/settings"
-	settingsLink.innerHTML = settingsSvg
-
 	const saveButton = document.createElement("button")
 	saveButton.textContent = "Save"
 	saveButton.onclick = () => {
@@ -132,7 +123,6 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	})
 
 	optionsRightPanel.append(
-		settingsLink,
 		// saveButton,
 		searchButton,
 		// featuresDropdown.root,
