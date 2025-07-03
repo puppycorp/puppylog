@@ -217,7 +217,8 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			document.querySelectorAll(".msg-summary").forEach((el, key) => {
 				el.addEventListener("click", () => {
 					const entry = logEntries[key]
-					const isTruncated = entry.msg.length > MESSAGE_TRUNCATE_LENGTH
+					const isTruncated =
+						entry.msg.length > MESSAGE_TRUNCATE_LENGTH
 					if (!isTruncated) {
 						return
 					}

@@ -150,6 +150,10 @@ export class TextInput extends UiComponent<HTMLDivElement> {
 	public get value(): string {
 		return this.input.value
 	}
+
+	public set onChange(callback: (value: string) => void) {
+		this.input.oninput = () => callback(this.input.value)
+	}
 }
 
 export class MultiCheckboxSelect extends UiComponent<HTMLDivElement> {

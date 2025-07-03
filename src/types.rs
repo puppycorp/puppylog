@@ -17,3 +17,10 @@ pub struct GetSegmentsQuery {
 	pub count: Option<usize>,
 	pub sort: Option<SortDir>,
 }
+
+#[derive(Deserialize, Debug, Default)]
+pub struct GetDevicesQuery {
+	pub search: Option<String>,
+	pub page: Option<usize>,
+	pub count: Option<usize>,
+}
