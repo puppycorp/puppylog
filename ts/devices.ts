@@ -214,6 +214,8 @@ class DevicesList implements UiComponent<HTMLDivElement> {
 
 export const devicesPage = async (root: HTMLElement) => {
 	const page = new Container(root)
+	const navbar = new Navbar()
+	page.add(navbar)
 
 	// Fetch and compute metadata
 	const res = await fetch("/api/v1/devices")
@@ -251,7 +253,7 @@ export const devicesPage = async (root: HTMLElement) => {
 		buttonText: "Metadata",
 		content: metadataTable,
 	})
-	const navbar = new Navbar({ right: [metadataCollapsible] })
+	navbar.setRight([metadataCollapsible])
 
 	const sendLogsSearchOption = new SelectGroup({
 		label: "Sending logs",

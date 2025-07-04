@@ -393,6 +393,7 @@ class Navbar extends HList {
   logsLink;
   devicesLink;
   segmentsLink;
+  leftItems;
   constructor(args) {
     super();
     this.root.classList.add("page-header");
@@ -419,13 +420,20 @@ class Navbar extends HList {
         link.classList.add("active");
       }
     });
-    const leftItems = [this.logsLink, this.devicesLink, this.segmentsLink];
-    if (args?.right && args.right.length) {
+    this.leftItems = [this.logsLink, this.devicesLink, this.segmentsLink];
+    this.setRight(args?.right);
+  }
+  setRight(right) {
+    while (this.root.firstChild) {
+      this.root.removeChild(this.root.firstChild);
+    }
+    if (right && right.length) {
       const spacer = document.createElement("div");
       spacer.style.flex = "1";
-      this.add(...leftItems, spacer, ...args.right.map((item) => item instanceof HTMLElement ? item : item.root));
+      const rightEls = right.map((item) => item instanceof HTMLElement ? item : item.root);
+      this.add(...this.leftItems, spacer, ...rightEls);
     } else {
-      this.add(...leftItems);
+      this.add(...this.leftItems);
     }
   }
 }
@@ -610,6 +618,8 @@ class DevicesList {
 }
 var devicesPage = async (root) => {
   const page = new Container(root);
+  const navbar = new Navbar;
+  page.add(navbar);
   const res = await fetch("/api/v1/devices");
   const devices = await res.json();
   let totalLogsCount = 0, totalLogsSize = 0;
@@ -639,7 +649,7 @@ var devicesPage = async (root) => {
     buttonText: "Metadata",
     content: metadataTable
   });
-  const navbar = new Navbar({ right: [metadataCollapsible] });
+  navbar.setRight([metadataCollapsible]);
   const sendLogsSearchOption = new SelectGroup({
     label: "Sending logs",
     value: "all",

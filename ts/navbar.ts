@@ -4,6 +4,7 @@ export class Navbar extends HList {
 	public readonly logsLink: HTMLAnchorElement
 	public readonly devicesLink: HTMLAnchorElement
 	public readonly segmentsLink: HTMLAnchorElement
+	private leftItems: HTMLElement[]
 
 	constructor(args?: { right?: (HTMLElement | UiComponent<HTMLElement>)[] }) {
 		super()
@@ -32,20 +33,31 @@ export class Navbar extends HList {
 				link.classList.add("active")
 			}
 		})
-		// left items
-		const leftItems = [this.logsLink, this.devicesLink, this.segmentsLink]
-		if (args?.right && args.right.length) {
+		// prepare left items
+		this.leftItems = [this.logsLink, this.devicesLink, this.segmentsLink]
+		// initial render of left and optional right items
+		this.setRight(args?.right)
+	}
+
+	/**
+	 * Sets or updates right-side components on the navbar.
+	 * @param right optional array of HTMLElements or UiComponent<HTMLElement> to display on the right
+	 */
+	public setRight(right?: (HTMLElement | UiComponent<HTMLElement>)[]): void {
+		// clear existing children
+		while (this.root.firstChild) {
+			this.root.removeChild(this.root.firstChild)
+		}
+		// re-add left items
+		if (right && right.length) {
 			const spacer = document.createElement("div")
 			spacer.style.flex = "1"
-			this.add(
-				...leftItems,
-				spacer,
-				...args.right.map((item) =>
-					item instanceof HTMLElement ? item : item.root,
-				),
+			const rightEls = right.map((item) =>
+				item instanceof HTMLElement ? item : item.root,
 			)
+			this.add(...this.leftItems, spacer, ...rightEls)
 		} else {
-			this.add(...leftItems)
+			this.add(...this.leftItems)
 		}
 	}
 }
