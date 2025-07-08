@@ -35,7 +35,7 @@ const fetchSegments = async (end: Date) => {
 	return res
 }
 
-export const segmentsPage = async (root: Container) => {
+export const segmentsPage = async (root: Container, navbar?: Navbar) => {
 	const segementsMetadata = (await fetch("/api/segment/metadata").then(
 		(res) => res.json(),
 	)) as SegementsMetadata
@@ -90,8 +90,12 @@ export const segmentsPage = async (root: Container) => {
 		buttonText: "Metadata",
 		content: metadata,
 	})
-	const navbar = new Navbar({ right: [metadataCollapsible] })
-	root.add(navbar)
+	const nav = navbar ?? new Navbar({ right: [metadataCollapsible] })
+	if (navbar) {
+		nav.setRight([metadataCollapsible])
+	} else {
+		root.add(nav)
+	}
 
 	const segmentList = new WrapList()
 	const infiniteScroll = new InfiniteScroll({
@@ -141,7 +145,11 @@ export const segmentsPage = async (root: Container) => {
 	}
 }
 
-export const segmentPage = async (root: HTMLElement, segmentId: number) => {
+export const segmentPage = async (
+	root: HTMLElement,
+	segmentId: number,
+	navbar?: Navbar,
+) => {
 	const segment = (await fetch(`/api/v1/segment/${segmentId}`).then((res) =>
 		res.json(),
 	)) as Segment
@@ -154,9 +162,9 @@ export const segmentPage = async (root: HTMLElement, segmentId: number) => {
 	const totalLogsCount = segment.logsCount
 	const compressRatio = (totalCompressedSize / totalOriginalSize) * 100
 	root.innerHTML = `
-		<div class="page-header">
-			<h1 style="flex-grow: 1">Segment ${segmentId}</h1>
-			<div class="summary">
+                <div class="page-header">
+                        <h1 style="flex-grow: 1">Segment ${segmentId}</h1>
+                        <div class="summary">
 				<div><strong>First timestamp:</strong> ${formatTimestamp(segment.firstTimestamp)}</div>
 				<div><strong>Last timestamp:</strong> ${formatTimestamp(segment.lastTimestamp)}</div>
 				<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
@@ -176,6 +184,7 @@ export const segmentPage = async (root: HTMLElement, segmentId: number) => {
 			`,
 				)
 				.join("")}
-		</div>
-	`
+                </div>
+        `
+	if (navbar) root.prepend(navbar.root)
 }
