@@ -37,6 +37,7 @@ interface LogsSearchPageArgs {
 		onNewLog: (log: LogEntry) => void,
 		onEnd: () => void,
 	) => () => void
+	navbar?: Navbar
 }
 
 const MAX_LOG_ENTRIES = 10_000
@@ -78,8 +79,8 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	let moreRows = true
 	args.root.innerHTML = ``
 
-	const navbar = new Navbar()
-	args.root.appendChild(navbar.root)
+	const navbar = args.navbar ?? new Navbar()
+	if (!args.navbar) args.root.appendChild(navbar.root)
 
 	const logsOptions = document.createElement("div")
 	logsOptions.className = "page-header"

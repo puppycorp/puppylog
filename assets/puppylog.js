@@ -616,10 +616,10 @@ class DevicesList {
     this.root.innerHTML = "";
   }
 }
-var devicesPage = async (root) => {
+var devicesPage = async (root, navbar) => {
   const page = new Container(root);
-  const navbar = new Navbar;
-  page.add(navbar);
+  const nav = navbar ?? new Navbar;
+  page.add(nav);
   const res = await fetch("/api/v1/devices");
   const devices = await res.json();
   let totalLogsCount = 0, totalLogsSize = 0;
@@ -649,7 +649,7 @@ var devicesPage = async (root) => {
     buttonText: "Metadata",
     content: metadataTable
   });
-  navbar.setRight([metadataCollapsible]);
+  nav.setRight([metadataCollapsible]);
   const sendLogsSearchOption = new SelectGroup({
     label: "Sending logs",
     value: "all",
@@ -686,7 +686,7 @@ var devicesPage = async (root) => {
   searchOptions.add(propsFiltters);
   searchOptions.root.appendChild(bulkEditButton);
   const devicesList = new DevicesList;
-  page.add(navbar, searchOptions, devicesList);
+  page.add(searchOptions, devicesList);
   const renderList = (devices2) => {
     devicesList.clear();
     if (Array.isArray(devices2) && devices2.length > 0) {
@@ -1137,8 +1137,9 @@ var logsSearchPage = (args) => {
   const logEntries = [];
   let moreRows = true;
   args.root.innerHTML = ``;
-  const navbar = new Navbar;
-  args.root.appendChild(navbar.root);
+  const navbar = args.navbar ?? new Navbar;
+  if (!args.navbar)
+    args.root.appendChild(navbar.root);
   const logsOptions = document.createElement("div");
   logsOptions.className = "page-header";
   args.root.appendChild(logsOptions);
@@ -1422,9 +1423,10 @@ var createRandomXml = (totalNodesCount, maxDepth = 5) => {
   };
   return nodeToXml(root);
 };
-var logtableTest = (root) => {
+var logtableTest = (root, navbar) => {
   logsSearchPage({
     root,
+    navbar,
     streamLogs: (args, onNewLog, onEnd) => {
       onNewLog({
         id: `${Date.now()}-text`,
@@ -1461,11 +1463,12 @@ var logtableTest = (root) => {
 };
 
 // ts/main-page.ts
-var mainPage = (root) => {
+var mainPage = (root, navbar) => {
   let query = getQueryParam("query") || "";
   let isStreaming = getQueryParam("stream") === "true";
   logsSearchPage({
     root,
+    navbar,
     streamLogs: (args, onNewLog, onEnd) => {
       const streamQuery = new URLSearchParams;
       if (args.query)
@@ -1687,7 +1690,7 @@ var fetchSegments = async (end) => {
   const res = await fetch(url.toString()).then((res2) => res2.json());
   return res;
 };
-var segmentsPage = async (root) => {
+var segmentsPage = async (root, navbar) => {
   const segementsMetadata = await fetch("/api/segment/metadata").then((res) => res.json());
   const compressionRatio = segementsMetadata.compressedSize / segementsMetadata.originalSize * 100;
   const averageCompressedLogSize = segementsMetadata.compressedSize / segementsMetadata.logsCount;
@@ -1732,8 +1735,12 @@ var segmentsPage = async (root) => {
     buttonText: "Metadata",
     content: metadata
   });
-  const navbar = new Navbar({ right: [metadataCollapsible] });
-  root.add(navbar);
+  const nav = navbar ?? new Navbar({ right: [metadataCollapsible] });
+  if (navbar) {
+    nav.setRight([metadataCollapsible]);
+  } else {
+    root.add(nav);
+  }
   const segmentList = new WrapList;
   const infiniteScroll = new InfiniteScroll({
     container: segmentList
@@ -1777,7 +1784,7 @@ var segmentsPage = async (root) => {
     }
   };
 };
-var segmentPage = async (root, segmentId) => {
+var segmentPage = async (root, segmentId, navbar) => {
   const segment = await fetch(`/api/v1/segment/${segmentId}`).then((res) => res.json());
   const props = await fetch(`/api/v1/segment/${segmentId}/props`).then((res) => res.json());
   const totalOriginalSize = segment.originalSize;
@@ -1785,9 +1792,9 @@ var segmentPage = async (root, segmentId) => {
   const totalLogsCount = segment.logsCount;
   const compressRatio = totalCompressedSize / totalOriginalSize * 100;
   root.innerHTML = `
-		<div class="page-header">
-			<h1 style="flex-grow: 1">Segment ${segmentId}</h1>
-			<div class="summary">
+                <div class="page-header">
+                        <h1 style="flex-grow: 1">Segment ${segmentId}</h1>
+                        <div class="summary">
 				<div><strong>First timestamp:</strong> ${formatTimestamp(segment.firstTimestamp)}</div>
 				<div><strong>Last timestamp:</strong> ${formatTimestamp(segment.lastTimestamp)}</div>
 				<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
@@ -1803,8 +1810,10 @@ var segmentPage = async (root, segmentId) => {
 					<div class="table-cell"><strong>Value:</strong> ${prop.value}</div>
 				</div>
 			`).join("")}
-		</div>
-	`;
+                </div>
+        `;
+  if (navbar)
+    root.prepend(navbar.root);
 };
 
 // ts/settings.ts
@@ -1844,14 +1853,33 @@ window.onload = () => {
     throw new Error("No body element found");
   }
   const container = new Container(body);
+  const navbar = new Navbar;
+  container.add(navbar);
+  const pageRoot = document.createElement("div");
+  const pageContainer = new Container(pageRoot);
+  container.add(pageContainer);
+  const renderElem = (handler) => () => {
+    pageRoot.innerHTML = "";
+    navbar.setRight();
+    handler(pageRoot, navbar);
+  };
+  const renderContainer = (handler) => () => {
+    pageRoot.innerHTML = "";
+    navbar.setRight();
+    handler(pageContainer, navbar);
+  };
   routes({
-    "/tests/logs": () => logtableTest(body),
-    "/settings": () => settingsPage(container),
-    "/devices": () => devicesPage(body),
-    "/segments": () => segmentsPage(container),
-    "/queries": () => queriesPage(body),
-    "/segment/:segmentId": (params) => segmentPage(body, params.segmentId),
-    "/pivot": () => PivotPage(body),
-    "/*": () => mainPage(body)
+    "/tests/logs": renderElem(logtableTest),
+    "/settings": renderContainer(settingsPage),
+    "/devices": renderElem(devicesPage),
+    "/segments": renderContainer(segmentsPage),
+    "/queries": renderElem(queriesPage),
+    "/segment/:segmentId": (params) => {
+      pageRoot.innerHTML = "";
+      navbar.setRight();
+      segmentPage(pageRoot, params.segmentId, navbar);
+    },
+    "/pivot": renderElem(PivotPage),
+    "/*": renderElem(mainPage)
   });
 };

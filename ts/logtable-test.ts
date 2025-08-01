@@ -1,4 +1,5 @@
 import { LogEntry, logsSearchPage } from "./logs"
+import { Navbar } from "./navbar"
 
 function logline(length: number, linebreaks: number): string {
 	let line = ""
@@ -106,9 +107,13 @@ const createRandomXml = (
 	return nodeToXml(root)
 }
 
-export const logtableTest = (root: HTMLElement): HTMLElement => {
+export const logtableTest = (
+	root: HTMLElement,
+	navbar?: Navbar,
+): HTMLElement => {
 	logsSearchPage({
 		root,
+		navbar,
 		streamLogs: (args, onNewLog, onEnd) => {
 			onNewLog({
 				id: `${Date.now()}-text`,
