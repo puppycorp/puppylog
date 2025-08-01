@@ -48,12 +48,11 @@ async fn cleanup_old_segments(ctx: &Context, min_free_ratio: f64) {
 		if removed > 0 {
 			if let Some((new_free, _)) = disk_usage(ctx.logs_path()) {
 				let freed = new_free.saturating_sub(start_free);
-				slack::notify(&format!(
+				log::info!(
 					"Deleted {removed} old segment{pl} freeing {:.1} MB",
 					freed as f64 / 1_048_576.0,
 					pl = if removed == 1 { "" } else { "s" },
-				))
-				.await;
+				);
 			}
 		}
 	}
@@ -77,7 +76,7 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
 		let free = available_space(&upload_dir);
 		if let Some((f, total)) = disk_usage(ctx.logs_path()) {
 			if f * 10 < total {
-				cleanup_old_segments(&ctx, 0.1).await;
+				cleanup_old_segments(&ctx, 0.05).await;
 			}
 		}
 		if free < DISK_LOW {
