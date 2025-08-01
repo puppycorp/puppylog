@@ -42,7 +42,7 @@ type Prop = {
 	value: string
 }
 
-type DeviceSetting = {
+export type DeviceSetting = {
 	id: string
 	sendLogs: boolean
 	filterLevel: string
@@ -68,7 +68,7 @@ export class DeviceRow extends UiComponent<HTMLDivElement> {
 		// ID cell
 		const idCell = document.createElement("div")
 		idCell.className = "table-cell"
-		idCell.innerHTML = `<strong>ID:</strong> ${device.id}`
+		idCell.innerHTML = `<strong>ID:</strong> <a href="/device/${device.id}">${device.id}</a>`
 		this.root.appendChild(idCell)
 
 		// Created at cell
