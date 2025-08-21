@@ -1,4 +1,4 @@
-When you run tests use cargo test --workspace --frozen --offline
+When you run tests use cargo test --workspace
 After changes run cargo clippy --workspace
 After changes run cargo fmt
 After changes run npm run build, npm run format, npm test
