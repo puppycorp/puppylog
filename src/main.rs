@@ -486,110 +486,134 @@ const FAVICON_512x512: &[u8] = include_bytes!("../assets/favicon-512x512.png");
 const CSS: &str = include_str!("../assets/puppylog.css");
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x00000100000001B3;
-    let mut hash = FNV_OFFSET;
-    for b in bytes {
-        hash ^= *b as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
+	const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+	const FNV_PRIME: u64 = 0x00000100000001B3;
+	let mut hash = FNV_OFFSET;
+	for b in bytes {
+		hash ^= *b as u64;
+		hash = hash.wrapping_mul(FNV_PRIME);
+	}
+	hash
 }
 
 fn etag_for(bytes: &[u8]) -> String {
-    // Strong ETag using simple FNV-1a digest + length
-    format!("\"{:016x}-{}\"", fnv1a64(bytes), bytes.len())
+	// Strong ETag using simple FNV-1a digest + length
+	format!("\"{:016x}-{}\"", fnv1a64(bytes), bytes.len())
 }
 
 fn cached_bytes_response(
-    bytes: &'static [u8],
-    content_type: &'static str,
-    req_headers: &HeaderMap,
+	bytes: &'static [u8],
+	content_type: &'static str,
+	req_headers: &HeaderMap,
 ) -> Response {
-    let etag = etag_for(bytes);
-    if let Some(candidate) = req_headers.get(axum::http::header::IF_NONE_MATCH) {
-        if candidate.to_str().ok() == Some(&etag) {
-            let mut headers = HeaderMap::new();
-            headers.insert(axum::http::header::ETAG, HeaderValue::from_str(&etag).unwrap());
-            headers.insert(
-                axum::http::header::CACHE_CONTROL,
-                HeaderValue::from_static("public, max-age=31536000, immutable"),
-            );
-            headers.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-            return (StatusCode::NOT_MODIFIED, headers).into_response();
-        }
-    }
+	let etag = etag_for(bytes);
+	if let Some(candidate) = req_headers.get(axum::http::header::IF_NONE_MATCH) {
+		if candidate.to_str().ok() == Some(&etag) {
+			let mut headers = HeaderMap::new();
+			headers.insert(
+				axum::http::header::ETAG,
+				HeaderValue::from_str(&etag).unwrap(),
+			);
+			headers.insert(
+				axum::http::header::CACHE_CONTROL,
+				HeaderValue::from_static("public, max-age=31536000, immutable"),
+			);
+			headers.insert(
+				axum::http::header::CONTENT_TYPE,
+				HeaderValue::from_static(content_type),
+			);
+			return (StatusCode::NOT_MODIFIED, headers).into_response();
+		}
+	}
 
-    let mut headers = HeaderMap::new();
-    headers.insert(axum::http::header::ETAG, HeaderValue::from_str(&etag).unwrap());
-    headers.insert(
-        axum::http::header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=31536000, immutable"),
-    );
-    headers.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-    (StatusCode::OK, headers, bytes).into_response()
+	let mut headers = HeaderMap::new();
+	headers.insert(
+		axum::http::header::ETAG,
+		HeaderValue::from_str(&etag).unwrap(),
+	);
+	headers.insert(
+		axum::http::header::CACHE_CONTROL,
+		HeaderValue::from_static("public, max-age=31536000, immutable"),
+	);
+	headers.insert(
+		axum::http::header::CONTENT_TYPE,
+		HeaderValue::from_static(content_type),
+	);
+	(StatusCode::OK, headers, bytes).into_response()
 }
 
 fn cached_string_response(
-    content: &str,
-    content_type: &'static str,
-    req_headers: &HeaderMap,
+	content: &str,
+	content_type: &'static str,
+	req_headers: &HeaderMap,
 ) -> Response {
-    let bytes = content.as_bytes();
-    let etag = etag_for(bytes);
-    if let Some(candidate) = req_headers.get(axum::http::header::IF_NONE_MATCH) {
-        if candidate.to_str().ok() == Some(&etag) {
-            let mut headers = HeaderMap::new();
-            headers.insert(axum::http::header::ETAG, HeaderValue::from_str(&etag).unwrap());
-            headers.insert(
-                axum::http::header::CACHE_CONTROL,
-                HeaderValue::from_static("public, max-age=31536000, immutable"),
-            );
-            headers.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-            return (StatusCode::NOT_MODIFIED, headers).into_response();
-        }
-    }
+	let bytes = content.as_bytes();
+	let etag = etag_for(bytes);
+	if let Some(candidate) = req_headers.get(axum::http::header::IF_NONE_MATCH) {
+		if candidate.to_str().ok() == Some(&etag) {
+			let mut headers = HeaderMap::new();
+			headers.insert(
+				axum::http::header::ETAG,
+				HeaderValue::from_str(&etag).unwrap(),
+			);
+			headers.insert(
+				axum::http::header::CACHE_CONTROL,
+				HeaderValue::from_static("public, max-age=31536000, immutable"),
+			);
+			headers.insert(
+				axum::http::header::CONTENT_TYPE,
+				HeaderValue::from_static(content_type),
+			);
+			return (StatusCode::NOT_MODIFIED, headers).into_response();
+		}
+	}
 
-    let mut headers = HeaderMap::new();
-    headers.insert(axum::http::header::ETAG, HeaderValue::from_str(&etag).unwrap());
-    headers.insert(
-        axum::http::header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=31536000, immutable"),
-    );
-    headers.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-    (StatusCode::OK, headers, content.to_string()).into_response()
+	let mut headers = HeaderMap::new();
+	headers.insert(
+		axum::http::header::ETAG,
+		HeaderValue::from_str(&etag).unwrap(),
+	);
+	headers.insert(
+		axum::http::header::CACHE_CONTROL,
+		HeaderValue::from_static("public, max-age=31536000, immutable"),
+	);
+	headers.insert(
+		axum::http::header::CONTENT_TYPE,
+		HeaderValue::from_static(content_type),
+	);
+	(StatusCode::OK, headers, content.to_string()).into_response()
 }
 
 #[cfg(debug_assertions)]
 async fn css(headers: HeaderMap) -> Response {
-    let mut file = tokio::fs::File::open("assets/puppylog.css").await.unwrap();
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).await.unwrap();
-    cached_string_response(&contents, "text/css; charset=utf-8", &headers)
+	let mut file = tokio::fs::File::open("assets/puppylog.css").await.unwrap();
+	let mut contents = String::new();
+	file.read_to_string(&mut contents).await.unwrap();
+	cached_string_response(&contents, "text/css; charset=utf-8", &headers)
 }
 
 #[cfg(not(debug_assertions))]
 async fn css(headers: HeaderMap) -> Response {
-    cached_string_response(CSS, "text/css; charset=utf-8", &headers)
+	cached_string_response(CSS, "text/css; charset=utf-8", &headers)
 }
 
 // basic handler that responds with a static string
 async fn root() -> Html<&'static str> {
-    // Intentionally do not set long-lived cache for index.html
-    Html(INDEX_HTML)
+	// Intentionally do not set long-lived cache for index.html
+	Html(INDEX_HTML)
 }
 
 #[cfg(debug_assertions)]
 async fn js(headers: HeaderMap) -> Response {
-    let mut file = tokio::fs::File::open("assets/puppylog.js").await.unwrap();
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).await.unwrap();
-    cached_string_response(&contents, "application/javascript; charset=utf-8", &headers)
+	let mut file = tokio::fs::File::open("assets/puppylog.js").await.unwrap();
+	let mut contents = String::new();
+	file.read_to_string(&mut contents).await.unwrap();
+	cached_string_response(&contents, "application/javascript; charset=utf-8", &headers)
 }
 
 #[cfg(not(debug_assertions))]
 async fn js(headers: HeaderMap) -> Response {
-    cached_string_response(JS_HTML, "application/javascript; charset=utf-8", &headers)
+	cached_string_response(JS_HTML, "application/javascript; charset=utf-8", &headers)
 }
 
 #[derive(Deserialize, Debug)]
@@ -614,23 +638,31 @@ async fn get_settings_query(State(ctx): State<Arc<Context>>) -> String {
 }
 
 async fn favicon(headers: HeaderMap) -> Result<Response, StatusCode> {
-    Ok(cached_bytes_response(FAVICON, "image/x-icon", &headers))
+	Ok(cached_bytes_response(FAVICON, "image/x-icon", &headers))
 }
 
 async fn favicon_192x192(headers: HeaderMap) -> Result<Response, StatusCode> {
-    Ok(cached_bytes_response(FAVICON_192x192, "image/png", &headers))
+	Ok(cached_bytes_response(
+		FAVICON_192x192,
+		"image/png",
+		&headers,
+	))
 }
 
 async fn favicon_512x512(headers: HeaderMap) -> Result<Response, StatusCode> {
-    Ok(cached_bytes_response(FAVICON_512x512, "image/png", &headers))
+	Ok(cached_bytes_response(
+		FAVICON_512x512,
+		"image/png",
+		&headers,
+	))
 }
 
 async fn manifest(headers: HeaderMap) -> Result<Response, StatusCode> {
-    Ok(cached_bytes_response(
-        include_bytes!("../assets/manifest.json"),
-        "application/json",
-        &headers,
-    ))
+	Ok(cached_bytes_response(
+		include_bytes!("../assets/manifest.json"),
+		"application/json",
+		&headers,
+	))
 }
 
 #[derive(Debug)]
