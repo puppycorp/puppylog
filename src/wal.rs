@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
-fn wal_path() -> PathBuf {
+pub fn wal_path() -> PathBuf {
 	log_path().join("wal.log")
 }
 

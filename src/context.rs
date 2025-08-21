@@ -1,6 +1,7 @@
 use crate::db::open_db;
 use crate::db::NewSegmentArgs;
 use crate::db::DB;
+use crate::segment::compress_segment;
 use crate::segment::LogSegment;
 use crate::settings::Settings;
 use crate::subscribe_worker::Subscriber;
@@ -19,12 +20,13 @@ use puppylog::QueryAst;
 use puppylog::{check_expr, check_props, extract_device_ids, timestamp_bounds};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::Cursor;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::sync::Mutex as StdMutex;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
@@ -46,6 +48,9 @@ pub struct Context {
 	pub upload_queue: AtomicUsize,
 	upload_flush_threshold: AtomicUsize,
 	logs_path: PathBuf,
+	wal_max_bytes: u64,
+	flush_interval: Duration,
+	last_flush: StdMutex<Instant>,
 }
 
 impl Context {
@@ -68,6 +73,17 @@ impl Context {
 		} else {
 			Settings::load().unwrap_or_else(|_| Settings::new())
 		};
+		// Read optional env overrides for WAL/flush policy
+		let wal_max_bytes = std::env::var("WAL_MAX_BYTES")
+			.ok()
+			.and_then(|v| v.parse::<u64>().ok())
+			.unwrap_or(512 * 1024 * 1024); // 512 MB default
+		let flush_interval = std::env::var("UPLOAD_FLUSH_INTERVAL_SECS")
+			.ok()
+			.and_then(|v| v.parse::<u64>().ok())
+			.map(Duration::from_secs)
+			.unwrap_or(Duration::from_secs(300)); // 5 minutes default
+
 		Context {
 			subscriber: Subscriber::new(subtx),
 			publisher: pubtx,
@@ -79,6 +95,9 @@ impl Context {
 			upload_queue: AtomicUsize::new(0),
 			upload_flush_threshold: AtomicUsize::new(UPLOAD_FLUSH_THRESHOLD),
 			logs_path: logs_path.as_ref().to_owned(),
+			wal_max_bytes,
+			flush_interval,
+			last_flush: StdMutex::new(Instant::now()),
 		}
 	}
 
@@ -96,63 +115,99 @@ impl Context {
 		}
 		current.sort();
 		let flush_threshold = self.upload_flush_threshold.load(Ordering::Relaxed);
-		if current.buffer.len() > flush_threshold {
-			log::info!("flushing segment with {} logs", current.buffer.len());
-			self.wal.clear();
 
-			// Group logs by device ID (or UNKNOWN_DEVICE_ID)
-			let mut by_device: HashMap<String, Vec<LogEntry>> = HashMap::new();
-			for log in current.buffer.drain(..) {
-				let device_id = log
-					.props
-					.iter()
-					.find(|p| p.key == "deviceId")
-					.map(|p| p.value.clone())
-					.unwrap_or_else(|| crate::dev_segment_merger::UNKNOWN_DEVICE_ID.to_string());
-				by_device.entry(device_id).or_default().push(log);
-			}
+		// Policy-based flush triggers: threshold, WAL size cap, or time interval
+		let wal_size = std::fs::metadata(crate::wal::wal_path())
+			.map(|m| m.len())
+			.unwrap_or(0);
+		let last_flush_elapsed = self
+			.last_flush
+			.lock()
+			.map(|t| t.elapsed())
+			.unwrap_or(Duration::from_secs(0));
+		let policy_trigger =
+			wal_size > self.wal_max_bytes || last_flush_elapsed >= self.flush_interval;
 
-			for (device_id, mut logs) in by_device {
-				logs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-				let first_timestamp = logs.first().unwrap().timestamp;
-				let last_timestamp = logs.last().unwrap().timestamp;
-				let seg = LogSegment { buffer: logs };
-
-				let mut buff = Cursor::new(Vec::new());
-				seg.serialize(&mut buff);
-				let original_size = buff.position() as usize;
-				buff.set_position(0);
-				let buff = zstd::encode_all(buff, 0).unwrap();
-				let compressed_size = buff.len();
-				let segment_id = self
-					.db
-					.new_segment(NewSegmentArgs {
-						device_id: Some(device_id.clone()),
-						first_timestamp,
-						last_timestamp,
-						logs_count: seg.buffer.len() as u64,
-						original_size,
-						compressed_size,
-					})
-					.await
-					.unwrap();
-				let mut unique_props = HashSet::new();
-				for log in &seg.buffer {
-					unique_props.extend(log.props.iter().cloned());
-					unique_props.insert(Prop {
-						key: "level".into(),
-						value: log.level.to_string(),
-					});
-				}
-				self.db
-					.upsert_segment_props(segment_id, unique_props.iter())
-					.await
-					.unwrap();
-				let path = self.logs_path.join(format!("{}.log", segment_id));
-				let mut file = File::create(&path).unwrap();
-				file.write_all(&buff).unwrap();
-			}
+		if current.buffer.len() > flush_threshold || policy_trigger {
+			self.flush_locked(&mut current).await;
 		}
+	}
+
+	// Internal helper used by both save_logs (policy) and force_flush.
+	async fn flush_locked(&self, current: &mut LogSegment) {
+		if current.buffer.is_empty() {
+			return;
+		}
+		self.wal.clear();
+
+		// Group logs by device ID (or UNKNOWN_DEVICE_ID)
+		let mut by_device: HashMap<String, Vec<LogEntry>> = HashMap::new();
+		for log in current.buffer.drain(..) {
+			let device_id = log
+				.props
+				.iter()
+				.find(|p| p.key == "deviceId")
+				.map(|p| p.value.clone())
+				.unwrap_or_else(|| crate::dev_segment_merger::UNKNOWN_DEVICE_ID.to_string());
+			by_device.entry(device_id).or_default().push(log);
+		}
+
+		for (device_id, mut logs) in by_device {
+			logs.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+			let first_timestamp = logs.first().unwrap().timestamp;
+			let last_timestamp = logs.last().unwrap().timestamp;
+			let seg = LogSegment { buffer: logs };
+
+			let mut buff = Vec::new();
+			seg.serialize(&mut buff);
+			let original_size = buff.len();
+			let buff: Vec<u8> = match compress_segment(&buff) {
+				Ok(compressed) => compressed,
+				Err(e) => {
+					log::error!("failed to compress segment: {}", e);
+					continue;
+				}
+			};
+			let compressed_size = buff.len();
+			let segment_id = self
+				.db
+				.new_segment(NewSegmentArgs {
+					device_id: Some(device_id.clone()),
+					first_timestamp,
+					last_timestamp,
+					logs_count: seg.buffer.len() as u64,
+					original_size,
+					compressed_size,
+				})
+				.await
+				.unwrap();
+			let mut unique_props = HashSet::new();
+			for log in &seg.buffer {
+				unique_props.extend(log.props.iter().cloned());
+				unique_props.insert(Prop {
+					key: "level".into(),
+					value: log.level.to_string(),
+				});
+			}
+			self.db
+				.upsert_segment_props(segment_id, unique_props.iter())
+				.await
+				.unwrap();
+			let path = self.logs_path.join(format!("{}.log", segment_id));
+			let mut file = File::create(&path).unwrap();
+			file.write_all(&buff).unwrap();
+		}
+
+		if let Ok(mut t) = self.last_flush.lock() {
+			*t = Instant::now();
+		}
+	}
+
+	/// Force a flush of the current in-memory logs to segments and clear WAL,
+	/// regardless of thresholds. No-ops if there are no buffered logs.
+	pub async fn force_flush(&self) {
+		let mut current = self.current.lock().await;
+		self.flush_locked(&mut current).await;
 	}
 
 	pub async fn find_logs(

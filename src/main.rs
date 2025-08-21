@@ -55,8 +55,8 @@ use tower_http::cors::CorsLayer;
 use tower_http::decompression::RequestDecompressionLayer;
 use types::GetSegmentsQuery;
 
-mod background;
 mod cache;
+mod cleanup;
 mod config;
 mod context;
 mod db;
@@ -68,6 +68,7 @@ mod settings;
 mod slack;
 mod subscribe_worker;
 mod types;
+mod upload;
 mod upload_guard;
 mod utility;
 mod wal;
@@ -110,7 +111,8 @@ async fn main() {
 	}
 	let ctx = Arc::new(ctx);
 
-	tokio::spawn(background::process_log_uploads(ctx.clone()));
+	tokio::spawn(upload::process_log_uploads(ctx.clone()));
+	tokio::spawn(cleanup::run_disk_space_monitor(ctx.clone()));
 	tokio::spawn(dev_segment_merger::run_dev_segment_merger(ctx.clone()));
 	tokio::spawn(device_segment_compactor::run_device_segment_compactor(
 		ctx.clone(),
