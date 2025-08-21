@@ -7,3 +7,5 @@ If you make changes to apis make sure you also update readme.md
 end_of_line = lf
 tab_width = 4
 indent_style = tab
+
+after making changes think clearly if existing tests need to be updated or new tests need to be created
