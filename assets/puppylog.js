@@ -502,7 +502,7 @@ class DeviceRow extends UiComponent {
     this.device = device;
     const idCell = document.createElement("div");
     idCell.className = "table-cell";
-    idCell.innerHTML = `<strong>ID:</strong> ${device.id}`;
+    idCell.innerHTML = `<strong>ID:</strong> <a href="/device/${device.id}">${device.id}</a>`;
     this.root.appendChild(idCell);
     const createdAtCell = document.createElement("div");
     createdAtCell.className = "table-cell";
@@ -1807,6 +1807,72 @@ var segmentPage = async (root, segmentId) => {
 	`;
 };
 
+// ts/device-page.ts
+var devicePage = async (root, deviceId) => {
+  root.innerHTML = "";
+  const container = new Container(root);
+  const navbar = new Navbar;
+  container.add(navbar);
+  const res = await fetch("/api/v1/devices");
+  const devices = await res.json();
+  const device = devices.find((d) => d.id === deviceId);
+  if (!device) {
+    container.root.textContent = "Device not found";
+    return;
+  }
+  const details = document.createElement("div");
+  details.className = "device-details";
+  const addDetail = (k, v) => {
+    const div = document.createElement("div");
+    div.innerHTML = `<strong>${k}:</strong> ${v}`;
+    details.appendChild(div);
+  };
+  addDetail("ID", device.id);
+  addDetail("Created", new Date(device.createdAt).toLocaleString());
+  addDetail("Last upload", new Date(device.lastUploadAt).toLocaleString());
+  addDetail("Send logs", device.sendLogs ? "Yes" : "No");
+  addDetail("Filter level", device.filterLevel);
+  addDetail("Send interval", device.sendInterval.toString());
+  addDetail("Logs count", formatNumber(device.logsCount));
+  addDetail("Logs size", formatBytes(device.logsSize));
+  for (const prop of device.props)
+    addDetail(prop.key, prop.value);
+  container.root.appendChild(details);
+  const logsContainer = document.createElement("div");
+  container.root.appendChild(logsContainer);
+  const buildQuery = (q) => q && q.trim() ? `deviceId="${deviceId}" AND (${q})` : `deviceId="${deviceId}"`;
+  logsSearchPage({
+    root: logsContainer,
+    streamLogs: (args, onNew, onEnd) => {
+      const fullQuery = buildQuery(args.query);
+      const params = new URLSearchParams;
+      if (fullQuery)
+        params.append("query", fullQuery);
+      if (args.count)
+        params.append("count", args.count.toString());
+      if (args.endDate)
+        params.append("endDate", args.endDate);
+      params.append("tzOffset", new Date().getTimezoneOffset().toString());
+      const url = new URL("/api/logs", window.location.origin);
+      url.search = params.toString();
+      const es = new EventSource(url);
+      es.onmessage = (ev) => onNew(JSON.parse(ev.data));
+      es.onerror = () => {
+        es.close();
+        onEnd();
+      };
+      return () => es.close();
+    },
+    validateQuery: async (query) => {
+      const q = buildQuery(query);
+      const res2 = await fetch(`/api/v1/validate_query?query=${encodeURIComponent(q)}`);
+      if (res2.status === 200)
+        return null;
+      return res2.text();
+    }
+  });
+};
+
 // ts/settings.ts
 class LinkList extends UiComponent {
   constructor(links) {
@@ -1851,6 +1917,7 @@ window.onload = () => {
     "/segments": () => segmentsPage(container),
     "/queries": () => queriesPage(body),
     "/segment/:segmentId": (params) => segmentPage(body, params.segmentId),
+    "/device/:deviceId": (params) => devicePage(body, params.deviceId),
     "/pivot": () => PivotPage(body),
     "/*": () => mainPage(body)
   });
