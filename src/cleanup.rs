@@ -70,7 +70,11 @@ pub async fn run_disk_space_monitor(ctx: Arc<Context>) {
 			// If free space < 10% of total, first try to flush WAL,
 			// then delete old segments until at least 15% free.
 			if f * 10 < total {
-				log::info!("Low disk space: {} MB free of {} MB total", f / 1_048_576, total / 1_048_576);
+				log::info!(
+					"Low disk space: {} MB free of {} MB total",
+					f / 1_048_576,
+					total / 1_048_576
+				);
 				ctx.force_flush().await;
 				cleanup_old_segments(&ctx, 0.15).await;
 			}
