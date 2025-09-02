@@ -39,13 +39,14 @@ pub async fn cleanup_old_segments(ctx: &Context, min_free_ratio: f64) {
 			if segs.is_empty() {
 				break;
 			}
-			let seg = &segs[0];
-			let path = ctx.logs_path().join(format!("{}.log", seg.id));
-			log::warn!("deleting old segment {}", path.display());
-			let _ = remove_file(&path).await;
-			ctx.db.delete_segment(seg.id).await.ok();
-			removed += 1;
-			free = disk_usage(ctx.logs_path()).map(|(f, _)| f).unwrap_or(free);
+			for seg in segs {
+				let path = ctx.logs_path().join(format!("{}.log", seg.id));
+				log::warn!("deleting old segment {}", path.display());
+				let _ = remove_file(&path).await;
+				ctx.db.delete_segment(seg.id).await.ok();
+				removed += 1;
+				free = disk_usage(ctx.logs_path()).map(|(f, _)| f).unwrap_or(free);
+			}
 		}
 		if removed > 0 {
 			if let Some((new_free, _)) = disk_usage(ctx.logs_path()) {
