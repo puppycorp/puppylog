@@ -36,7 +36,9 @@ impl Wal {
 			while let Ok(cmd) = rx.recv() {
 				match cmd {
 					Cmd::WriteLog(log) => {
-						log.serialize(&mut wal_file).unwrap();
+						if let Err(err) = log.serialize(&mut wal_file) {
+							log::error!("Failed to write to wal: {}", err);
+						}
 					}
 					Cmd::Clear => {
 						log::info!("clearing logs from wal");
