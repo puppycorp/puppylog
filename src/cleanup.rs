@@ -15,6 +15,11 @@ const DISK_OK: u64 = 2_000_000_000; // 2GB
 
 // Deletes oldest segments until free space reaches the given ratio.
 pub async fn cleanup_old_segments(ctx: &Context, min_free_ratio: f64) {
+	let count = std::env::var("CLEANUP_DELETE_COUNT")
+		.ok()
+		.and_then(|v| v.parse::<usize>().ok())
+		.unwrap_or(20);
+
 	if let Some((mut free, total)) = disk_usage(ctx.logs_path()) {
 		let start_free = free;
 		let target = (total as f64 * min_free_ratio) as u64;
@@ -26,7 +31,7 @@ pub async fn cleanup_old_segments(ctx: &Context, min_free_ratio: f64) {
 					start: None,
 					end: None,
 					device_ids: None,
-					count: Some(20),
+					count: Some(count),
 					sort: Some(SortDir::Asc),
 				})
 				.await
