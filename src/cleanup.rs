@@ -26,7 +26,7 @@ pub async fn cleanup_old_segments(ctx: &Context, min_free_ratio: f64) {
 					start: None,
 					end: None,
 					device_ids: None,
-					count: Some(1),
+					count: Some(20),
 					sort: Some(SortDir::Asc),
 				})
 				.await
