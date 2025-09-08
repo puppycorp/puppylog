@@ -169,7 +169,7 @@ impl Context {
 				}
 			};
 			let compressed_size = buff.len();
-			let segment_id = self
+			let segment_id = match self
 				.db
 				.new_segment(NewSegmentArgs {
 					device_id: Some(device_id.clone()),
@@ -179,8 +179,13 @@ impl Context {
 					original_size,
 					compressed_size,
 				})
-				.await
-				.unwrap();
+				.await {
+				Ok(id) => id,
+				Err(err) => {
+					log::error!("failed to create new segment in DB: {}", err);
+					continue;
+				}
+			};
 			let mut unique_props = HashSet::new();
 			for log in &seg.buffer {
 				unique_props.extend(log.props.iter().cloned());
@@ -189,13 +194,20 @@ impl Context {
 					value: log.level.to_string(),
 				});
 			}
-			self.db
-				.upsert_segment_props(segment_id, unique_props.iter())
-				.await
-				.unwrap();
+			if let Err(err) = self.db.upsert_segment_props(segment_id, unique_props.iter()).await {
+				log::error!("failed to upsert segment props: {}", err);
+			}
 			let path = self.logs_path.join(format!("{}.log", segment_id));
-			let mut file = File::create(&path).unwrap();
-			file.write_all(&buff).unwrap();
+			let mut file = match File::create(&path) {
+				Ok(f) => f,
+				Err(e) => {
+					log::error!("failed to create log file {}: {}", path.display(), e);
+					continue;
+				}
+			};
+			if let Err(err) = file.write_all(&buff) {
+				log::error!("failed to write log file {}: {}", path.display(), err);
+			}
 		}
 
 		if let Ok(mut t) = self.last_flush.lock() {
