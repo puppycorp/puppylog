@@ -442,7 +442,13 @@ async fn get_device_status(
 	State(ctx): State<Arc<Context>>,
 	Path(device_id): Path<String>,
 ) -> Json<Value> {
-	let device = ctx.db.get_or_create_device(&device_id).await.unwrap();
+	let device = match ctx.db.get_or_create_device(&device_id).await {
+		Ok(device) => device,
+		Err(err) => {
+			log::error!("failed to get or create device {}: {}", device_id, err);
+			return Json(Value::Null);
+		}
+	};
 
 	let mut resp = DeviceStatus {
 		level: device.filter_level,
