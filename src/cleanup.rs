@@ -63,7 +63,13 @@ pub async fn run_disk_space_monitor(ctx: Arc<Context>) {
 		};
 
 		let free_p = f as f64 / total as f64;
-		log::info!("disk usage: {} MB free of {} MB ({:.1}%)", f / 1_048_576, total / 1_048_576, free_p * 100.0);
+		let msg = format!(
+			"disk usage: {} MB free of {} MB ({:.1}%)",
+			f / 1_048_576,
+			total / 1_048_576,
+			free_p * 100.0
+		);
+		log::info!("{}", &msg);
 
 		if free_p > 0.1 {
 			low_disk = false;
@@ -71,13 +77,6 @@ pub async fn run_disk_space_monitor(ctx: Arc<Context>) {
 			continue;
 		}
 
-		let msg = format!(
-			"Low disk space: {} MB free of {} MB",
-			f / 1_048_576,
-			total / 1_048_576
-		);
-		
-		log::info!("{}", &msg);
 		if !low_disk {
 			slack::notify(&msg).await;
 			low_disk = true;
