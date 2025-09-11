@@ -1,11 +1,13 @@
 import { logsSearchPage } from "./logs"
+import { Navbar } from "./navbar"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 
-export const mainPage = (root: HTMLElement) => {
+export const mainPage = (root: HTMLElement, navbar?: Navbar) => {
 	let query: string | undefined = getQueryParam("query") || ""
 	let isStreaming = getQueryParam("stream") === "true"
 	logsSearchPage({
 		root,
+		navbar,
 		streamLogs: (args, onNewLog, onEnd) => {
 			const streamQuery = new URLSearchParams()
 			if (args.query) streamQuery.append("query", args.query)

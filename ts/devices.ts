@@ -212,10 +212,10 @@ class DevicesList implements UiComponent<HTMLDivElement> {
 	}
 }
 
-export const devicesPage = async (root: HTMLElement) => {
+export const devicesPage = async (root: HTMLElement, navbar?: Navbar) => {
 	const page = new Container(root)
-	const navbar = new Navbar()
-	page.add(navbar)
+	const nav = navbar ?? new Navbar()
+	page.add(nav)
 
 	// Fetch and compute metadata
 	const res = await fetch("/api/v1/devices")
@@ -253,7 +253,7 @@ export const devicesPage = async (root: HTMLElement) => {
 		buttonText: "Metadata",
 		content: metadataTable,
 	})
-	navbar.setRight([metadataCollapsible])
+	nav.setRight([metadataCollapsible])
 
 	const sendLogsSearchOption = new SelectGroup({
 		label: "Sending logs",
@@ -294,7 +294,7 @@ export const devicesPage = async (root: HTMLElement) => {
 	searchOptions.add(propsFiltters)
 	searchOptions.root.appendChild(bulkEditButton)
 	const devicesList = new DevicesList()
-	page.add(navbar, searchOptions, devicesList)
+	page.add(searchOptions, devicesList)
 
 	const renderList = (devices: DeviceSetting[]) => {
 		devicesList.clear()
