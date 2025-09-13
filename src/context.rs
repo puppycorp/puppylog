@@ -179,7 +179,8 @@ impl Context {
 					original_size,
 					compressed_size,
 				})
-				.await {
+				.await
+			{
 				Ok(id) => id,
 				Err(err) => {
 					log::error!("failed to create new segment in DB: {}", err);
@@ -194,7 +195,11 @@ impl Context {
 					value: log.level.to_string(),
 				});
 			}
-			if let Err(err) = self.db.upsert_segment_props(segment_id, unique_props.iter()).await {
+			if let Err(err) = self
+				.db
+				.upsert_segment_props(segment_id, unique_props.iter())
+				.await
+			{
 				log::error!("failed to upsert segment props: {}", err);
 			}
 			let path = self.logs_path.join(format!("{}.log", segment_id));

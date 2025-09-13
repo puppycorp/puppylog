@@ -40,6 +40,7 @@ use serde_json::Value;
 use simple_logger::SimpleLogger;
 use std::sync::Arc;
 use tokio::fs;
+use tokio::fs::read_dir;
 use tokio::fs::File;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncReadExt;
@@ -189,11 +190,74 @@ async fn main() {
 		)
 		.route("/api/v1/segment/{segmentId}", delete(delete_segment))
 		.with_state(ctx.clone())
+		.route("/api/v1/server_info", get(get_server_info))
+		.with_state(ctx.clone())
 		.fallback(get(root));
 
 	// run our app with hyper, listening globally on port 3000
 	let listener = tokio::net::TcpListener::bind("0.0.0.0:3337").await.unwrap();
 	axum::serve(listener, app).await.unwrap();
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ServerInfo {
+	free_bytes: u64,
+	total_bytes: u64,
+	used_bytes: u64,
+	used_percent: f64,
+	upload_files_count: u64,
+	upload_bytes: u64,
+}
+
+async fn get_server_info() -> Json<Value> {
+	use crate::utility::disk_usage;
+
+	let upload_dir = upload_path();
+
+	// Disk usage (free and total for the filesystem hosting uploads path)
+	let (free, total) = match disk_usage(&upload_dir) {
+		Some(v) => v,
+		None => (0, 0),
+	};
+	let used = total.saturating_sub(free);
+	let used_percent = if total > 0 {
+		(used as f64) / (total as f64) * 100.0
+	} else {
+		0.0
+	};
+
+	// Count files and sum bytes in the upload directory
+	let mut upload_files_count: u64 = 0;
+	let mut upload_bytes: u64 = 0;
+	if upload_dir.exists() {
+		if let Ok(mut dir) = read_dir(&upload_dir).await {
+			while let Ok(Some(entry)) = dir.next_entry().await {
+				let path = entry.path();
+				if let Ok(meta) = entry.metadata().await {
+					if meta.is_file() {
+						upload_files_count = upload_files_count.saturating_add(1);
+						upload_bytes = upload_bytes.saturating_add(meta.len());
+					}
+				} else if path.is_file() {
+					// Fallback if metadata() fails but path suggests file
+					upload_files_count = upload_files_count.saturating_add(1);
+				}
+			}
+		}
+	}
+
+	Json(
+		serde_json::to_value(ServerInfo {
+			free_bytes: free,
+			total_bytes: total,
+			used_bytes: used,
+			used_percent,
+			upload_files_count,
+			upload_bytes,
+		})
+		.unwrap(),
+	)
 }
 
 async fn get_segment_metadata(State(ctx): State<Arc<Context>>) -> Json<Value> {
@@ -1041,5 +1105,36 @@ mod tests {
 			.await
 			.unwrap();
 		assert_eq!(res2.status(), StatusCode::NOT_MODIFIED);
+	}
+
+	#[tokio::test]
+	async fn server_info_reports_upload_counts() {
+		let dir = TempDir::new().unwrap();
+		// Point uploads path to temp dir
+		std::env::set_var("UPLOAD_PATH", dir.path());
+
+		// Create a couple of files
+		let f1 = dir.path().join("a.ready");
+		let f2 = dir.path().join("b.part");
+		std::fs::write(&f1, b"hello").unwrap();
+		std::fs::write(&f2, b"world!").unwrap();
+
+		let app = Router::new().route("/api/v1/server_info", get(get_server_info));
+		let res = app
+			.oneshot(
+				Request::builder()
+					.uri("/api/v1/server_info")
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+		assert_eq!(res.status(), StatusCode::OK);
+		let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+		let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+		assert!(v.get("freeBytes").is_some());
+		assert!(v.get("totalBytes").is_some());
+		assert_eq!(v.get("uploadFilesCount").unwrap().as_u64().unwrap(), 2);
+		assert_eq!(v.get("uploadBytes").unwrap().as_u64().unwrap(), 5 + 6);
 	}
 }

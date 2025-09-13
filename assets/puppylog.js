@@ -1832,9 +1832,33 @@ var settingsPage = (root) => {
     { href: "/logs", text: "Logs" },
     { href: "/devices", text: "Devices" },
     { href: "/segments", text: "Segments" },
-    { href: "/queries", text: "Saved Queries" }
+    { href: "/queries", text: "Saved Queries" },
+    { href: "/server", text: "Server" }
   ]);
   root.add(linkList);
+};
+
+// ts/server.ts
+var serverPage = async (root) => {
+  root.root.innerHTML = "";
+  let info = null;
+  try {
+    info = await fetch("/api/v1/server_info").then((r) => r.json());
+  } catch (e) {
+    root.add(new KeyValueTable([{ key: "Error", value: String(e) }]));
+    return;
+  }
+  if (!info) {
+    root.add(new KeyValueTable([{ key: "Error", value: "No data" }]));
+    return;
+  }
+  root.add(new KeyValueTable([
+    { key: "Total space", value: formatBytes(info.totalBytes) },
+    { key: "Used space", value: `${formatBytes(info.usedBytes)} (${info.usedPercent.toFixed(1)}%)` },
+    { key: "Free space", value: formatBytes(info.freeBytes) },
+    { key: "Upload files", value: info.uploadFilesCount.toString() },
+    { key: "Upload bytes", value: formatBytes(info.uploadBytes) }
+  ]));
 };
 
 // ts/app.ts
@@ -1847,6 +1871,7 @@ window.onload = () => {
   routes({
     "/tests/logs": () => logtableTest(body),
     "/settings": () => settingsPage(container),
+    "/server": () => serverPage(container),
     "/devices": () => devicesPage(body),
     "/segments": () => segmentsPage(container),
     "/queries": () => queriesPage(body),

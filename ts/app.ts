@@ -7,6 +7,7 @@ import { segmentPage, segmentsPage } from "./segment-page"
 import { settingsPage } from "./settings"
 import { Container } from "./ui"
 import { queriesPage } from "./queries"
+import { serverPage } from "./server"
 
 window.onload = () => {
 	const body = document.querySelector("body")
@@ -17,6 +18,7 @@ window.onload = () => {
 	routes({
 		"/tests/logs": () => logtableTest(body),
 		"/settings": () => settingsPage(container),
+		"/server": () => serverPage(container),
 		"/devices": () => devicesPage(body),
 		"/segments": () => segmentsPage(container),
 		"/queries": () => queriesPage(body),

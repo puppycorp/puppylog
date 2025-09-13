@@ -25,13 +25,14 @@ class LinkList extends UiComponent<HTMLDivElement> {
 	}
 }
 
-export const settingsPage = (root: Container) => {
-	root.root.innerHTML = ""
-	const linkList = new LinkList([
-		{ href: "/logs", text: "Logs" },
-		{ href: "/devices", text: "Devices" },
-		{ href: "/segments", text: "Segments" },
-		{ href: "/queries", text: "Saved Queries" },
-	])
-	root.add(linkList)
-}
+	export const settingsPage = (root: Container) => {
+		root.root.innerHTML = ""
+		const linkList = new LinkList([
+			{ href: "/logs", text: "Logs" },
+			{ href: "/devices", text: "Devices" },
+			{ href: "/segments", text: "Segments" },
+			{ href: "/queries", text: "Saved Queries" },
+			{ href: "/server", text: "Server" },
+		])
+		root.add(linkList)
+	}

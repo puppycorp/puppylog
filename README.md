@@ -219,6 +219,23 @@ Apply settings to many devices at once. Devices are matched based on metadata up
 }
 ```
 
+### GET /api/v1/server_info
+
+Returns server disk stats and upload directory information.
+
+Response
+
+```json
+{
+  "freeBytes": 123456,
+  "totalBytes": 987654,
+  "usedBytes": 864198,
+  "usedPercent": 12.34,
+  "uploadFilesCount": 3,
+  "uploadBytes": 424242
+}
+```
+
 ### GET /api/v1/device/:deviceId/status
 
 Gets status for device. Usefull for determining if device is allowed to send logs or not and what logs should be sent. Client can use this api to keep TLS connection alive or makes sure not to waste bandwidth sending logs to server which is not ready to receive logs. In some environments like IOT devices it's important to save battery and bandwidth.
