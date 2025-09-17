@@ -243,6 +243,43 @@ impl DB {
 		Ok(list)
 	}
 
+	pub async fn get_device(&self, device_id: &str) -> anyhow::Result<Option<Device>> {
+		let conn = self.conn.lock().await;
+		let mut stmt = conn.prepare(
+			r#"
+            SELECT
+                id,
+                send_logs,
+                filter_level,
+                logs_size,
+                logs_count,
+                created_at,
+                last_upload_at,
+                send_interval
+            FROM devices
+            WHERE id = ?1
+            LIMIT 1
+            "#,
+		)?;
+		let mut rows = stmt.query([device_id])?;
+		if let Some(row) = rows.next()? {
+			let id: String = row.get(0)?;
+			let props = load_device_metadata_locked(&conn, &id)?;
+			return Ok(Some(Device {
+				id,
+				send_logs: row.get(1)?,
+				filter_level: LogLevel::from_i64(row.get(2)?),
+				send_interval: row.get(7)?,
+				logs_size: row.get(3)?,
+				logs_count: row.get(4)?,
+				created_at: row.get(5)?,
+				last_upload_at: row.get(6)?,
+				props,
+			}));
+		}
+		Ok(None)
+	}
+
 	pub async fn get_or_create_device(&self, device_id: &str) -> anyhow::Result<Device> {
 		let conn = self.conn.lock().await;
 		let now = chrono::Utc::now();

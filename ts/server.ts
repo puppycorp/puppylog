@@ -29,11 +29,13 @@ export const serverPage = async (root: Container) => {
 	root.add(
 		new KeyValueTable([
 			{ key: "Total space", value: formatBytes(info.totalBytes) },
-			{ key: "Used space", value: `${formatBytes(info.usedBytes)} (${info.usedPercent.toFixed(1)}%)` },
+			{
+				key: "Used space",
+				value: `${formatBytes(info.usedBytes)} (${info.usedPercent.toFixed(1)}%)`,
+			},
 			{ key: "Free space", value: formatBytes(info.freeBytes) },
 			{ key: "Upload files", value: info.uploadFilesCount.toString() },
 			{ key: "Upload bytes", value: formatBytes(info.uploadBytes) },
 		]),
 	)
 }
-

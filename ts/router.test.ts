@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test"
 
+if (typeof window === "undefined") {
+	;(globalThis as any).window = { location: { pathname: "/" } }
+}
+
 test("asdf", () => {
-	window.location.pathname
+	expect(window.location.pathname).toBe("/")
 })

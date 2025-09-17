@@ -15,6 +15,8 @@ import {
 } from "./ui"
 import { Navbar } from "./navbar"
 import { formatBytes, formatNumber } from "./utility"
+import { navigate } from "./router"
+import type { Prop } from "./types"
 
 const saveDeviceSettings = async (device: DeviceSetting) => {
 	await fetch(`/api/v1/device/${device.id}/settings`, {
@@ -37,12 +39,7 @@ const bulkEdit = async (args: {
 	})
 }
 
-type Prop = {
-	key: string
-	value: string
-}
-
-type DeviceSetting = {
+export type DeviceSetting = {
 	id: string
 	sendLogs: boolean
 	filterLevel: string
@@ -54,7 +51,7 @@ type DeviceSetting = {
 	updated?: boolean
 	props: Prop[]
 }
-const levels = ["trace", "debug", "info", "warn", "error", "fatal"]
+export const levels = ["trace", "debug", "info", "warn", "error", "fatal"]
 
 export class DeviceRow extends UiComponent<HTMLDivElement> {
 	device: DeviceSetting
@@ -68,7 +65,19 @@ export class DeviceRow extends UiComponent<HTMLDivElement> {
 		// ID cell
 		const idCell = document.createElement("div")
 		idCell.className = "table-cell"
-		idCell.innerHTML = `<strong>ID:</strong> ${device.id}`
+		const idLabel = document.createElement("strong")
+		idLabel.textContent = "ID: "
+		idCell.appendChild(idLabel)
+		const idLink = document.createElement("a")
+		idLink.textContent = device.id
+		idLink.href = `/device/${encodeURIComponent(device.id)}`
+		idLink.classList.add("link")
+		idLink.onclick = (event) => {
+			event.preventDefault()
+			event.stopPropagation()
+			navigate(`/device/${encodeURIComponent(device.id)}`)
+		}
+		idCell.appendChild(idLink)
 		this.root.appendChild(idCell)
 
 		// Created at cell

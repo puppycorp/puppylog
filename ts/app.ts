@@ -1,4 +1,5 @@
 import { devicesPage } from "./devices"
+import { devicePage } from "./device-page"
 import { logtableTest } from "./logtable-test"
 import { mainPage } from "./main-page"
 import { PivotPage } from "./pivot"
@@ -20,6 +21,7 @@ window.onload = () => {
 		"/settings": () => settingsPage(container),
 		"/server": () => serverPage(container),
 		"/devices": () => devicesPage(body),
+		"/device/:deviceId": (params: any) => devicePage(body, params.deviceId),
 		"/segments": () => segmentsPage(container),
 		"/queries": () => queriesPage(body),
 		"/segment/:segmentId": (params: any) =>
