@@ -102,6 +102,10 @@ impl DeviceSegmentCompactor {
 			}
 		}
 
+		if by_device.is_empty() {
+			return Ok(false);
+		}
+
 		log::info!(
 			"compactor found {} devices with small segments",
 			by_device.len()
