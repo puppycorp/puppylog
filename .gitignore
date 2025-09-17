@@ -9,5 +9,5 @@ workdir
 logs
 settings.json
 puppylog.db
-upload
+uploads
 .env
