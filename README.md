@@ -227,12 +227,12 @@ Response
 
 ```json
 {
-  "freeBytes": 123456,
-  "totalBytes": 987654,
-  "usedBytes": 864198,
-  "usedPercent": 12.34,
-  "uploadFilesCount": 3,
-  "uploadBytes": 424242
+	"freeBytes": 123456,
+	"totalBytes": 987654,
+	"usedBytes": 864198,
+	"usedPercent": 12.34,
+	"uploadFilesCount": 3,
+	"uploadBytes": 424242
 }
 ```
 
@@ -319,6 +319,31 @@ Bulk edit settings for multiple devices identified by their ids.
 
 Returns list of known devices in json format.
 
+### GET /api/v1/device/:deviceId
+
+Returns details for a single device, including metadata and current settings. Responds with `404` if the device is not found.
+
+**application/json**
+
+```json
+{
+	"id": "device-01",
+	"sendLogs": true,
+	"filterLevel": "info",
+	"sendInterval": 60,
+	"logsSize": 123456,
+	"logsCount": 789,
+	"createdAt": "2025-01-01T12:00:00Z",
+	"lastUploadAt": "2025-01-02T12:00:00Z",
+	"props": [
+		{
+			"key": "model",
+			"value": "x123"
+		}
+	]
+}
+```
+
 ### GET /api/v1/validate_query
 
 Validate a PQL query string. Returns `200` if valid otherwise `400` with error.
@@ -360,6 +385,30 @@ Example importing log segments:
 ```
 cargo run --bin puppylogcli -- import ./segments
 ```
+
+### Device Simulator
+
+A minimal device simulator lives in `examples/device-simulator`. It continuously
+fetches `/api/v1/device/{deviceId}/status`, respects the server's `sendLogs`
+and `sendInterval` guidance, and uploads batches of randomly generated device
+logs to `/api/v1/device/{deviceId}/logs`.
+
+Run it with:
+
+```bash
+cargo run -p device_simulator -- --server-url http://localhost:3337 --device-id test-device --batch-size 200 --send-interval 15
+```
+
+Flags you can tweak:
+
+- `--server-url` (defaults to `http://localhost:3337`) to target a specific server
+- `--device-id` for a stable ID (otherwise one is generated)
+- `--batch-size` to control how many log entries go out per upload
+- `--send-interval` to override the server-advertised interval
+- `--max-batches` to stop after a fixed number of uploads
+
+The simulator automatically seeds each log with metadata such as firmware
+version and region so uploads look like realistic device traffic.
 
 ### Building the Web UI
 
