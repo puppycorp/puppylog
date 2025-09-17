@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clap::Parser;
 use puppylog::{LogEntry, LogLevel, Prop};
 use rand::distr::Alphanumeric;
@@ -192,7 +192,7 @@ fn generate_logs(
 	let min_level = status.map(|s| s.level).unwrap_or(LogLevel::Info);
 
 	for _ in 0..batch_size {
-		let timestamp = Utc::now();
+		let timestamp = random_timestamp(&mut rng);
 		let level = random_level(&mut rng, min_level);
 		let (message, mut extra_props) = random_payload(&mut rng, device_id, timestamp, level);
 		let firmware = format!(
@@ -228,6 +228,15 @@ fn generate_logs(
 	}
 
 	entries
+}
+
+fn random_timestamp<R: Rng>(rng: &mut R) -> DateTime<Utc> {
+	const WINDOWS_SECS: [u64; 5] = [90, 15 * 60, 60 * 60, 6 * 60 * 60, 24 * 60 * 60];
+	let anchor = Utc::now();
+	let window_secs = WINDOWS_SECS[rng.random_range(0..WINDOWS_SECS.len())];
+	let window_ms = window_secs * 1_000;
+	let offset_ms: u64 = rng.random_range(0..(window_ms + 1_000));
+	anchor - ChronoDuration::milliseconds(offset_ms as i64)
 }
 
 fn random_payload<R: Rng>(
