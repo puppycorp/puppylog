@@ -4,6 +4,7 @@ import { mainPage } from "./main-page"
 import { PivotPage } from "./pivot"
 import { routes } from "./router"
 import { segmentPage, segmentsPage } from "./segment-page"
+import { devicePage } from "./device-page"
 import { settingsPage } from "./settings"
 import { Container } from "./ui"
 import { queriesPage } from "./queries"
@@ -24,6 +25,7 @@ window.onload = () => {
 		"/queries": () => queriesPage(body),
 		"/segment/:segmentId": (params: any) =>
 			segmentPage(body, params.segmentId),
+		"/device/:deviceId": (params: any) => devicePage(body, params.deviceId),
 		"/pivot": () => PivotPage(body),
 		"/*": () => mainPage(body),
 	})
