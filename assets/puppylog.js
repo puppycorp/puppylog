@@ -711,6 +711,7 @@ class DevicesList {
   }
 }
 var devicesPage = async (root) => {
+  root.innerHTML = "";
   const page = new Container(root);
   const navbar = new Navbar;
   page.add(navbar);
@@ -1982,6 +1983,7 @@ var fetchSegments = async (end) => {
   return res;
 };
 var segmentsPage = async (root) => {
+  root.root.innerHTML = "";
   const segementsMetadata = await fetch("/api/segment/metadata").then((res) => res.json());
   const compressionRatio = segementsMetadata.compressedSize / segementsMetadata.originalSize * 100;
   const averageCompressedLogSize = segementsMetadata.compressedSize / segementsMetadata.logsCount;

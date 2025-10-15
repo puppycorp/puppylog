@@ -36,6 +36,7 @@ const fetchSegments = async (end: Date) => {
 }
 
 export const segmentsPage = async (root: Container) => {
+	root.root.innerHTML = ""
 	const segementsMetadata = (await fetch("/api/segment/metadata").then(
 		(res) => res.json(),
 	)) as SegementsMetadata
