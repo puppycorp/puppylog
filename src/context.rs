@@ -284,10 +284,17 @@ impl Context {
 			if tx.is_closed() {
 				break;
 			}
+			let current_prev = match prev_end {
+				Some(ts) => ts,
+				None => {
+					log::info!("no previous end; stopping");
+					break;
+				}
+			};
 			let end_exists = self
 				.db
 				.segment_exists_at(
-					prev_end.unwrap(),
+					current_prev,
 					if device_ids.is_empty() {
 						None
 					} else {
@@ -296,12 +303,12 @@ impl Context {
 				)
 				.await?;
 			let mut end = if end_exists {
-				prev_end.unwrap()
+				current_prev
 			} else {
 				match self
 					.db
 					.prev_segment_end(
-						prev_end,
+						Some(&current_prev),
 						if device_ids.is_empty() {
 							None
 						} else {
