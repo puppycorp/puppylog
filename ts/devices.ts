@@ -222,6 +222,7 @@ class DevicesList implements UiComponent<HTMLDivElement> {
 }
 
 export const devicesPage = async (root: HTMLElement) => {
+	root.innerHTML = ""
 	const page = new Container(root)
 	const navbar = new Navbar()
 	page.add(navbar)
