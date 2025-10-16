@@ -354,6 +354,58 @@ Validate a PQL query string. Returns `200` if valid otherwise `400` with error.
 | ----- | -------- | -------------------------- |
 | query | string   | Query string in PQL format |
 
+### POST /api/settings/query
+
+Update the collection query used by the server.
+
+**text/plain**
+
+```
+level > warning
+```
+
+### GET /api/settings/query
+
+Return the current collection query.
+
+### GET /api/segments
+
+List stored log segments. When no query parameters are supplied the server returns up to 100 segments.
+
+#### Query
+
+| Field     | DataType | Description                            |
+| --------- | -------- | -------------------------------------- |
+| start     | string   | Only include segments after this time  |
+| end       | string   | Only include segments before this time |
+| deviceIds | array    | Optional list of device ids to filter  |
+| count     | int      | Maximum number of segments to return   |
+| sort      | string   | `asc` or `desc` order by timestamp     |
+
+### GET /api/segment/metadata
+
+Return aggregated statistics about stored segments.
+
+### GET /api/v1/segments
+
+Same as `/api/segments` but under the versioned namespace.
+
+### GET /api/v1/segment/:segmentId
+
+Get metadata for a single segment.
+
+### GET /api/v1/segment/:segmentId/props
+
+Return unique properties found in the segment.
+
+### GET /api/v1/segment/:segmentId/download
+
+Download the segment as a `.zst` file.
+
+### DELETE /api/v1/segment/:segmentId
+
+Remove the segment from storage.
+
 ## Install
 
 ### Linux
@@ -430,6 +482,11 @@ PuppyLog supports tuning of its in-memory buffering and merge batching behavior 
 - **MERGER_RUN**: Enables or disables merger background processing. Defaults to `true`.
 - **UPLOAD_FLUSH_THRESHOLD**: Number of buffered log entries received via the upload API before they are persisted to storage. The server reads this value at startup. Defaults to the compile-time constant `UPLOAD_FLUSH_THRESHOLD`.
 - **RUN_SEGMENT_COMPACTOR**: Enables or disables the segment compactor background process. Defaults to `true`. It tries to compact device segment logs up to 300k entries per segment. This helps to improve compression ratio and query performance with less files on disk.
+- **LOG_PATH**: Directory where segment files are stored. Defaults to `./logs`.
+- **DB_PATH**: Path to the SQLite database file. Defaults to `./puppylog.db`.
+- **SETTINGS_PATH**: Path to the server settings file. Defaults to `./settings.json`.
+- **UPLOAD_PATH**: Directory for incoming log uploads. Defaults to `./uploads`.
+- **SLACK_WEBHOOK**: If set, disk space warnings are sent to this Slack webhook URL.
 
 To override these at runtime, set the variables before starting the server, for example:
 
