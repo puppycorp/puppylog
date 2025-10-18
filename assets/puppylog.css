@@ -186,7 +186,8 @@ body {
 .msg-summary {
 	overflow: hidden;
 	text-overflow: ellipsis;
-	max-height: 3em;
+	line-height: 1.4;
+	max-height: calc(1.4em * 3);
 }
 .logs-list-row-msg:hover .msg-full {
 	display: block;
