@@ -359,7 +359,7 @@ Validate a PQL query string. Returns `200` if valid otherwise `400` with error.
 ### Linux
 
 ```
-sudo apt-get install gcc libssl-dev pkg-config
+sudo apt-get install gcc libssl-dev pkg-config libsqlite3-dev build-essential
 cargo run
 ```
 
