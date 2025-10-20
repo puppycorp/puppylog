@@ -432,6 +432,16 @@ fn etag_for(bytes: &[u8]) -> String {
 	format!("\"{:016x}-{}\"", fnv1a64(bytes), bytes.len())
 }
 
+fn if_none_match_matches(etag: &str, candidate: &HeaderValue) -> bool {
+	match candidate.to_str() {
+		Ok(value) => value
+			.split(',')
+			.map(|part| part.trim())
+			.any(|tag| tag == "*" || tag == etag || tag.strip_prefix("W/") == Some(etag)),
+		Err(_) => false,
+	}
+}
+
 fn cached_bytes_response(
 	bytes: &'static [u8],
 	content_type: &'static str,
@@ -439,7 +449,7 @@ fn cached_bytes_response(
 ) -> Response {
 	let etag = etag_for(bytes);
 	if let Some(candidate) = req_headers.get(axum::http::header::IF_NONE_MATCH) {
-		if candidate.to_str().ok() == Some(&etag) {
+		if if_none_match_matches(&etag, candidate) {
 			let mut headers = HeaderMap::new();
 			headers.insert(
 				axum::http::header::ETAG,
@@ -481,7 +491,7 @@ fn cached_string_response(
 	let bytes = content.as_bytes();
 	let etag = etag_for(bytes);
 	if let Some(candidate) = req_headers.get(axum::http::header::IF_NONE_MATCH) {
-		if candidate.to_str().ok() == Some(&etag) {
+		if if_none_match_matches(&etag, candidate) {
 			let mut headers = HeaderMap::new();
 			headers.insert(
 				axum::http::header::ETAG,
@@ -1013,6 +1023,71 @@ mod tests {
 			.await
 			.unwrap();
 		assert_eq!(res2.status(), StatusCode::NOT_MODIFIED);
+	}
+
+	#[tokio::test]
+	async fn static_js_handles_complex_if_none_match_headers() {
+		let app = Router::new().route("/puppylog.js", get(js));
+
+		let res1 = app
+			.clone()
+			.oneshot(
+				Request::builder()
+					.uri("/puppylog.js")
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+		assert_eq!(res1.status(), StatusCode::OK);
+		let etag = res1
+			.headers()
+			.get(axum::http::header::ETAG)
+			.expect("ETag header present")
+			.to_str()
+			.unwrap()
+			.to_string();
+
+		let res_with_multiple = app
+			.clone()
+			.oneshot(
+				Request::builder()
+					.uri("/puppylog.js")
+					.header(
+						axum::http::header::IF_NONE_MATCH,
+						format!("{}, \"other\"", etag),
+					)
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+		assert_eq!(res_with_multiple.status(), StatusCode::NOT_MODIFIED);
+
+		let res_with_weak = app
+			.clone()
+			.oneshot(
+				Request::builder()
+					.uri("/puppylog.js")
+					.header(axum::http::header::IF_NONE_MATCH, format!("W/{}", etag))
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+		assert_eq!(res_with_weak.status(), StatusCode::NOT_MODIFIED);
+
+		let res_with_star = app
+			.oneshot(
+				Request::builder()
+					.uri("/puppylog.js")
+					.header(axum::http::header::IF_NONE_MATCH, "*")
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+		assert_eq!(res_with_star.status(), StatusCode::NOT_MODIFIED);
 	}
 
 	#[tokio::test]
