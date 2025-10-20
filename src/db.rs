@@ -106,6 +106,11 @@ type DbConn = PooledConnection<ConnectionManager<SqliteConnection>>;
 
 pub type DbPool = Pool<ConnectionManager<SqliteConnection>>;
 
+pub struct DbPools {
+	pub write_pool: DbPool,
+	pub read_pool: DbPool,
+}
+
 pub fn establish_pool(database_url: &str) -> Result<DbPool> {
 	let manager = ConnectionManager::<SqliteConnection>::new(database_url);
 	let mut builder = Pool::builder();
@@ -120,9 +125,13 @@ pub fn establish_pool(database_url: &str) -> Result<DbPool> {
 		.context("failed to build sqlite pool")
 }
 
-pub fn open_db() -> DbPool {
+pub fn open_db() -> DbPools {
 	if cfg!(test) {
-		establish_pool(":memory:").expect("in-memory pool")
+		let pool = establish_pool(":memory:").expect("in-memory pool");
+		DbPools {
+			write_pool: pool.clone(),
+			read_pool: pool,
+		}
 	} else {
 		let path = db_path();
 		if let Some(parent) = path.parent() {
@@ -130,7 +139,13 @@ pub fn open_db() -> DbPool {
 				create_dir_all(parent).expect("failed to create database directory");
 			}
 		}
-		establish_pool(path.to_str().expect("database path is not utf-8")).expect("pool")
+		let database_url = path.to_str().expect("database path is not utf-8");
+		let write_pool = establish_pool(database_url).expect("pool");
+		let read_pool = establish_pool(database_url).expect("pool");
+		DbPools {
+			write_pool,
+			read_pool,
+		}
 	}
 }
 
@@ -237,22 +252,38 @@ pub struct NewSegmentArgs {
 
 #[derive(Debug)]
 pub struct DB {
-	pool: DbPool,
+	write_pool: DbPool,
+	read_pool: DbPool,
 }
 
 impl DB {
-	pub fn new(pool: DbPool) -> Self {
+	pub fn new(pools: DbPools) -> Self {
+		let DbPools {
+			write_pool,
+			read_pool,
+		} = pools;
 		{
-			let mut conn = pool.get().expect("failed to get connection for migrations");
+			let mut conn = write_pool
+				.get()
+				.expect("failed to get connection for migrations");
 			run_migrations(&mut conn).expect("failed to run migrations");
 		}
-		DB { pool }
+		DB {
+			write_pool,
+			read_pool,
+		}
 	}
 
 	fn conn(&self) -> Result<DbConn> {
-		self.pool
+		self.write_pool
 			.get()
 			.context("failed to get sqlite connection from pool")
+	}
+
+	fn read_conn(&self) -> Result<DbConn> {
+		self.read_pool
+			.get()
+			.context("failed to get sqlite read connection from pool")
 	}
 
 	pub async fn update_device_stats(
@@ -279,7 +310,7 @@ impl DB {
 	}
 
 	pub async fn get_devices(&self) -> Result<Vec<Device>> {
-		let mut conn = self.conn()?;
+		let mut conn = self.read_conn()?;
 		let rows: Vec<DeviceRow> = devices::table.load(&mut conn)?;
 		let mut devices_vec = Vec::with_capacity(rows.len());
 		for row in rows {
@@ -300,7 +331,7 @@ impl DB {
 	}
 
 	pub async fn get_device(&self, device_id: &str) -> Result<Option<Device>> {
-		let mut conn = self.conn()?;
+		let mut conn = self.read_conn()?;
 		match devices::table
 			.filter(devices::id.eq(device_id))
 			.first::<DeviceRow>(&mut conn)
@@ -473,7 +504,7 @@ impl DB {
 	}
 
 	pub async fn find_segments(&self, query: &GetSegmentsQuery) -> Result<Vec<SegmentMeta>> {
-		let mut conn = self.conn()?;
+		let mut conn = self.read_conn()?;
 		let mut q = log_segments::table.into_boxed();
 
 		if let Some(start) = &query.start {
@@ -521,7 +552,7 @@ impl DB {
 		ts: Option<&chrono::DateTime<chrono::Utc>>,
 		device_ids: Option<&[String]>,
 	) -> Result<Option<DateTime<Utc>>> {
-		let mut conn = self.conn()?;
+		let mut conn = self.read_conn()?;
 		let mut query = log_segments::table.into_boxed();
 		if let Some(timestamp) = ts {
 			query = query.filter(log_segments::last_timestamp.le(timestamp.naive_utc()));
@@ -546,7 +577,7 @@ impl DB {
 		ts: chrono::DateTime<chrono::Utc>,
 		device_ids: Option<&[String]>,
 	) -> Result<bool> {
-		let mut conn = self.conn()?;
+		let mut conn = self.read_conn()?;
 		let mut subquery = log_segments::table
 			.filter(log_segments::first_timestamp.le(ts.naive_utc()))
 			.filter(log_segments::last_timestamp.ge(ts.naive_utc()))
@@ -565,7 +596,7 @@ impl DB {
 	}
 
 	pub async fn fetch_segment(&self, segment: u32) -> Result<SegmentMeta> {
-		let mut conn = self.conn()?;
+		let mut conn = self.read_conn()?;
 		let row = log_segments::table
 			.filter(log_segments::id.eq(segment as i32))
 			.first::<SegmentRow>(&mut conn)?;
@@ -585,7 +616,7 @@ impl DB {
 		&self,
 		limit: Option<u32>,
 	) -> Result<Vec<SegmentMeta>> {
-		let mut conn = self.conn()?;
+		let mut conn = self.read_conn()?;
 		let mut query = log_segments::table
 			.filter(log_segments::device_id.is_null())
 			.into_boxed();
@@ -623,7 +654,7 @@ impl DB {
 	}
 
 	pub async fn fetch_segments_metadata(&self) -> Result<SegmentsMetadata> {
-		let mut conn = self.conn()?;
+		let mut conn = self.read_conn()?;
 		#[derive(QueryableByName)]
 		struct MetadataRow {
 			#[diesel(sql_type = BigInt)]
@@ -671,7 +702,7 @@ impl DB {
 	}
 
 	pub async fn fetch_segment_props(&self, segment: u32) -> Result<Vec<Prop>> {
-		let mut conn = self.conn()?;
+		let mut conn = self.read_conn()?;
 		let rows: Vec<(String, String)> = segment_props::table
 			.filter(segment_props::segment_id.eq(segment as i32))
 			.select((segment_props::key, segment_props::value))
@@ -687,7 +718,7 @@ impl DB {
 		segment_ids: &[u32],
 	) -> Result<HashMap<u32, Vec<Prop>>> {
 		const MAX_SQL_PARAMS: usize = 999;
-		let mut conn = self.conn()?;
+		let mut conn = self.read_conn()?;
 		if segment_ids.is_empty() {
 			return Ok(HashMap::new());
 		}
@@ -780,7 +811,10 @@ mod tests {
 
 	fn test_db() -> DB {
 		let pool = establish_pool(":memory:").unwrap();
-		DB::new(pool)
+		DB::new(DbPools {
+			write_pool: pool.clone(),
+			read_pool: pool,
+		})
 	}
 
 	#[tokio::test]
