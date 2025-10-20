@@ -21,7 +21,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 
 use crate::config::{log_path, upload_path};
-use crate::context::{Context, LogStreamItem, SegmentProgress};
+use crate::context::{Context, LogStreamItem, SearchProgress, SegmentProgress};
 use crate::db::{MetaProp, UpdateDeviceSettings};
 use crate::types::GetSegmentsQuery;
 
@@ -634,11 +634,20 @@ fn logentry_to_json(entry: &LogEntry) -> Value {
 
 fn segment_progress_to_json(progress: &SegmentProgress) -> Value {
 	json!({
-			"segmentId": progress.segment_id,
-			"deviceId": progress.device_id,
-			"firstTimestamp": progress.first_timestamp,
-			"lastTimestamp": progress.last_timestamp,
-			"logsCount": progress.logs_count,
+					"type": "segment",
+					"segmentId": progress.segment_id,
+					"deviceId": progress.device_id,
+					"firstTimestamp": progress.first_timestamp,
+					"lastTimestamp": progress.last_timestamp,
+					"logsCount": progress.logs_count,
+	})
+}
+
+fn search_progress_to_json(progress: &SearchProgress) -> Value {
+	json!({
+					"type": "stats",
+					"processedLogs": progress.processed_logs,
+					"logsPerSecond": progress.logs_per_second,
 	})
 }
 
@@ -722,6 +731,12 @@ pub async fn get_logs(
 							Event::default().event("progress").data(data),
 						)))
 					}
+					LogStreamItem::SearchProgress(progress) => {
+						let data = to_string(&search_progress_to_json(&progress)).unwrap();
+						future::ready(Some(Ok::<Event, std::convert::Infallible>(
+							Event::default().event("progress").data(data),
+						)))
+					}
 				}
 			},
 		);
@@ -731,7 +746,7 @@ pub async fn get_logs(
 			.filter_map(|item| async move {
 				match item {
 					LogStreamItem::Entry(log) => Some(logentry_to_json(&log)),
-					LogStreamItem::SegmentProgress(_) => None,
+					LogStreamItem::SegmentProgress(_) | LogStreamItem::SearchProgress(_) => None,
 				}
 			})
 			.take(limit)
@@ -795,7 +810,7 @@ pub async fn get_histogram(
 		while let Some(item) = entry_rx.recv().await {
 			let entry = match item {
 				LogStreamItem::Entry(entry) => entry,
-				LogStreamItem::SegmentProgress(_) => continue,
+				LogStreamItem::SegmentProgress(_) | LogStreamItem::SearchProgress(_) => continue,
 			};
 			let ts = entry.timestamp.timestamp();
 			let bucket = ts - ts % bucket_secs as i64;

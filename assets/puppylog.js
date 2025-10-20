@@ -1368,6 +1368,37 @@ class Histogram {
 }
 
 // ts/logs.ts
+var isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
+var isSegmentProgressEvent = (value) => {
+  if (typeof value !== "object" || value === null)
+    return false;
+  const event = value;
+  if (event.type !== "segment")
+    return false;
+  if (!isFiniteNumber(event.segmentId))
+    return false;
+  if (typeof event.firstTimestamp !== "string")
+    return false;
+  if (typeof event.lastTimestamp !== "string")
+    return false;
+  if ("logsCount" in event && event.logsCount !== undefined && !isFiniteNumber(event.logsCount))
+    return false;
+  if ("deviceId" in event && event.deviceId !== undefined && event.deviceId !== null && typeof event.deviceId !== "string")
+    return false;
+  return true;
+};
+var isSearchProgressEvent = (value) => {
+  if (typeof value !== "object" || value === null)
+    return false;
+  const event = value;
+  if (event.type !== "stats")
+    return false;
+  if (!isFiniteNumber(event.processedLogs))
+    return false;
+  if ("logsPerSecond" in event && event.logsPerSecond !== undefined)
+    return isFiniteNumber(event.logsPerSecond);
+  return true;
+};
 var MAX_LOG_ENTRIES = 1e4;
 var MESSAGE_TRUNCATE_LENGTH = 700;
 var OBSERVER_THRESHOLD = 0.1;
@@ -1382,6 +1413,8 @@ var LOG_COLORS = {
 var searchSvg = `<svg xmlns="http://www.w3.org/2000/svg"  viewBox="0 0 50 50" width="20px" height="20px"><path d="M 21 3 C 11.601563 3 4 10.601563 4 20 C 4 29.398438 11.601563 37 21 37 C 24.355469 37 27.460938 36.015625 30.09375 34.34375 L 42.375 46.625 L 46.625 42.375 L 34.5 30.28125 C 36.679688 27.421875 38 23.878906 38 20 C 38 10.601563 30.398438 3 21 3 Z M 21 7 C 28.199219 7 34 12.800781 34 20 C 34 27.199219 28.199219 33 21 33 C 13.800781 33 8 27.199219 8 20 C 8 12.800781 13.800781 7 21 7 Z"/></svg>`;
 var formatTimestamp2 = (ts) => {
   const date = new Date(ts);
+  if (Number.isNaN(date.getTime()))
+    return "unknown time";
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`;
 };
 var describeSegmentProgress = (progress) => {
@@ -1390,6 +1423,12 @@ var describeSegmentProgress = (progress) => {
   const device = progress.deviceId ? ` · ${progress.deviceId}` : "";
   const logs = progress.logsCount ? ` · ${progress.logsCount} logs` : "";
   return `Scanning segment ${progress.segmentId}${device} (${start} – ${end}${logs})`;
+};
+var describeSearchProgress = (progress) => {
+  const processed = progress.processedLogs.toLocaleString();
+  const speed = Number.isFinite(progress.logsPerSecond) ? progress.logsPerSecond : 0;
+  const speedText = speed > 0 ? ` · ${speed.toFixed(1)} logs/sec` : "";
+  return `Processed ${processed} logs${speedText}`;
 };
 var escapeHTML = (str) => {
   const div = document.createElement("div");
@@ -1500,6 +1539,20 @@ var logsSearchPage = (args) => {
       loadingIndicator.style.display = "flex";
     }
   };
+  let segmentStatus = "";
+  let statsStatus = "";
+  const updateProgressIndicator = () => {
+    if (!segmentStatus && !statsStatus) {
+      setLoadingIndicator("Searching…", true);
+      return;
+    }
+    const parts = [];
+    if (segmentStatus)
+      parts.push(segmentStatus);
+    if (statsStatus)
+      parts.push(statsStatus);
+    setLoadingIndicator(parts.join(" · "), true);
+  };
   const logsList = document.createElement("div");
   logsList.className = "logs-list";
   args.root.appendChild(logsList);
@@ -1568,7 +1621,9 @@ var logsSearchPage = (args) => {
     const token = ++searchToken;
     searchButton.disabled = true;
     searchButton.setAttribute("aria-busy", "true");
-    setLoadingIndicator("Searching…", true);
+    segmentStatus = "";
+    statsStatus = "";
+    updateProgressIndicator();
     return token;
   };
   const finishSearch = (token) => {
@@ -1577,6 +1632,8 @@ var logsSearchPage = (args) => {
     searchButton.disabled = false;
     searchButton.setAttribute("aria-busy", "false");
     loadingSpinner.style.display = "none";
+    segmentStatus = "";
+    statsStatus = "";
   };
   const sentinelVisible = () => {
     const rect = scrollSentinel.getBoundingClientRect();
@@ -1626,7 +1683,11 @@ var logsSearchPage = (args) => {
     }, (progress) => {
       if (token !== searchToken)
         return;
-      setLoadingIndicator(describeSegmentProgress(progress), true);
+      if (progress.type === "segment")
+        segmentStatus = describeSegmentProgress(progress);
+      else
+        statsStatus = describeSearchProgress(progress);
+      updateProgressIndicator();
     }, () => {
       if (token !== searchToken)
         return;
@@ -1803,8 +1864,10 @@ var mainPage = (root) => {
       };
       eventSource.addEventListener("progress", (event) => {
         const message = event;
-        const data = JSON.parse(message.data);
-        onProgress(data);
+        const raw = JSON.parse(message.data);
+        if (isSegmentProgressEvent(raw) || isSearchProgressEvent(raw)) {
+          onProgress(raw);
+        }
       });
       eventSource.onerror = (event) => {
         console.log("eventSource.onerror", event);

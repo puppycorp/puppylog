@@ -1,5 +1,8 @@
-import { logsSearchPage } from "./logs"
-import type { SegmentProgressEvent } from "./logs"
+import {
+	logsSearchPage,
+	isSearchProgressEvent,
+	isSegmentProgressEvent,
+} from "./logs"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 
 export const mainPage = (root: HTMLElement) => {
@@ -25,8 +28,10 @@ export const mainPage = (root: HTMLElement) => {
 			}
 			eventSource.addEventListener("progress", (event) => {
 				const message = event as MessageEvent<string>
-				const data = JSON.parse(message.data) as SegmentProgressEvent
-				onProgress(data)
+				const raw = JSON.parse(message.data)
+				if (isSegmentProgressEvent(raw) || isSearchProgressEvent(raw)) {
+					onProgress(raw)
+				}
 			})
 			eventSource.onerror = (event) => {
 				console.log("eventSource.onerror", event)

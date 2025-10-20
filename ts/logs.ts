@@ -22,11 +22,60 @@ export type LogEntry = {
 }
 
 export type SegmentProgressEvent = {
+	type: "segment"
 	segmentId: number
 	deviceId?: string | null
 	firstTimestamp: string
 	lastTimestamp: string
 	logsCount: number
+}
+
+export type SearchProgressEvent = {
+	type: "stats"
+	processedLogs: number
+	logsPerSecond: number
+}
+
+export type ProgressEvent = SegmentProgressEvent | SearchProgressEvent
+
+const isFiniteNumber = (value: unknown): value is number =>
+	typeof value === "number" && Number.isFinite(value)
+
+export const isSegmentProgressEvent = (
+	value: unknown,
+): value is SegmentProgressEvent => {
+	if (typeof value !== "object" || value === null) return false
+	const event = value as Partial<SegmentProgressEvent>
+	if (event.type !== "segment") return false
+	if (!isFiniteNumber(event.segmentId)) return false
+	if (typeof event.firstTimestamp !== "string") return false
+	if (typeof event.lastTimestamp !== "string") return false
+	if (
+		"logsCount" in event &&
+		event.logsCount !== undefined &&
+		!isFiniteNumber(event.logsCount)
+	)
+		return false
+	if (
+		"deviceId" in event &&
+		event.deviceId !== undefined &&
+		event.deviceId !== null &&
+		typeof event.deviceId !== "string"
+	)
+		return false
+	return true
+}
+
+export const isSearchProgressEvent = (
+	value: unknown,
+): value is SearchProgressEvent => {
+	if (typeof value !== "object" || value === null) return false
+	const event = value as Partial<SearchProgressEvent>
+	if (event.type !== "stats") return false
+	if (!isFiniteNumber(event.processedLogs)) return false
+	if ("logsPerSecond" in event && event.logsPerSecond !== undefined)
+		return isFiniteNumber(event.logsPerSecond)
+	return true
 }
 
 export type FetchMoreArgs = {
@@ -42,7 +91,7 @@ interface LogsSearchPageArgs {
 	streamLogs: (
 		args: FetchMoreArgs,
 		onNewLog: (log: LogEntry) => void,
-		onProgress: (progress: SegmentProgressEvent) => void,
+		onProgress: (progress: ProgressEvent) => void,
 		onEnd: () => void,
 	) => () => void
 }
@@ -64,6 +113,7 @@ export const searchSvg = `<svg xmlns="http://www.w3.org/2000/svg"  viewBox="0 0 
 
 const formatTimestamp = (ts: string): string => {
 	const date = new Date(ts)
+	if (Number.isNaN(date.getTime())) return "unknown time"
 	return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`
 }
 
@@ -73,6 +123,15 @@ const describeSegmentProgress = (progress: SegmentProgressEvent): string => {
 	const device = progress.deviceId ? ` · ${progress.deviceId}` : ""
 	const logs = progress.logsCount ? ` · ${progress.logsCount} logs` : ""
 	return `Scanning segment ${progress.segmentId}${device} (${start} – ${end}${logs})`
+}
+
+const describeSearchProgress = (progress: SearchProgressEvent): string => {
+	const processed = progress.processedLogs.toLocaleString()
+	const speed = Number.isFinite(progress.logsPerSecond)
+		? progress.logsPerSecond
+		: 0
+	const speedText = speed > 0 ? ` · ${speed.toFixed(1)} logs/sec` : ""
+	return `Processed ${processed} logs${speedText}`
 }
 
 const escapeHTML = (str: string): string => {
@@ -208,6 +267,19 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		}
 	}
 
+	let segmentStatus = ""
+	let statsStatus = ""
+	const updateProgressIndicator = () => {
+		if (!segmentStatus && !statsStatus) {
+			setLoadingIndicator("Searching…", true)
+			return
+		}
+		const parts: string[] = []
+		if (segmentStatus) parts.push(segmentStatus)
+		if (statsStatus) parts.push(statsStatus)
+		setLoadingIndicator(parts.join(" · "), true)
+	}
+
 	const logsList = document.createElement("div")
 	logsList.className = "logs-list"
 	args.root.appendChild(logsList)
@@ -292,7 +364,9 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		const token = ++searchToken
 		searchButton.disabled = true
 		searchButton.setAttribute("aria-busy", "true")
-		setLoadingIndicator("Searching…", true)
+		segmentStatus = ""
+		statsStatus = ""
+		updateProgressIndicator()
 		return token
 	}
 
@@ -302,6 +376,8 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		searchButton.setAttribute("aria-busy", "false")
 		// hide spinner but preserve any existing status text (e.g. No logs found)
 		loadingSpinner.style.display = "none"
+		segmentStatus = ""
+		statsStatus = ""
 	}
 
 	const sentinelVisible = () => {
@@ -354,7 +430,10 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			},
 			(progress) => {
 				if (token !== searchToken) return
-				setLoadingIndicator(describeSegmentProgress(progress), true)
+				if (progress.type === "segment")
+					segmentStatus = describeSegmentProgress(progress)
+				else statsStatus = describeSearchProgress(progress)
+				updateProgressIndicator()
 			},
 			() => {
 				if (token !== searchToken) return

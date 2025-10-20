@@ -49,10 +49,18 @@ pub struct SegmentProgress {
 	pub logs_count: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchProgress {
+	pub processed_logs: u64,
+	pub logs_per_second: f64,
+}
+
 #[derive(Debug, Clone)]
 pub enum LogStreamItem {
 	Entry(LogEntry),
 	SegmentProgress(SegmentProgress),
+	SearchProgress(SearchProgress),
 }
 
 #[derive(Debug)]
@@ -251,6 +259,32 @@ impl Context {
 		query: QueryAst,
 		tx: &mpsc::Sender<LogStreamItem>,
 	) -> anyhow::Result<()> {
+		let search_start = Instant::now();
+		let mut processed_logs: u64 = 0;
+		let mut last_progress_emit = search_start;
+
+		let maybe_emit_progress =
+			|processed_logs: u64, search_start: Instant, last_emit: &mut Instant| -> Option<f64> {
+				let elapsed = search_start.elapsed();
+				if processed_logs == 0 {
+					return Some(0.0);
+				}
+				if processed_logs == 1
+					|| processed_logs % 1_000 == 0
+					|| last_emit.elapsed() >= Duration::from_millis(500)
+				{
+					*last_emit = Instant::now();
+					let seconds = elapsed.as_secs_f64();
+					if seconds > 0.0 {
+						Some(processed_logs as f64 / seconds)
+					} else {
+						Some(0.0)
+					}
+				} else {
+					None
+				}
+			};
+
 		let mut end = query.end_date.unwrap_or(Utc::now());
 		let device_ids = extract_device_ids(&query.root);
 		let tz = query
@@ -274,6 +308,21 @@ impl Context {
 			for entry in iter {
 				if tx.is_closed() {
 					return Ok(());
+				}
+				processed_logs += 1;
+				if let Some(speed) =
+					maybe_emit_progress(processed_logs, search_start, &mut last_progress_emit)
+				{
+					if tx
+						.send(LogStreamItem::SearchProgress(SearchProgress {
+							processed_logs,
+							logs_per_second: speed,
+						}))
+						.await
+						.is_err()
+					{
+						return Ok(());
+					}
 				}
 				if entry.timestamp > end {
 					continue;
@@ -449,6 +498,21 @@ impl Context {
 					if tx.is_closed() {
 						break 'outer;
 					}
+					processed_logs += 1;
+					if let Some(speed) =
+						maybe_emit_progress(processed_logs, search_start, &mut last_progress_emit)
+					{
+						if tx
+							.send(LogStreamItem::SearchProgress(SearchProgress {
+								processed_logs,
+								logs_per_second: speed,
+							}))
+							.await
+							.is_err()
+						{
+							break 'outer;
+						}
+					}
 					if entry.timestamp > end {
 						continue;
 					}
@@ -462,6 +526,20 @@ impl Context {
 					}
 				}
 			}
+		}
+		if processed_logs > 0 {
+			let elapsed = search_start.elapsed().as_secs_f64();
+			let logs_per_second = if elapsed > 0.0 {
+				processed_logs as f64 / elapsed
+			} else {
+				0.0
+			};
+			let _ = tx
+				.send(LogStreamItem::SearchProgress(SearchProgress {
+					processed_logs,
+					logs_per_second,
+				}))
+				.await;
 		}
 		Ok(())
 	}
@@ -1124,7 +1202,7 @@ mod tests {
 		let first = loop {
 			match rx.recv().await.unwrap() {
 				LogStreamItem::Entry(entry) => break entry,
-				LogStreamItem::SegmentProgress(_) => continue,
+				LogStreamItem::SegmentProgress(_) | LogStreamItem::SearchProgress(_) => continue,
 			}
 		};
 		drop(rx);
