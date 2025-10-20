@@ -109,7 +109,7 @@ const createRandomXml = (
 export const logtableTest = (root: HTMLElement): HTMLElement => {
 	logsSearchPage({
 		root,
-		streamLogs: (args, onNewLog, onEnd) => {
+		streamLogs: (args, onNewLog, _onProgress, onEnd) => {
 			onNewLog({
 				id: `${Date.now()}-text`,
 				timestamp: new Date().toISOString(),

@@ -30,11 +30,30 @@ use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
+
+use serde::Serialize;
 use tokio::sync::Mutex;
 
 const CONCURRENCY_LIMIT: usize = 10;
 /// Default number of buffered log entries before logs are flushed to disk.
 pub const UPLOAD_FLUSH_THRESHOLD: usize = 3_000_000;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentProgress {
+	pub segment_id: u32,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub device_id: Option<String>,
+	pub first_timestamp: DateTime<Utc>,
+	pub last_timestamp: DateTime<Utc>,
+	pub logs_count: u64,
+}
+
+#[derive(Debug, Clone)]
+pub enum LogStreamItem {
+	Entry(LogEntry),
+	SegmentProgress(SegmentProgress),
+}
 
 #[derive(Debug)]
 pub struct Context {
@@ -230,7 +249,7 @@ impl Context {
 	pub async fn find_logs(
 		&self,
 		query: QueryAst,
-		tx: &mpsc::Sender<LogEntry>,
+		tx: &mpsc::Sender<LogStreamItem>,
 	) -> anyhow::Result<()> {
 		let mut end = query.end_date.unwrap_or(Utc::now());
 		let device_ids = extract_device_ids(&query.root);
@@ -269,7 +288,7 @@ impl Context {
 					Ok(true) => {}
 					_ => continue,
 				}
-				if tx.send(entry.clone()).await.is_err() {
+				if tx.send(LogStreamItem::Entry(entry.clone())).await.is_err() {
 					return Ok(());
 				}
 			}
@@ -396,6 +415,19 @@ impl Context {
 					end = segment.first_timestamp;
 					continue;
 				}
+				if tx
+					.send(LogStreamItem::SegmentProgress(SegmentProgress {
+						segment_id: segment.id,
+						device_id: segment.device_id.clone(),
+						first_timestamp: segment.first_timestamp,
+						last_timestamp: segment.last_timestamp,
+						logs_count: segment.logs_count,
+					}))
+					.await
+					.is_err()
+				{
+					break 'outer;
+				}
 				let path = self.logs_path.join(format!("{}.log", segment.id));
 				log::info!(
 					"loading {} segment {} - {}",
@@ -424,7 +456,7 @@ impl Context {
 						Ok(true) => {}
 						_ => continue,
 					}
-					if tx.send(entry.clone()).await.is_err() {
+					if tx.send(LogStreamItem::Entry(entry.clone())).await.is_err() {
 						log::info!("stopped searching logs at {:?}", entry);
 						break 'outer;
 					}
@@ -490,8 +522,10 @@ mod tests {
 		ctx.find_logs(query, &tx).await.unwrap();
 		drop(tx);
 		let mut found = Vec::new();
-		while let Some(log) = rx.recv().await {
-			found.push(log);
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				found.push(log);
+			}
 		}
 
 		assert_eq!(found.len(), 1);
@@ -555,8 +589,10 @@ mod tests {
 		ctx.find_logs(query, &tx).await.unwrap();
 		drop(tx);
 		let mut found = Vec::new();
-		while let Some(log) = rx.recv().await {
-			found.push(log);
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				found.push(log);
+			}
 		}
 
 		assert_eq!(found.len(), 1);
@@ -574,8 +610,10 @@ mod tests {
 		ctx.find_logs(query, &tx).await.unwrap();
 		drop(tx);
 		let mut found = Vec::<LogEntry>::new();
-		while let Some(log) = rx.recv().await {
-			found.push(log);
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				found.push(log);
+			}
 		}
 
 		// We expect to find **no** matching entries.
@@ -680,8 +718,10 @@ mod tests {
 		ctx.find_logs(query, &tx).await.unwrap();
 		drop(tx);
 		let mut found = Vec::new();
-		while let Some(log) = rx.recv().await {
-			found.push(log);
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				found.push(log);
+			}
 		}
 
 		assert_eq!(found.len(), 1, "log returned more than once");
@@ -782,8 +822,10 @@ mod tests {
 		ctx.find_logs(query, &tx).await.unwrap();
 		drop(tx);
 		let mut found = Vec::new();
-		while let Some(log) = rx.recv().await {
-			found.push(log);
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				found.push(log);
+			}
 		}
 
 		assert_eq!(found.len(), 1);
@@ -892,8 +934,10 @@ mod tests {
 		ctx.find_logs(query, &tx).await.unwrap();
 		drop(tx);
 		let mut found = Vec::new();
-		while let Some(log) = rx.recv().await {
-			found.push(log);
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				found.push(log);
+			}
 		}
 
 		assert_eq!(found.len(), 1);
@@ -1077,7 +1121,12 @@ mod tests {
 		let handle = tokio::spawn(async move {
 			ctx_clone.find_logs(query, &tx).await.unwrap();
 		});
-		let first = rx.recv().await.unwrap();
+		let first = loop {
+			match rx.recv().await.unwrap() {
+				LogStreamItem::Entry(entry) => break entry,
+				LogStreamItem::SegmentProgress(_) => continue,
+			}
+		};
 		drop(rx);
 		handle.await.unwrap();
 
@@ -1089,8 +1138,10 @@ mod tests {
 		ctx.find_logs(query2, &tx2).await.unwrap();
 		drop(tx2);
 		let mut remaining = Vec::new();
-		while let Some(log) = rx2.recv().await {
-			remaining.push(log.timestamp);
+		while let Some(item) = rx2.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				remaining.push(log.timestamp);
+			}
 		}
 
 		remaining.sort();

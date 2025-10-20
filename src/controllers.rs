@@ -8,7 +8,7 @@ use axum::response::{Html, IntoResponse, Response, Sse};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use futures::executor::block_on;
-use futures::{Stream, StreamExt};
+use futures::{future, Stream, StreamExt};
 use puppylog::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 
 use crate::config::{log_path, upload_path};
-use crate::context::Context;
+use crate::context::{Context, LogStreamItem, SegmentProgress};
 use crate::db::{MetaProp, UpdateDeviceSettings};
 use crate::types::GetSegmentsQuery;
 
@@ -613,12 +613,22 @@ impl IntoResponse for BadRequestError {
 
 fn logentry_to_json(entry: &LogEntry) -> Value {
 	json!({
-		"id": entry.id_string(),
-		"version": entry.version,
-		"timestamp": entry.timestamp,
-		"level": entry.level.to_string(),
-		"msg": entry.msg,
-		"props": entry.props,
+			"id": entry.id_string(),
+			"version": entry.version,
+			"timestamp": entry.timestamp,
+			"level": entry.level.to_string(),
+			"msg": entry.msg,
+			"props": entry.props,
+	})
+}
+
+fn segment_progress_to_json(progress: &SegmentProgress) -> Value {
+	json!({
+			"segmentId": progress.segment_id,
+			"deviceId": progress.device_id,
+			"firstTimestamp": progress.first_timestamp,
+			"lastTimestamp": progress.last_timestamp,
+			"logsCount": progress.logs_count,
 	})
 }
 
@@ -669,20 +679,53 @@ pub async fn get_logs(
 	let limit = query.limit.unwrap_or(200) as usize;
 
 	let res = if wants_stream {
-		let stream = tokio_stream::StreamExt::map(
-			tokio_stream::StreamExt::take(tokio_stream::wrappers::ReceiverStream::new(rx), limit),
-			|log| {
-				let data = to_string(&logentry_to_json(&log)).unwrap();
-				Ok::<Event, std::convert::Infallible>(Event::default().data(data))
+		#[derive(Debug)]
+		struct StreamState {
+			entries_sent: usize,
+			done: bool,
+		}
+
+		let stream = ReceiverStream::new(rx).scan(
+			StreamState {
+				entries_sent: 0,
+				done: limit == 0,
+			},
+			move |state, item| {
+				let limit = limit;
+				if state.done {
+					return future::ready(None);
+				}
+				match item {
+					LogStreamItem::Entry(log) => {
+						let data = to_string(&logentry_to_json(&log)).unwrap();
+						state.entries_sent += 1;
+						if state.entries_sent >= limit {
+							state.done = true;
+						}
+						future::ready(Some(Ok::<Event, std::convert::Infallible>(
+							Event::default().data(data),
+						)))
+					}
+					LogStreamItem::SegmentProgress(progress) => {
+						let data = to_string(&segment_progress_to_json(&progress)).unwrap();
+						future::ready(Some(Ok::<Event, std::convert::Infallible>(
+							Event::default().event("progress").data(data),
+						)))
+					}
+				}
 			},
 		);
 		Sse::new(stream).into_response()
 	} else {
-		let logs: Vec<_> =
-			tokio_stream::StreamExt::collect::<Vec<_>>(tokio_stream::StreamExt::map(
-				tokio_stream::StreamExt::take(ReceiverStream::new(rx), limit),
-				|log| logentry_to_json(&log),
-			))
+		let logs: Vec<_> = ReceiverStream::new(rx)
+			.filter_map(|item| async move {
+				match item {
+					LogStreamItem::Entry(log) => Some(logentry_to_json(&log)),
+					LogStreamItem::SegmentProgress(_) => None,
+				}
+			})
+			.take(limit)
+			.collect()
 			.await;
 		Json(serde_json::to_value(&logs).unwrap()).into_response()
 	};
@@ -739,7 +782,11 @@ pub async fn get_histogram(
 	tokio::spawn(async move {
 		let mut current_bucket: Option<i64> = None;
 		let mut count: u64 = 0;
-		while let Some(entry) = entry_rx.recv().await {
+		while let Some(item) = entry_rx.recv().await {
+			let entry = match item {
+				LogStreamItem::Entry(entry) => entry,
+				LogStreamItem::SegmentProgress(_) => continue,
+			};
 			let ts = entry.timestamp.timestamp();
 			let bucket = ts - ts % bucket_secs as i64;
 			if let Some(cb) = current_bucket {

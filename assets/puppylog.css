@@ -27,6 +27,34 @@ body {
 	margin-left: auto;
 	align-items: flex-end;
 }
+.logs-search-controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.logs-search-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	color: #6b7280;
+}
+.logs-search-spinner {
+	width: 14px;
+	height: 14px;
+	border: 2px solid #d1d5db;
+	border-top-color: #3b82f6;
+	border-radius: 50%;
+	animation: logs-spin 0.8s linear infinite;
+}
+@keyframes logs-spin {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
 .logs-search-bar {
 	resize: none;
 	flex-grow: 1;
@@ -74,10 +102,12 @@ button:hover {
 }
 
 .logs-loading-indicator {
-	height: 100px;
+	min-height: 20px;
 	display: flex;
 	align-items: center;
-	justify-content: center;
+	justify-content: flex-start;
+	padding: 2px 8px;
+	font-size: 12px;
 	color: #6b7280;
 }
 

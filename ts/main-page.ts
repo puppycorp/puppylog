@@ -1,4 +1,5 @@
 import { logsSearchPage } from "./logs"
+import type { SegmentProgressEvent } from "./logs"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 
 export const mainPage = (root: HTMLElement) => {
@@ -6,7 +7,7 @@ export const mainPage = (root: HTMLElement) => {
 	let isStreaming = getQueryParam("stream") === "true"
 	logsSearchPage({
 		root,
-		streamLogs: (args, onNewLog, onEnd) => {
+		streamLogs: (args, onNewLog, onProgress, onEnd) => {
 			const streamQuery = new URLSearchParams()
 			if (args.query) streamQuery.append("query", args.query)
 			if (args.count) streamQuery.append("count", args.count.toString())
@@ -22,6 +23,11 @@ export const mainPage = (root: HTMLElement) => {
 				const data = JSON.parse(event.data)
 				onNewLog(data)
 			}
+			eventSource.addEventListener("progress", (event) => {
+				const message = event as MessageEvent<string>
+				const data = JSON.parse(message.data) as SegmentProgressEvent
+				onProgress(data)
+			})
 			eventSource.onerror = (event) => {
 				console.log("eventSource.onerror", event)
 				eventSource.close()

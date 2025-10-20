@@ -118,6 +118,7 @@ Logbatch is a binary structure which stores multiple loglines. Logbatch is compr
 ### GET /api/logs
 
 Search logs with PQL query. Returns logs in json format.
+When the request includes `Accept: text/event-stream`, the server streams log entries and also emits `progress` events describing each archived segment being scanned. Progress events include `segmentId`, `firstTimestamp`, `lastTimestamp`, `logsCount`, and optional `deviceId` fields so clients can surface detailed search status.
 
 #### Query
 
@@ -159,6 +160,19 @@ Search logs with PQL query. Returns logs in json format.
 #### Response
 
 Returns EventStream of json objects like this.
+
+Clients should also subscribe to the `progress` event name to receive segment processing updates:
+
+```
+event: progress
+data: {
+    "segmentId": 42,
+    "firstTimestamp": "2024-05-01T12:00:00Z",
+    "lastTimestamp": "2024-05-01T12:59:59Z",
+    "logsCount": 15000,
+    "deviceId": "device-123"
+}
+```
 
 data:
 

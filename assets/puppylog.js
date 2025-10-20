@@ -1313,43 +1313,6 @@ $2$3`);
   return formatted;
 };
 
-// ts/queries.ts
-var loadSavedQueries = () => {
-  try {
-    const raw = localStorage.getItem("savedQueries");
-    if (!raw)
-      return [];
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-};
-var saveQuery = (item) => {
-  const items = loadSavedQueries();
-  items.push(item);
-  localStorage.setItem("savedQueries", JSON.stringify(items));
-};
-var queriesPage = (root) => {
-  root.innerHTML = "";
-  const header = new Header({ title: "Saved Queries" });
-  root.appendChild(header.root);
-  const list = document.createElement("div");
-  list.style.display = "flex";
-  list.style.flexDirection = "column";
-  list.style.gap = "10px";
-  list.style.padding = "16px";
-  root.appendChild(list);
-  const items = loadSavedQueries();
-  items.forEach((item) => {
-    const row = document.createElement("div");
-    row.className = "list-row";
-    row.textContent = item.name;
-    row.onclick = () => navigate(`/?query=${encodeURIComponent(item.query)}`);
-    list.appendChild(row);
-  });
-  return root;
-};
-
 // ts/histogram.ts
 class Histogram {
   root;
@@ -1421,6 +1384,13 @@ var formatTimestamp2 = (ts) => {
   const date = new Date(ts);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`;
 };
+var describeSegmentProgress = (progress) => {
+  const start = formatTimestamp2(progress.firstTimestamp);
+  const end = formatTimestamp2(progress.lastTimestamp);
+  const device = progress.deviceId ? ` · ${progress.deviceId}` : "";
+  const logs = progress.logsCount ? ` · ${progress.logsCount} logs` : "";
+  return `Scanning segment ${progress.segmentId}${device} (${start} – ${end}${logs})`;
+};
 var escapeHTML = (str) => {
   const div = document.createElement("div");
   div.textContent = str;
@@ -1430,33 +1400,27 @@ var truncateMessage = (msg) => msg.length > MESSAGE_TRUNCATE_LENGTH ? `${msg.sli
 var logsSearchPage = (args) => {
   const logIds = new Set;
   const logEntries = [];
-  let moreRows = true;
   args.root.innerHTML = ``;
   const navbar = new Navbar;
   args.root.appendChild(navbar.root);
-  const logsOptions = document.createElement("div");
-  logsOptions.className = "page-header";
-  args.root.appendChild(logsOptions);
+  const header = document.createElement("div");
+  header.className = "page-header";
+  args.root.appendChild(header);
   const searchTextarea = document.createElement("textarea");
   searchTextarea.className = "logs-search-bar";
   searchTextarea.placeholder = "Search logs (ctrl+enter to search)";
   searchTextarea.value = getQueryParam("query") || "";
-  logsOptions.appendChild(searchTextarea);
-  const optionsRightPanel = document.createElement("div");
-  optionsRightPanel.className = "logs-options-right-panel";
-  logsOptions.appendChild(optionsRightPanel);
-  const saveButton = document.createElement("button");
-  saveButton.textContent = "Save";
-  saveButton.onclick = () => {
-    const query = searchTextarea.value.trim();
-    if (!query)
-      return;
-    const name = prompt("Query name", query);
-    if (name)
-      saveQuery({ name, query });
-  };
+  header.appendChild(searchTextarea);
+  const rightPanel = document.createElement("div");
+  rightPanel.className = "logs-options-right-panel";
+  header.appendChild(rightPanel);
   const searchButton = document.createElement("button");
   searchButton.innerHTML = searchSvg;
+  searchButton.setAttribute("aria-busy", "false");
+  const searchControls = document.createElement("div");
+  searchControls.className = "logs-search-controls";
+  searchControls.append(searchButton);
+  rightPanel.append(searchControls);
   const featuresList = new VList;
   const histogramToggle = document.createElement("label");
   histogramToggle.style.display = "flex";
@@ -1470,7 +1434,6 @@ var logsSearchPage = (args) => {
     buttonText: "Options",
     content: featuresList
   });
-  optionsRightPanel.append(searchButton);
   const histogramContainer = document.createElement("div");
   histogramContainer.style.display = "none";
   const histogram = new Histogram;
@@ -1508,14 +1471,72 @@ var logsSearchPage = (args) => {
     else
       stopHistogram();
   };
+  const loadingIndicator = document.createElement("div");
+  loadingIndicator.className = "logs-loading-indicator";
+  loadingIndicator.style.display = "none";
+  loadingIndicator.style.alignItems = "center";
+  loadingIndicator.style.gap = "8px";
+  loadingIndicator.style.padding = "4px 16px";
+  loadingIndicator.style.fontSize = "12px";
+  loadingIndicator.style.color = "#6b7280";
+  loadingIndicator.style.justifyContent = "flex-start";
+  const loadingSpinner = document.createElement("span");
+  loadingSpinner.className = "logs-search-spinner";
+  loadingSpinner.style.display = "none";
+  const loadingText = document.createElement("span");
+  loadingText.textContent = "";
+  loadingIndicator.append(loadingSpinner, loadingText);
+  args.root.appendChild(loadingIndicator);
+  const setLoadingIndicator = (text, spinning, color) => {
+    loadingText.textContent = text;
+    loadingSpinner.style.display = spinning ? "inline-block" : "none";
+    if (color)
+      loadingText.style.color = color;
+    else
+      loadingText.style.color = "#6b7280";
+    if (!text && !spinning) {
+      loadingIndicator.style.display = "none";
+    } else {
+      loadingIndicator.style.display = "flex";
+    }
+  };
   const logsList = document.createElement("div");
   logsList.className = "logs-list";
   args.root.appendChild(logsList);
-  const loadingIndicator = document.createElement("div");
-  loadingIndicator.style.height = "50px";
-  args.root.appendChild(loadingIndicator);
+  const scrollSentinel = document.createElement("div");
+  scrollSentinel.style.height = "1px";
+  scrollSentinel.style.width = "100%";
+  scrollSentinel.style.marginTop = "4px";
+  args.root.appendChild(scrollSentinel);
   let debounce;
   let pendingLogs = [];
+  const renderLogs = () => {
+    logsList.innerHTML = logEntries.map((entry) => `
+			<div class="list-row">
+				<div>
+					${formatTimestamp2(entry.timestamp)}
+					<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
+					${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
+				</div>
+				<div class="logs-list-row-msg">
+					<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
+				</div>
+			</div>
+		`).join("");
+    document.querySelectorAll(".msg-summary").forEach((el, key) => {
+      el.addEventListener("click", () => {
+        const entry = logEntries[key];
+        const isTruncated = entry.msg.length > MESSAGE_TRUNCATE_LENGTH;
+        if (!isTruncated)
+          return;
+        showModal({
+          title: "Log Message",
+          content: formatLogMsg(entry.msg),
+          footer: []
+        });
+      });
+    });
+  };
   const addLogs = (log) => {
     pendingLogs.push(log);
     if (debounce)
@@ -1531,32 +1552,7 @@ var logsSearchPage = (args) => {
         const removed = logEntries.splice(MAX_LOG_ENTRIES);
         removed.forEach((r) => logIds.delete(r.id));
       }
-      logsList.innerHTML = logEntries.map((entry) => `
-				<div class="list-row">
-					<div>
-						${formatTimestamp2(entry.timestamp)} 
-						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
-						${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}
-					</div>
-					<div class="logs-list-row-msg">
-						<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
-					</div>
-				</div>
-			`).join("");
-      document.querySelectorAll(".msg-summary").forEach((el, key) => {
-        el.addEventListener("click", () => {
-          const entry = logEntries[key];
-          const isTruncated = entry.msg.length > MESSAGE_TRUNCATE_LENGTH;
-          if (!isTruncated) {
-            return;
-          }
-          showModal({
-            title: "Log Message",
-            content: formatLogMsg(entry.msg),
-            footer: []
-          });
-        });
-      });
+      renderLogs();
       pendingLogs = [];
       debounce = null;
     }, 100);
@@ -1564,11 +1560,26 @@ var logsSearchPage = (args) => {
   const clearLogs = () => {
     logEntries.length = 0;
     logIds.clear();
-    logsList.innerHTML = "";
+    renderLogs();
   };
   let currentStream = null;
-  const loadingIndicatorVisible = () => {
-    const rect = loadingIndicator.getBoundingClientRect();
+  let searchToken = 0;
+  const beginSearch = () => {
+    const token = ++searchToken;
+    searchButton.disabled = true;
+    searchButton.setAttribute("aria-busy", "true");
+    setLoadingIndicator("Searching…", true);
+    return token;
+  };
+  const finishSearch = (token) => {
+    if (token !== searchToken)
+      return;
+    searchButton.disabled = false;
+    searchButton.setAttribute("aria-busy", "false");
+    loadingSpinner.style.display = "none";
+  };
+  const sentinelVisible = () => {
+    const rect = scrollSentinel.getBoundingClientRect();
     return rect.top < window.innerHeight && rect.bottom >= 0;
   };
   let streamRowsCount = 0;
@@ -1580,8 +1591,8 @@ var logsSearchPage = (args) => {
       const error = await args.validateQuery(query);
       if (error) {
         removeQueryParam("query");
-        logsList.innerHTML = "";
-        loadingIndicator.innerHTML = `<div style="color: red">${error}</div>`;
+        clearLogs();
+        setLoadingIndicator(error, false, "red");
         return;
       }
     }
@@ -1590,14 +1601,13 @@ var logsSearchPage = (args) => {
       setQueryParam("query", query);
     else
       removeQueryParam("query");
-    loadingIndicator.textContent = "Loading...";
     let endDate;
     if (logEntries.length > 0)
       endDate = logEntries[logEntries.length - 1].timestamp;
-    if (lastEndDate !== null && endDate === lastEndDate)
+    if (lastEndDate !== null && endDate === lastEndDate && !clear) {
       return;
-    lastEndDate = endDate;
-    console.log("endDate", endDate);
+    }
+    lastEndDate = endDate || null;
     if (clear)
       clearLogs();
     if (histogramCheckbox.checked) {
@@ -1606,19 +1616,33 @@ var logsSearchPage = (args) => {
     }
     if (currentStream)
       currentStream();
+    const token = beginSearch();
+    streamRowsCount = 0;
     currentStream = args.streamLogs({ query, count: 200, endDate }, (log) => {
+      if (token !== searchToken)
+        return;
       streamRowsCount++;
       addLogs(log);
-    }, () => {
-      currentStream = null;
-      loadingIndicator.textContent = "";
-      if (streamRowsCount === 0) {
-        loadingIndicator.textContent = logEntries.length === 0 ? "No logs found" : "No more logs";
+    }, (progress) => {
+      if (token !== searchToken)
         return;
+      setLoadingIndicator(describeSegmentProgress(progress), true);
+    }, () => {
+      if (token !== searchToken)
+        return;
+      currentStream = null;
+      if (streamRowsCount === 0) {
+        if (logEntries.length === 0)
+          setLoadingIndicator("No logs found", false);
+        else
+          setLoadingIndicator("No more logs", false);
+      } else {
+        setLoadingIndicator("", false);
       }
-      streamRowsCount = 0;
-      if (loadingIndicatorVisible())
+      finishSearch(token);
+      if (streamRowsCount > 0 && sentinelVisible()) {
         queryLogs();
+      }
     });
   };
   searchTextarea.addEventListener("keydown", (e) => {
@@ -1633,7 +1657,7 @@ var logsSearchPage = (args) => {
       return;
     queryLogs();
   }, { threshold: OBSERVER_THRESHOLD });
-  observer.observe(loadingIndicator);
+  observer.observe(scrollSentinel);
 };
 
 // ts/logtable-test.ts
@@ -1720,7 +1744,7 @@ var createRandomXml = (totalNodesCount, maxDepth = 5) => {
 var logtableTest = (root) => {
   logsSearchPage({
     root,
-    streamLogs: (args, onNewLog, onEnd) => {
+    streamLogs: (args, onNewLog, _onProgress, onEnd) => {
       onNewLog({
         id: `${Date.now()}-text`,
         timestamp: new Date().toISOString(),
@@ -1761,7 +1785,7 @@ var mainPage = (root) => {
   let isStreaming = getQueryParam("stream") === "true";
   logsSearchPage({
     root,
-    streamLogs: (args, onNewLog, onEnd) => {
+    streamLogs: (args, onNewLog, onProgress, onEnd) => {
       const streamQuery = new URLSearchParams;
       if (args.query)
         streamQuery.append("query", args.query);
@@ -1777,6 +1801,11 @@ var mainPage = (root) => {
         const data = JSON.parse(event.data);
         onNewLog(data);
       };
+      eventSource.addEventListener("progress", (event) => {
+        const message = event;
+        const data = JSON.parse(message.data);
+        onProgress(data);
+      });
       eventSource.onerror = (event) => {
         console.log("eventSource.onerror", event);
         eventSource.close();
@@ -2132,6 +2161,38 @@ var settingsPage = (root) => {
     { href: "/server", text: "Server" }
   ]);
   root.add(linkList);
+};
+
+// ts/queries.ts
+var loadSavedQueries = () => {
+  try {
+    const raw = localStorage.getItem("savedQueries");
+    if (!raw)
+      return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+};
+var queriesPage = (root) => {
+  root.innerHTML = "";
+  const header = new Header({ title: "Saved Queries" });
+  root.appendChild(header.root);
+  const list = document.createElement("div");
+  list.style.display = "flex";
+  list.style.flexDirection = "column";
+  list.style.gap = "10px";
+  list.style.padding = "16px";
+  root.appendChild(list);
+  const items = loadSavedQueries();
+  items.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "list-row";
+    row.textContent = item.name;
+    row.onclick = () => navigate(`/?query=${encodeURIComponent(item.query)}`);
+    list.appendChild(row);
+  });
+  return root;
 };
 
 // ts/server.ts
