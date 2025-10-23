@@ -1443,16 +1443,19 @@ var logsSearchPage = (args) => {
   const navbar = new Navbar;
   args.root.appendChild(navbar.root);
   const header = document.createElement("div");
-  header.className = "page-header";
+  header.className = "page-header logs-header";
   args.root.appendChild(header);
+  const headerControls = document.createElement("div");
+  headerControls.className = "logs-header-controls";
+  header.appendChild(headerControls);
   const searchTextarea = document.createElement("textarea");
   searchTextarea.className = "logs-search-bar";
   searchTextarea.placeholder = "Search logs (ctrl+enter to search)";
   searchTextarea.value = getQueryParam("query") || "";
-  header.appendChild(searchTextarea);
+  headerControls.appendChild(searchTextarea);
   const rightPanel = document.createElement("div");
   rightPanel.className = "logs-options-right-panel";
-  header.appendChild(rightPanel);
+  headerControls.appendChild(rightPanel);
   const searchButton = document.createElement("button");
   searchButton.innerHTML = searchSvg;
   searchButton.setAttribute("aria-busy", "false");
@@ -1525,7 +1528,7 @@ var logsSearchPage = (args) => {
   const loadingText = document.createElement("span");
   loadingText.textContent = "";
   loadingIndicator.append(loadingSpinner, loadingText);
-  args.root.appendChild(loadingIndicator);
+  header.appendChild(loadingIndicator);
   const setLoadingIndicator = (text, spinning, color) => {
     loadingText.textContent = text;
     loadingSpinner.style.display = spinning ? "inline-block" : "none";

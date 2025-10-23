@@ -20,6 +20,21 @@ body {
 	border-bottom: 1px solid #e5e7eb;
 	z-index: 10;
 }
+.logs-header {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 8px;
+}
+.logs-header-controls {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+}
+.logs-header .logs-loading-indicator {
+	width: 100%;
+	box-sizing: border-box;
+}
 .logs-options-right-panel {
 	display: flex;
 	flex-direction: column;
