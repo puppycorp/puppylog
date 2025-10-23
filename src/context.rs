@@ -18,6 +18,7 @@ use puppylog::Prop;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
 use puppylog::{check_expr, check_props, extract_device_ids, timestamp_bounds};
+use tokio::time::timeout;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
@@ -301,9 +302,8 @@ impl Context {
 				end = e;
 			}
 		}
-		{
+		if let Ok(current) = timeout(Duration::from_millis(100), self.current.lock()).await {
 			let mut end = end;
-			let current = self.current.lock().await;
 			let iter = current.iter();
 			for entry in iter {
 				if tx.is_closed() {
