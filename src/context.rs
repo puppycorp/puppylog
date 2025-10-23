@@ -18,7 +18,6 @@ use puppylog::Prop;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
 use puppylog::{check_expr, check_props, extract_device_ids, timestamp_bounds};
-use tokio::time::timeout;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
@@ -31,6 +30,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
+use tokio::time::timeout;
 
 use serde::Serialize;
 use tokio::sync::Mutex;
