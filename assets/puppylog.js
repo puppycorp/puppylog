@@ -1459,9 +1459,13 @@ var logsSearchPage = (args) => {
   const searchButton = document.createElement("button");
   searchButton.innerHTML = searchSvg;
   searchButton.setAttribute("aria-busy", "false");
+  const stopButton = document.createElement("button");
+  stopButton.textContent = "Stop";
+  stopButton.disabled = true;
+  stopButton.style.display = "none";
   const searchControls = document.createElement("div");
   searchControls.className = "logs-search-controls";
-  searchControls.append(searchButton);
+  searchControls.append(searchButton, stopButton);
   rightPanel.append(searchControls);
   const featuresList = new VList;
   const histogramToggle = document.createElement("label");
@@ -1624,19 +1628,35 @@ var logsSearchPage = (args) => {
     const token = ++searchToken;
     searchButton.disabled = true;
     searchButton.setAttribute("aria-busy", "true");
+    searchButton.style.display = "none";
+    stopButton.disabled = false;
+    stopButton.style.display = "inline-flex";
     segmentStatus = "";
     statsStatus = "";
     updateProgressIndicator();
     return token;
   };
-  const finishSearch = (token) => {
-    if (token !== searchToken)
+  const finishSearch = (token, force = false) => {
+    if (!force && token !== searchToken)
       return;
     searchButton.disabled = false;
     searchButton.setAttribute("aria-busy", "false");
+    searchButton.style.display = "inline-flex";
+    stopButton.disabled = true;
+    stopButton.style.display = "none";
     loadingSpinner.style.display = "none";
     segmentStatus = "";
     statsStatus = "";
+  };
+  const stopSearch = () => {
+    if (!currentStream)
+      return;
+    const token = searchToken;
+    searchToken++;
+    currentStream();
+    currentStream = null;
+    finishSearch(token, true);
+    setLoadingIndicator("Search stopped", false);
   };
   const sentinelVisible = () => {
     const rect = scrollSentinel.getBoundingClientRect();
@@ -1716,6 +1736,7 @@ var logsSearchPage = (args) => {
     }
   });
   searchButton.addEventListener("click", () => queryLogs(true));
+  stopButton.addEventListener("click", stopSearch);
   const observer = new IntersectionObserver((entries) => {
     if (!entries[0].isIntersecting)
       return;

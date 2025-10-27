@@ -175,9 +175,14 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	searchButton.innerHTML = searchSvg
 	searchButton.setAttribute("aria-busy", "false")
 
+	const stopButton = document.createElement("button")
+	stopButton.textContent = "Stop"
+	stopButton.disabled = true
+	stopButton.style.display = "none"
+
 	const searchControls = document.createElement("div")
 	searchControls.className = "logs-search-controls"
-	searchControls.append(searchButton)
+	searchControls.append(searchButton, stopButton)
 	rightPanel.append(searchControls)
 
 	// Options dropdown (currently only histogram)
@@ -368,20 +373,36 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		const token = ++searchToken
 		searchButton.disabled = true
 		searchButton.setAttribute("aria-busy", "true")
+		searchButton.style.display = "none"
+		stopButton.disabled = false
+		stopButton.style.display = "inline-flex"
 		segmentStatus = ""
 		statsStatus = ""
 		updateProgressIndicator()
 		return token
 	}
 
-	const finishSearch = (token: number) => {
-		if (token !== searchToken) return
+	const finishSearch = (token: number, force = false) => {
+		if (!force && token !== searchToken) return
 		searchButton.disabled = false
 		searchButton.setAttribute("aria-busy", "false")
+		searchButton.style.display = "inline-flex"
+		stopButton.disabled = true
+		stopButton.style.display = "none"
 		// hide spinner but preserve any existing status text (e.g. No logs found)
 		loadingSpinner.style.display = "none"
 		segmentStatus = ""
 		statsStatus = ""
+	}
+
+	const stopSearch = () => {
+		if (!currentStream) return
+		const token = searchToken
+		searchToken++
+		currentStream()
+		currentStream = null
+		finishSearch(token, true)
+		setLoadingIndicator("Search stopped", false)
 	}
 
 	const sentinelVisible = () => {
@@ -465,6 +486,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		}
 	})
 	searchButton.addEventListener("click", () => queryLogs(true))
+	stopButton.addEventListener("click", stopSearch)
 
 	const observer = new IntersectionObserver(
 		(entries) => {
