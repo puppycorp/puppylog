@@ -645,9 +645,10 @@ fn segment_progress_to_json(progress: &SegmentProgress) -> Value {
 
 fn search_progress_to_json(progress: &SearchProgress) -> Value {
 	json!({
-					"type": "stats",
-					"processedLogs": progress.processed_logs,
-					"logsPerSecond": progress.logs_per_second,
+				"type": "stats",
+				"processedLogs": progress.processed_logs,
+				"logsPerSecond": progress.logs_per_second,
+				"status": progress.status,
 	})
 }
 

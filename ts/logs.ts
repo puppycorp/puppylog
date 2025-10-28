@@ -34,6 +34,7 @@ export type SearchProgressEvent = {
 	type: "stats"
 	processedLogs: number
 	logsPerSecond: number
+	status?: string
 }
 
 export type ProgressEvent = SegmentProgressEvent | SearchProgressEvent
@@ -75,6 +76,13 @@ export const isSearchProgressEvent = (
 	if (!isFiniteNumber(event.processedLogs)) return false
 	if ("logsPerSecond" in event && event.logsPerSecond !== undefined)
 		return isFiniteNumber(event.logsPerSecond)
+	if (
+		"status" in event &&
+		event.status !== undefined &&
+		event.status !== null &&
+		typeof event.status !== "string"
+	)
+		return false
 	return true
 }
 
@@ -131,7 +139,8 @@ const describeSearchProgress = (progress: SearchProgressEvent): string => {
 		? progress.logsPerSecond
 		: 0
 	const speedText = speed > 0 ? ` · ${speed.toFixed(1)} logs/sec` : ""
-	return `Processed ${processed} logs${speedText}`
+	const statusText = progress.status ? ` · ${progress.status}` : ""
+	return `Processed ${processed} logs${speedText}${statusText}`
 }
 
 const escapeHTML = (str: string): string => {

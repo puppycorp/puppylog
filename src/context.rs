@@ -55,6 +55,8 @@ pub struct SegmentProgress {
 pub struct SearchProgress {
 	pub processed_logs: u64,
 	pub logs_per_second: f64,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub status: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +64,40 @@ pub enum LogStreamItem {
 	Entry(LogEntry),
 	SegmentProgress(SegmentProgress),
 	SearchProgress(SearchProgress),
+}
+
+fn calculate_logs_per_second(processed_logs: u64, search_start: Instant) -> f64 {
+	if processed_logs == 0 {
+		return 0.0;
+	}
+	let seconds = search_start.elapsed().as_secs_f64();
+	if seconds > 0.0 {
+		processed_logs as f64 / seconds
+	} else {
+		0.0
+	}
+}
+
+async fn send_search_progress(
+	tx: &mpsc::Sender<LogStreamItem>,
+	processed_logs: u64,
+	logs_per_second: f64,
+	status: Option<&str>,
+) -> bool {
+	tx.send(LogStreamItem::SearchProgress(SearchProgress {
+		processed_logs,
+		logs_per_second,
+		status: status.map(|s| s.to_string()),
+	}))
+	.await
+	.is_err()
+}
+
+fn should_emit_progress(processed_logs: u64, last_emit: &Instant) -> bool {
+	processed_logs == 0
+		|| processed_logs == 1
+		|| processed_logs % 1_000 == 0
+		|| last_emit.elapsed() >= Duration::from_millis(500)
 }
 
 #[derive(Debug)]
@@ -264,28 +300,6 @@ impl Context {
 		let mut processed_logs: u64 = 0;
 		let mut last_progress_emit = search_start;
 
-		let maybe_emit_progress =
-			|processed_logs: u64, search_start: Instant, last_emit: &mut Instant| -> Option<f64> {
-				let elapsed = search_start.elapsed();
-				if processed_logs == 0 {
-					return Some(0.0);
-				}
-				if processed_logs == 1
-					|| processed_logs % 1_000 == 0
-					|| last_emit.elapsed() >= Duration::from_millis(500)
-				{
-					*last_emit = Instant::now();
-					let seconds = elapsed.as_secs_f64();
-					if seconds > 0.0 {
-						Some(processed_logs as f64 / seconds)
-					} else {
-						Some(0.0)
-					}
-				} else {
-					None
-				}
-			};
-
 		let mut end = query.end_date.unwrap_or(Utc::now());
 		let device_ids = extract_device_ids(&query.root);
 		let tz = query
@@ -302,43 +316,54 @@ impl Context {
 				end = e;
 			}
 		}
-		if let Ok(current) = timeout(Duration::from_millis(100), self.current.lock()).await {
-			let mut end = end;
-			let iter = current.iter();
-			for entry in iter {
-				if tx.is_closed() {
-					return Ok(());
-				}
-				processed_logs += 1;
-				if let Some(speed) =
-					maybe_emit_progress(processed_logs, search_start, &mut last_progress_emit)
-				{
-					if tx
-						.send(LogStreamItem::SearchProgress(SearchProgress {
-							processed_logs,
-							logs_per_second: speed,
-						}))
-						.await
-						.is_err()
-					{
+		match timeout(Duration::from_millis(100), self.current.lock()).await {
+			Ok(current) => {
+				let mut end = end;
+				let iter = current.iter();
+				for entry in iter {
+					if tx.is_closed() {
+						return Ok(());
+					}
+					processed_logs += 1;
+					if should_emit_progress(processed_logs, &last_progress_emit) {
+						let speed = calculate_logs_per_second(processed_logs, search_start);
+						if send_search_progress(tx, processed_logs, speed, None).await {
+							return Ok(());
+						}
+						last_progress_emit = Instant::now();
+					}
+					if entry.timestamp > end {
+						continue;
+					}
+					if let Some(start) = start_bound {
+						if entry.timestamp < start {
+							continue;
+						}
+					}
+					end = entry.timestamp;
+					match check_expr(&query.root, entry, &tz) {
+						Ok(true) => {}
+						_ => continue,
+					}
+					if tx.send(LogStreamItem::Entry(entry.clone())).await.is_err() {
 						return Ok(());
 					}
 				}
-				if entry.timestamp > end {
-					continue;
-				}
-				if let Some(start) = start_bound {
-					if entry.timestamp < start {
-						continue;
+			}
+			Err(_) => {
+				if last_progress_emit.elapsed() >= Duration::from_millis(500) {
+					let speed = calculate_logs_per_second(processed_logs, search_start);
+					if send_search_progress(
+						tx,
+						processed_logs,
+						speed,
+						Some("waiting for in-memory log buffer"),
+					)
+					.await
+					{
+						return Ok(());
 					}
-				}
-				end = entry.timestamp;
-				match check_expr(&query.root, entry, &tz) {
-					Ok(true) => {}
-					_ => continue,
-				}
-				if tx.send(LogStreamItem::Entry(entry.clone())).await.is_err() {
-					return Ok(());
+					last_progress_emit = Instant::now();
 				}
 			}
 		}
@@ -406,7 +431,21 @@ impl Context {
 			prev_end = Some(start);
 
 			let timer = std::time::Instant::now();
-			let segments = self
+			if last_progress_emit.elapsed() >= Duration::from_millis(500) {
+				let speed = calculate_logs_per_second(processed_logs, search_start);
+				if send_search_progress(
+					tx,
+					processed_logs,
+					speed,
+					Some("loading matching segments"),
+				)
+				.await
+				{
+					break;
+				}
+				last_progress_emit = Instant::now();
+			}
+			let segments = match self
 				.db
 				.find_segments(&GetSegmentsQuery {
 					start: Some(start),
@@ -419,7 +458,13 @@ impl Context {
 					..Default::default()
 				})
 				.await
-				.unwrap();
+			{
+				Ok(segments) => segments,
+				Err(err) => {
+					log::error!("failed to load segments: {}", err);
+					return Err(err);
+				}
+			};
 			if segments.is_empty() {
 				log::info!("no segments found in the range {} - {}", start, end);
 				break;
@@ -438,7 +483,20 @@ impl Context {
 				if !processed_segments.insert(segment.id) {
 					continue;
 				}
-				let timer = std::time::Instant::now();
+				if last_progress_emit.elapsed() >= Duration::from_millis(500) {
+					let speed = calculate_logs_per_second(processed_logs, search_start);
+					if send_search_progress(
+						tx,
+						processed_logs,
+						speed,
+						Some("loading segment metadata"),
+					)
+					.await
+					{
+						break 'outer;
+					}
+					last_progress_emit = Instant::now();
+				}
 				let props = match self.db.fetch_segment_props(segment.id).await {
 					Ok(props) => props,
 					Err(err) => {
@@ -499,19 +557,12 @@ impl Context {
 						break 'outer;
 					}
 					processed_logs += 1;
-					if let Some(speed) =
-						maybe_emit_progress(processed_logs, search_start, &mut last_progress_emit)
-					{
-						if tx
-							.send(LogStreamItem::SearchProgress(SearchProgress {
-								processed_logs,
-								logs_per_second: speed,
-							}))
-							.await
-							.is_err()
-						{
+					if should_emit_progress(processed_logs, &last_progress_emit) {
+						let speed = calculate_logs_per_second(processed_logs, search_start);
+						if send_search_progress(tx, processed_logs, speed, None).await {
 							break 'outer;
 						}
+						last_progress_emit = Instant::now();
 					}
 					if entry.timestamp > end {
 						continue;
@@ -528,16 +579,12 @@ impl Context {
 			}
 		}
 		if processed_logs > 0 {
-			let elapsed = search_start.elapsed().as_secs_f64();
-			let logs_per_second = if elapsed > 0.0 {
-				processed_logs as f64 / elapsed
-			} else {
-				0.0
-			};
+			let logs_per_second = calculate_logs_per_second(processed_logs, search_start);
 			let _ = tx
 				.send(LogStreamItem::SearchProgress(SearchProgress {
 					processed_logs,
 					logs_per_second,
+					status: None,
 				}))
 				.await;
 		}

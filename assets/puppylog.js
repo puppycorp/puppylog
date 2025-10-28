@@ -1397,6 +1397,8 @@ var isSearchProgressEvent = (value) => {
     return false;
   if ("logsPerSecond" in event && event.logsPerSecond !== undefined)
     return isFiniteNumber(event.logsPerSecond);
+  if ("status" in event && event.status !== undefined && event.status !== null && typeof event.status !== "string")
+    return false;
   return true;
 };
 var MAX_LOG_ENTRIES = 1e4;
@@ -1428,7 +1430,8 @@ var describeSearchProgress = (progress) => {
   const processed = progress.processedLogs.toLocaleString();
   const speed = Number.isFinite(progress.logsPerSecond) ? progress.logsPerSecond : 0;
   const speedText = speed > 0 ? ` · ${speed.toFixed(1)} logs/sec` : "";
-  return `Processed ${processed} logs${speedText}`;
+  const statusText = progress.status ? ` · ${progress.status}` : "";
+  return `Processed ${processed} logs${speedText}${statusText}`;
 };
 var escapeHTML = (str) => {
   const div = document.createElement("div");
