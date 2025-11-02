@@ -386,6 +386,9 @@ var showModal = (args) => {
     modalOverlay.remove();
   });
   modalOverlay.appendChild(modalContent);
+  return () => {
+    modalOverlay.remove();
+  };
 };
 
 // ts/navbar.ts
@@ -393,6 +396,7 @@ class Navbar extends HList {
   logsLink;
   devicesLink;
   segmentsLink;
+  bucketsLink;
   leftItems;
   constructor(args) {
     super();
@@ -410,17 +414,27 @@ class Navbar extends HList {
     this.segmentsLink.textContent = "Segments";
     this.segmentsLink.href = "/segments";
     this.segmentsLink.classList.add("link");
+    this.bucketsLink = document.createElement("a");
+    this.bucketsLink.textContent = "Buckets";
+    this.bucketsLink.href = "/buckets";
+    this.bucketsLink.classList.add("link");
     const currentPath = window.location.pathname;
     [
       { link: this.logsLink, path: "/logs" },
       { link: this.devicesLink, path: "/devices" },
-      { link: this.segmentsLink, path: "/segments" }
+      { link: this.segmentsLink, path: "/segments" },
+      { link: this.bucketsLink, path: "/buckets" }
     ].forEach(({ link, path }) => {
       if (currentPath === path || currentPath.startsWith(path + "/")) {
         link.classList.add("active");
       }
     });
-    this.leftItems = [this.logsLink, this.devicesLink, this.segmentsLink];
+    this.leftItems = [
+      this.logsLink,
+      this.devicesLink,
+      this.segmentsLink,
+      this.bucketsLink
+    ];
     this.setRight(args?.right);
   }
   setRight(right) {
@@ -1367,6 +1381,143 @@ class Histogram {
   }
 }
 
+// ts/log-buckets.ts
+var API_BASE = "/api/v1/buckets";
+var MAX_BUCKET_ENTRIES = 200;
+var isLogLevel = (value) => ["trace", "debug", "info", "warn", "error", "fatal"].includes(value);
+var normalizeProp = (prop) => {
+  if (typeof prop !== "object" || prop === null)
+    return null;
+  if (typeof prop.key !== "string" || prop.key.trim() === "")
+    return null;
+  if (typeof prop.value !== "string")
+    return null;
+  return {
+    key: prop.key,
+    value: prop.value
+  };
+};
+var normalizeLogEntry = (entry) => {
+  if (typeof entry !== "object" || entry === null)
+    return null;
+  if (typeof entry.id !== "string" || entry.id === "")
+    return null;
+  if (typeof entry.timestamp !== "string" || entry.timestamp === "")
+    return null;
+  const level = typeof entry.level === "string" && isLogLevel(entry.level) ? entry.level : null;
+  if (!level)
+    return null;
+  const props = Array.isArray(entry.props) ? entry.props.map(normalizeProp).filter((prop) => Boolean(prop)) : [];
+  return {
+    id: entry.id,
+    timestamp: entry.timestamp,
+    level,
+    msg: typeof entry.msg === "string" ? entry.msg : "",
+    props
+  };
+};
+var normalizeBucket = (bucket) => {
+  if (typeof bucket !== "object" || bucket === null)
+    return null;
+  if (typeof bucket.name !== "string" || bucket.name.trim() === "")
+    return null;
+  const id = typeof bucket.id === "number" ? bucket.id.toString() : bucket.id;
+  if (typeof id !== "string" || id === "")
+    return null;
+  const query = typeof bucket.query === "string" ? bucket.query : "";
+  const createdAt = typeof bucket.createdAt === "string" ? bucket.createdAt : new Date().toISOString();
+  const updatedAt = typeof bucket.updatedAt === "string" ? bucket.updatedAt : createdAt;
+  const logs = Array.isArray(bucket.logs) ? bucket.logs.map(normalizeLogEntry).filter((entry) => Boolean(entry)) : [];
+  return {
+    id,
+    name: bucket.name,
+    query,
+    createdAt,
+    updatedAt,
+    logs
+  };
+};
+var handleResponse = async (response) => {
+  if (response.status === 204) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Bucket request failed: ${response.status}`);
+  }
+  return await response.json();
+};
+var listBuckets = async () => {
+  const response = await fetch(API_BASE, {
+    headers: { Accept: "application/json" }
+  });
+  const data = await handleResponse(response);
+  if (!Array.isArray(data))
+    return [];
+  return data.map((item) => normalizeBucket(item)).filter((bucket) => Boolean(bucket));
+};
+var prepareUpsertPayload = (args) => {
+  const payload = {
+    name: args.name,
+    query: args.query
+  };
+  if (args.id !== undefined) {
+    const parsed = Number.parseInt(args.id, 10);
+    if (!Number.isNaN(parsed))
+      payload.id = parsed;
+  }
+  return payload;
+};
+var sendBucketRequest = async (url, init) => {
+  const response = await fetch(url, {
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json"
+    },
+    ...init
+  });
+  if (response.status === 404)
+    return null;
+  const data = await handleResponse(response);
+  if (!data)
+    return null;
+  const bucket = normalizeBucket(data);
+  if (!bucket)
+    throw new Error("Received malformed bucket from server");
+  return bucket;
+};
+var upsertBucket = async (args) => {
+  const bucket = await sendBucketRequest(API_BASE, {
+    method: "POST",
+    body: JSON.stringify(prepareUpsertPayload(args))
+  });
+  if (!bucket)
+    throw new Error("Failed to create or update bucket");
+  return bucket;
+};
+var appendLogsToBucket = async (bucketId, logs, _limit = MAX_BUCKET_ENTRIES) => {
+  const payload = {
+    logs
+  };
+  return sendBucketRequest(`${API_BASE}/${encodeURIComponent(bucketId)}/logs`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+};
+var clearBucketLogs = async (bucketId) => sendBucketRequest(`${API_BASE}/${encodeURIComponent(bucketId)}/clear`, {
+  method: "POST",
+  body: ""
+});
+var deleteBucket = async (bucketId) => {
+  const response = await fetch(`${API_BASE}/${encodeURIComponent(bucketId)}`, {
+    method: "DELETE"
+  });
+  if (response.status === 404)
+    return false;
+  if (!response.ok)
+    throw new Error(`Failed to delete bucket: ${response.status}`);
+  return true;
+};
+
 // ts/logs.ts
 var isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
 var isSegmentProgressEvent = (value) => {
@@ -1442,6 +1593,7 @@ var truncateMessage = (msg) => msg.length > MESSAGE_TRUNCATE_LENGTH ? `${msg.sli
 var logsSearchPage = (args) => {
   const logIds = new Set;
   const logEntries = [];
+  let activeBucket = null;
   args.root.innerHTML = ``;
   const navbar = new Navbar;
   args.root.appendChild(navbar.root);
@@ -1470,6 +1622,228 @@ var logsSearchPage = (args) => {
   searchControls.className = "logs-search-controls";
   searchControls.append(searchButton, stopButton);
   rightPanel.append(searchControls);
+  const bucketControls = document.createElement("div");
+  bucketControls.className = "logs-bucket-controls";
+  bucketControls.style.display = "flex";
+  bucketControls.style.alignItems = "center";
+  bucketControls.style.marginLeft = "8px";
+  const bucketButton = document.createElement("button");
+  bucketButton.className = "logs-bucket-button";
+  bucketButton.textContent = "Collect logs";
+  bucketButton.setAttribute("aria-pressed", "false");
+  bucketControls.appendChild(bucketButton);
+  rightPanel.appendChild(bucketControls);
+  const bucketBanner = document.createElement("div");
+  bucketBanner.className = "logs-bucket-banner";
+  bucketBanner.style.display = "none";
+  bucketBanner.style.margin = "8px 0";
+  bucketBanner.style.padding = "8px 16px";
+  bucketBanner.style.background = "#e0f2fe";
+  bucketBanner.style.borderRadius = "4px";
+  bucketBanner.style.fontSize = "12px";
+  bucketBanner.style.color = "#1f2937";
+  args.root.appendChild(bucketBanner);
+  const cloneEntriesForBucket = (entries) => entries.map((entry) => ({
+    id: entry.id,
+    timestamp: entry.timestamp,
+    level: entry.level,
+    msg: entry.msg,
+    props: entry.props.map((prop) => ({
+      key: prop.key,
+      value: prop.value
+    }))
+  }));
+  const updateBucketUI = () => {
+    if (!activeBucket) {
+      bucketButton.textContent = "Collect logs";
+      bucketButton.setAttribute("aria-pressed", "false");
+      bucketButton.title = "Copy future log lines into a named bucket";
+      bucketBanner.style.display = "none";
+      bucketBanner.textContent = "";
+      return;
+    }
+    bucketButton.textContent = `Collecting (${activeBucket.name})`;
+    bucketButton.setAttribute("aria-pressed", "true");
+    const count = activeBucket.logs.length;
+    const query = activeBucket.query ? `“${activeBucket.query}”` : "current search";
+    bucketBanner.textContent = `Collecting ${count}/${MAX_BUCKET_ENTRIES} logs into "${activeBucket.name}" for ${query}.`;
+    bucketBanner.style.display = "flex";
+    bucketBanner.style.alignItems = "center";
+  };
+  const startCollecting = async (bucket, copyExisting) => {
+    let workingBucket = bucket;
+    if (copyExisting && logEntries.length > 0) {
+      const clones = cloneEntriesForBucket(logEntries.slice(0, MAX_BUCKET_ENTRIES));
+      try {
+        const updated = await appendLogsToBucket(bucket.id, clones);
+        if (updated)
+          workingBucket = updated;
+      } catch (error) {
+        console.error("Failed to append logs to bucket", error);
+      }
+    }
+    activeBucket = workingBucket;
+    updateBucketUI();
+  };
+  const stopCollecting = () => {
+    activeBucket = null;
+    updateBucketUI();
+  };
+  const handleBucketSelection = async (bucket, close, setError) => {
+    try {
+      const updated = await upsertBucket({
+        id: bucket.id,
+        name: bucket.name,
+        query: searchTextarea.value
+      });
+      await startCollecting(updated, true);
+      close();
+    } catch (error) {
+      console.error("Failed to activate bucket", error);
+      setError("Failed to activate bucket. Please try again.");
+    }
+  };
+  const openBucketModal = async () => {
+    let closeModal = () => {};
+    const container = document.createElement("div");
+    container.style.display = "flex";
+    container.style.flexDirection = "column";
+    container.style.gap = "12px";
+    const description = document.createElement("p");
+    description.textContent = "Buckets store a copy of matching log lines for quick access.";
+    description.style.margin = "0";
+    container.appendChild(description);
+    const existingTitle = document.createElement("h4");
+    existingTitle.textContent = "Use an existing bucket";
+    existingTitle.style.margin = "0";
+    container.appendChild(existingTitle);
+    const errorText = document.createElement("span");
+    errorText.style.color = "#dc2626";
+    errorText.style.fontSize = "12px";
+    errorText.style.minHeight = "16px";
+    const existingList = document.createElement("div");
+    existingList.style.display = "flex";
+    existingList.style.flexDirection = "column";
+    existingList.style.gap = "8px";
+    container.appendChild(existingList);
+    let buckets = [];
+    let loadError = null;
+    try {
+      buckets = await listBuckets();
+    } catch (error) {
+      console.error("Failed to load buckets", error);
+      loadError = "Unable to load buckets from the server.";
+    }
+    if (loadError) {
+      const failed = document.createElement("span");
+      failed.textContent = loadError;
+      failed.style.color = "#dc2626";
+      existingList.appendChild(failed);
+    } else if (buckets.length === 0) {
+      const empty = document.createElement("span");
+      empty.textContent = "No buckets yet.";
+      empty.style.color = "#6b7280";
+      existingList.appendChild(empty);
+    } else {
+      buckets.forEach((bucket) => {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.textContent = `${bucket.name} (${bucket.logs.length})`;
+        option.style.display = "flex";
+        option.style.justifyContent = "space-between";
+        option.style.alignItems = "center";
+        option.style.padding = "6px 10px";
+        option.style.border = "1px solid #d1d5db";
+        option.style.borderRadius = "4px";
+        option.style.background = "white";
+        option.style.cursor = "pointer";
+        if (activeBucket && bucket.id === activeBucket.id) {
+          option.style.background = "#e0f2fe";
+        }
+        option.onclick = () => handleBucketSelection(bucket, () => closeModal(), (message) => {
+          errorText.textContent = message;
+        });
+        existingList.appendChild(option);
+      });
+    }
+    const createSection2 = document.createElement("div");
+    createSection2.style.display = "flex";
+    createSection2.style.flexDirection = "column";
+    createSection2.style.gap = "8px";
+    const createTitle = document.createElement("h4");
+    createTitle.textContent = "Create a new bucket";
+    createTitle.style.margin = "0";
+    createSection2.appendChild(createTitle);
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.placeholder = "Bucket name";
+    nameInput.autocomplete = "off";
+    nameInput.style.padding = "6px";
+    nameInput.style.border = "1px solid #d1d5db";
+    nameInput.style.borderRadius = "4px";
+    createSection2.appendChild(nameInput);
+    const helper = document.createElement("span");
+    helper.textContent = `Each bucket keeps up to ${MAX_BUCKET_ENTRIES} log lines.`;
+    helper.style.fontSize = "12px";
+    helper.style.color = "#6b7280";
+    createSection2.appendChild(helper);
+    createSection2.appendChild(errorText);
+    const createButton = document.createElement("button");
+    createButton.type = "button";
+    createButton.textContent = "Create & collect";
+    createButton.style.alignSelf = "flex-start";
+    createButton.style.padding = "6px 12px";
+    createButton.style.border = "1px solid #2563eb";
+    createButton.style.background = "#2563eb";
+    createButton.style.color = "white";
+    createButton.style.borderRadius = "4px";
+    createButton.style.cursor = "pointer";
+    createSection2.appendChild(createButton);
+    container.appendChild(createSection2);
+    const closeButton = new Button({ text: "Close" });
+    const footerButtons = [];
+    if (activeBucket) {
+      const stopButton2 = new Button({ text: "Stop collecting" });
+      stopButton2.onClick = () => {
+        stopCollecting();
+        closeModal();
+      };
+      footerButtons.push(stopButton2);
+    }
+    footerButtons.push(closeButton);
+    closeModal = showModal({
+      title: "Collect logs in a bucket",
+      minWidth: 360,
+      content: container,
+      footer: footerButtons
+    });
+    closeButton.onClick = () => closeModal();
+    createButton.onclick = () => {
+      errorText.textContent = "";
+      const name = nameInput.value.trim();
+      if (!name) {
+        errorText.textContent = "Please provide a bucket name.";
+        return;
+      }
+      (async () => {
+        try {
+          const bucket = await upsertBucket({
+            name,
+            query: searchTextarea.value
+          });
+          await startCollecting(bucket, true);
+          closeModal();
+        } catch (error) {
+          console.error("Failed to create bucket", error);
+          errorText.textContent = "Failed to create bucket. Please try again.";
+        }
+      })();
+    };
+  };
+  updateBucketUI();
+  bucketButton.onclick = () => {
+    openBucketModal();
+  };
   const featuresList = new VList;
   const histogramToggle = document.createElement("label");
   histogramToggle.style.display = "flex";
@@ -1610,6 +1984,21 @@ var logsSearchPage = (args) => {
         logIds.add(entry.id);
         logEntries.push(entry);
       });
+      if (activeBucket && newEntries.length > 0 && activeBucket.query === lastQuery) {
+        const targetBucket = activeBucket;
+        const clones = cloneEntriesForBucket(newEntries);
+        (async () => {
+          try {
+            const updated = await appendLogsToBucket(targetBucket.id, clones);
+            if (updated && activeBucket && updated.id === activeBucket.id) {
+              activeBucket = updated;
+              updateBucketUI();
+            }
+          } catch (error) {
+            console.error("Failed to append streaming logs to bucket", error);
+          }
+        })();
+      }
       logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
       if (logEntries.length > MAX_LOG_ENTRIES && args.root.scrollTop === 0) {
         const removed = logEntries.splice(MAX_LOG_ENTRIES);
@@ -1637,6 +2026,21 @@ var logsSearchPage = (args) => {
     segmentStatus = "";
     statsStatus = "";
     updateProgressIndicator();
+    if (activeBucket) {
+      (async () => {
+        try {
+          const updated = await upsertBucket({
+            id: activeBucket?.id,
+            name: activeBucket?.name || "",
+            query: searchTextarea.value
+          });
+          activeBucket = updated;
+          updateBucketUI();
+        } catch (error) {
+          console.error("Failed to refresh bucket metadata", error);
+        }
+      })();
+    }
     return token;
   };
   const finishSearch = (token, force = false) => {
@@ -2311,6 +2715,171 @@ var serverPage = async (root) => {
   ]));
 };
 
+// ts/buckets.ts
+var formatTimestamp3 = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()))
+    return "unknown time";
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mi = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+};
+var truncate = (value, length) => value.length > length ? `${value.slice(0, length)}…` : value;
+var emptyMessage = () => {
+  const empty = document.createElement("div");
+  empty.textContent = "No buckets yet. Collect logs from the search page to populate this view.";
+  empty.style.color = "#6b7280";
+  empty.style.fontStyle = "italic";
+  return empty;
+};
+var buildActions = (bucket, refresh) => {
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.gap = "8px";
+  actions.style.flexWrap = "wrap";
+  const openButton = document.createElement("button");
+  openButton.textContent = "Open in search";
+  openButton.onclick = () => navigate(`/?query=${encodeURIComponent(bucket.query)}`);
+  actions.appendChild(openButton);
+  const clearButton = document.createElement("button");
+  clearButton.textContent = "Clear logs";
+  clearButton.onclick = () => {
+    (async () => {
+      try {
+        await clearBucketLogs(bucket.id);
+        await refresh();
+      } catch (error) {
+        console.error("Failed to clear bucket", error);
+        window.alert("Failed to clear bucket logs. Please try again.");
+      }
+    })();
+  };
+  actions.appendChild(clearButton);
+  const deleteButton = document.createElement("button");
+  deleteButton.textContent = "Delete bucket";
+  deleteButton.onclick = () => {
+    if (window.confirm(`Delete bucket "${bucket.name}"? This only removes the copies.`)) {
+      (async () => {
+        try {
+          await deleteBucket(bucket.id);
+          await refresh();
+        } catch (error) {
+          console.error("Failed to delete bucket", error);
+          window.alert("Failed to delete bucket. Please try again.");
+        }
+      })();
+    }
+  };
+  actions.appendChild(deleteButton);
+  return actions;
+};
+var buildLogList = (bucket) => {
+  const list = document.createElement("ul");
+  list.style.display = "flex";
+  list.style.flexDirection = "column";
+  list.style.gap = "6px";
+  bucket.logs.forEach((entry) => {
+    const item = document.createElement("li");
+    item.style.listStyle = "none";
+    item.style.padding = "8px";
+    item.style.border = "1px solid #e5e7eb";
+    item.style.borderRadius = "4px";
+    item.style.cursor = "pointer";
+    const header = document.createElement("div");
+    header.textContent = `${formatTimestamp3(entry.timestamp)} · ${entry.level.toUpperCase()}`;
+    header.style.fontSize = "12px";
+    header.style.color = "#374151";
+    item.appendChild(header);
+    if (entry.props.length > 0) {
+      const propsLine = document.createElement("div");
+      propsLine.textContent = entry.props.map((prop) => `${prop.key}=${prop.value}`).join(" ");
+      propsLine.style.fontSize = "12px";
+      propsLine.style.color = "#6b7280";
+      item.appendChild(propsLine);
+    }
+    const message = document.createElement("div");
+    message.textContent = truncate(entry.msg, 160);
+    message.style.whiteSpace = "pre-wrap";
+    item.appendChild(message);
+    item.onclick = () => showModal({
+      title: "Log Message",
+      content: formatLogMsg(entry.msg),
+      footer: []
+    });
+    list.appendChild(item);
+  });
+  return list;
+};
+var bucketsPage = (root) => {
+  root.innerHTML = "";
+  const navbar = new Navbar;
+  root.appendChild(navbar.root);
+  const container = document.createElement("div");
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.gap = "12px";
+  container.style.padding = "16px";
+  root.appendChild(container);
+  const render = async () => {
+    container.innerHTML = "";
+    const loading = document.createElement("div");
+    loading.textContent = "Loading buckets…";
+    loading.style.color = "#6b7280";
+    container.appendChild(loading);
+    let buckets = [];
+    try {
+      buckets = await listBuckets();
+    } catch (error) {
+      console.error("Failed to load buckets", error);
+      container.innerHTML = "";
+      const errorNotice = document.createElement("div");
+      errorNotice.textContent = "Failed to load buckets. Please try again later.";
+      errorNotice.style.color = "#dc2626";
+      container.appendChild(errorNotice);
+      return;
+    }
+    container.innerHTML = "";
+    if (buckets.length === 0) {
+      container.appendChild(emptyMessage());
+      return;
+    }
+    buckets.forEach((bucket) => {
+      const section = document.createElement("section");
+      section.style.display = "flex";
+      section.style.flexDirection = "column";
+      section.style.gap = "8px";
+      section.style.border = "1px solid #e5e7eb";
+      section.style.borderRadius = "6px";
+      section.style.padding = "12px";
+      container.appendChild(section);
+      const title = document.createElement("div");
+      title.textContent = `${bucket.name} · ${bucket.logs.length}/${MAX_BUCKET_ENTRIES} logs`;
+      title.style.fontWeight = "600";
+      section.appendChild(title);
+      const query = document.createElement("div");
+      query.textContent = bucket.query ? `Query: ${bucket.query}` : "Query: (none)";
+      query.style.fontSize = "12px";
+      query.style.color = "#6b7280";
+      section.appendChild(query);
+      section.appendChild(buildActions(bucket, render));
+      if (bucket.logs.length === 0) {
+        const empty = document.createElement("div");
+        empty.textContent = "Bucket is empty.";
+        empty.style.color = "#6b7280";
+        section.appendChild(empty);
+        return;
+      }
+      section.appendChild(buildLogList(bucket));
+    });
+  };
+  render();
+  return root;
+};
+
 // ts/app.ts
 window.onload = () => {
   const body = document.querySelector("body");
@@ -2325,6 +2894,7 @@ window.onload = () => {
     "/devices": () => devicesPage(body),
     "/device/:deviceId": (params) => devicePage(body, params.deviceId),
     "/segments": () => segmentsPage(container),
+    "/buckets": () => bucketsPage(body),
     "/queries": () => queriesPage(body),
     "/segment/:segmentId": (params) => segmentPage(body, params.segmentId),
     "/pivot": () => PivotPage(body),

@@ -12,7 +12,7 @@ export const showModal = (args: {
 	minWidth?: number
 	content: HTMLElement
 	footer: UiComponent<HTMLElement>[]
-}) => {
+}): (() => void) => {
 	const body = document.querySelector("body")
 
 	const modalOverlay = document.createElement("div")
@@ -67,4 +67,8 @@ export const showModal = (args: {
 	})
 
 	modalOverlay.appendChild(modalContent)
+
+	return () => {
+		modalOverlay.remove()
+	}
 }

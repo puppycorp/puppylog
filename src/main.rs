@@ -131,6 +131,25 @@ async fn main() {
 		.with_state(ctx.clone())
 		.route("/api/v1/segments", get(controllers::get_segments))
 		.with_state(ctx.clone())
+		.route("/api/v1/buckets", get(controllers::list_buckets))
+		.with_state(ctx.clone())
+		.route("/api/v1/buckets", post(controllers::upsert_bucket))
+		.with_state(ctx.clone())
+		.route(
+			"/api/v1/buckets/{bucketId}/logs",
+			post(controllers::append_bucket_logs),
+		)
+		.with_state(ctx.clone())
+		.route(
+			"/api/v1/buckets/{bucketId}/clear",
+			post(controllers::clear_bucket_logs),
+		)
+		.with_state(ctx.clone())
+		.route(
+			"/api/v1/buckets/{bucketId}",
+			delete(controllers::delete_bucket),
+		)
+		.with_state(ctx.clone())
 		.route("/api/v1/segment/{segmentId}", get(controllers::get_segment))
 		.with_state(ctx.clone())
 		.route(
