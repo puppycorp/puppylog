@@ -20,10 +20,10 @@ diesel::table! {
 }
 
 diesel::table! {
-	log_segments (id) {
-		id -> Integer,
-		bucket_id -> Nullable<Integer>,
-		device_id -> Nullable<Text>,
+		log_segments (id) {
+				id -> Integer,
+				bucket_id -> Nullable<Integer>,
+				device_id -> Nullable<Text>,
 		first_timestamp -> Timestamp,
 		last_timestamp -> Timestamp,
 		original_size -> BigInt,
@@ -34,11 +34,34 @@ diesel::table! {
 }
 
 diesel::table! {
-	segment_props (segment_id, key, value) {
-		segment_id -> Integer,
-		key -> Text,
-		value -> Text,
-	}
+		log_buckets (id) {
+				id -> Integer,
+				name -> Text,
+				query -> Text,
+				created_at -> Timestamp,
+				updated_at -> Timestamp,
+		}
+}
+
+diesel::table! {
+		bucket_logs (id) {
+				id -> Integer,
+				bucket_id -> Integer,
+				log_id -> Text,
+				timestamp -> Text,
+				level -> Text,
+				msg -> Text,
+				props -> Text,
+				created_at -> Timestamp,
+		}
+}
+
+diesel::table! {
+		segment_props (segment_id, key, value) {
+				segment_id -> Integer,
+				key -> Text,
+				value -> Text,
+		}
 }
 
 diesel::table! {
@@ -50,8 +73,10 @@ diesel::table! {
 }
 
 diesel::allow_tables_to_appear_in_same_query!(
+	bucket_logs,
 	devices,
 	device_props,
+	log_buckets,
 	log_segments,
 	segment_props,
 	migrations,
