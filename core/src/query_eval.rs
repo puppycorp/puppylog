@@ -434,51 +434,55 @@ pub fn extract_date_conditions(expr: &Expr) -> Vec<Condition> {
 	out
 }
 
-pub fn extract_device_ids(expr: &Expr) -> Vec<String> {
-	fn add_id_from_value(vec: &mut Vec<String>, val: &Value) {
+fn extract_field_values(expr: &Expr, field_name: &str) -> Vec<String> {
+	fn collect_value(vec: &mut Vec<String>, val: &Value) {
 		match val {
 			Value::String(s) => vec.push(s.clone()),
 			Value::Number(n) => vec.push(n.to_string()),
 			Value::List(list) => {
 				for v in list {
-					add_id_from_value(vec, v);
+					collect_value(vec, v);
 				}
 			}
 			_ => {}
 		}
 	}
 
-	let mut ids = Vec::new();
+	let mut values = Vec::new();
 	match expr {
 		Expr::Condition(cond) => {
 			if let (Expr::Value(Value::String(left)), Expr::Value(right)) =
 				(cond.left.as_ref(), cond.right.as_ref())
 			{
-				if left == "deviceId" {
-					if matches!(cond.operator, Operator::Equal | Operator::In) {
-						add_id_from_value(&mut ids, right);
-					}
+				if left == field_name && matches!(cond.operator, Operator::Equal | Operator::In) {
+					collect_value(&mut values, right);
 				}
 			} else if let (Expr::Value(left), Expr::Value(Value::String(right))) =
 				(cond.left.as_ref(), cond.right.as_ref())
 			{
-				if right == "deviceId" {
-					if matches!(cond.operator, Operator::Equal | Operator::In) {
-						add_id_from_value(&mut ids, left);
-					}
+				if right == field_name && matches!(cond.operator, Operator::Equal | Operator::In) {
+					collect_value(&mut values, left);
 				}
 			}
 		}
 		Expr::And(l, r) | Expr::Or(l, r) => {
-			ids.extend(extract_device_ids(l));
-			ids.extend(extract_device_ids(r));
+			values.extend(extract_field_values(l, field_name));
+			values.extend(extract_field_values(r, field_name));
 		}
 		_ => {}
 	}
 
-	ids.sort();
-	ids.dedup();
-	ids
+	values.sort();
+	values.dedup();
+	values
+}
+
+pub fn extract_device_ids(expr: &Expr) -> Vec<String> {
+	extract_field_values(expr, "deviceId")
+}
+
+pub fn extract_bucket_ids(expr: &Expr) -> Vec<String> {
+	extract_field_values(expr, "bucketId")
 }
 
 pub fn timestamp_bounds(expr: &Expr) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
@@ -788,6 +792,20 @@ mod tests {
 	fn extract_device_ids_negative() {
 		let ast = crate::parse_log_query("deviceId != 5 and deviceId not in (6)").unwrap();
 		let ids = extract_device_ids(&ast.root);
+		assert!(ids.is_empty());
+	}
+
+	#[test]
+	fn extract_bucket_ids_basic() {
+		let ast = crate::parse_log_query("bucketId = 7 or bucketId in (8, 9)").unwrap();
+		let ids = extract_bucket_ids(&ast.root);
+		assert_eq!(ids, vec!["7", "8", "9"]);
+	}
+
+	#[test]
+	fn extract_bucket_ids_negative() {
+		let ast = crate::parse_log_query("bucketId != 5 and bucketId not in (6)").unwrap();
+		let ids = extract_bucket_ids(&ast.root);
 		assert!(ids.is_empty());
 	}
 	#[test]

@@ -22,7 +22,10 @@ use tokio_util::io::ReaderStream;
 
 use crate::config::{log_path, upload_path};
 use crate::context::{Context, LogStreamItem, SearchProgress, SegmentProgress};
-use crate::db::{MetaProp, UpdateDeviceSettings};
+use crate::db::{
+	BucketProp, LogBucket, MetaProp, NewBucketLogEntry, UpdateDeviceSettings, UpsertBucketArgs,
+	BUCKET_LOG_LIMIT,
+};
 use crate::types::GetSegmentsQuery;
 
 #[derive(Deserialize, Debug)]
@@ -41,6 +44,74 @@ pub(crate) struct GetHistogramQuery {
 	pub bucket_secs: Option<u64>,
 	pub end_date: Option<DateTime<Utc>>,
 	pub tz_offset: Option<i32>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpsertBucketRequest {
+	pub id: Option<i32>,
+	pub name: String,
+	pub query: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct BucketPropPayload {
+	key: String,
+	value: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct BucketLogEntryPayload {
+	id: String,
+	timestamp: String,
+	level: String,
+	msg: String,
+	#[serde(default)]
+	props: Vec<BucketPropPayload>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AppendBucketLogsRequest {
+	#[serde(default)]
+	logs: Vec<BucketLogEntryPayload>,
+}
+
+fn normalize_bucket_prop(prop: BucketPropPayload) -> Option<BucketProp> {
+	let key = prop.key.trim();
+	if key.is_empty() {
+		return None;
+	}
+	Some(BucketProp {
+		key: key.to_string(),
+		value: prop.value.trim().to_string(),
+	})
+}
+
+fn normalize_bucket_log(entry: BucketLogEntryPayload) -> Option<NewBucketLogEntry> {
+	let id = entry.id.trim();
+	let timestamp = entry.timestamp.trim();
+	if id.is_empty() || timestamp.is_empty() {
+		return None;
+	}
+	let level = match entry.level.as_str() {
+		"trace" | "debug" | "info" | "warn" | "error" | "fatal" => entry.level,
+		_ => return None,
+	};
+	let props = entry
+		.props
+		.into_iter()
+		.filter_map(normalize_bucket_prop)
+		.collect();
+	Some(NewBucketLogEntry {
+		id: id.to_string(),
+		timestamp: timestamp.to_string(),
+		level,
+		msg: entry.msg,
+		props,
+	})
 }
 
 #[derive(Serialize)]
@@ -109,13 +180,92 @@ pub async fn get_segment_metadata(State(ctx): State<Arc<Context>>) -> Json<Value
 	let avg_logs_per_segment = meta.logs_count as f64 / meta.segment_count as f64;
 	let avg_segment_size = meta.original_size as f64 / meta.segment_count as f64;
 	Json(json!({
-		"segmentCount": meta.segment_count,
-		"originalSize": meta.original_size,
-		"compressedSize": meta.compressed_size,
-		"logsCount": meta.logs_count,
-		"averageLogsPerSegment": avg_logs_per_segment,
-		"averageSegmentSize": avg_segment_size
+			"segmentCount": meta.segment_count,
+			"originalSize": meta.original_size,
+			"compressedSize": meta.compressed_size,
+			"logsCount": meta.logs_count,
+			"averageLogsPerSegment": avg_logs_per_segment,
+			"averageSegmentSize": avg_segment_size
 	}))
+}
+
+pub async fn list_buckets(
+	State(ctx): State<Arc<Context>>,
+) -> Result<Json<Vec<LogBucket>>, StatusCode> {
+	ctx.db
+		.list_buckets()
+		.await
+		.map(Json)
+		.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+pub async fn upsert_bucket(
+	State(ctx): State<Arc<Context>>,
+	Json(payload): Json<UpsertBucketRequest>,
+) -> Result<Json<LogBucket>, StatusCode> {
+	let name = payload.name.trim();
+	if name.is_empty() {
+		return Err(StatusCode::BAD_REQUEST);
+	}
+	let query = payload.query.unwrap_or_default();
+	let bucket = ctx
+		.db
+		.upsert_bucket(UpsertBucketArgs {
+			id: payload.id,
+			name: name.to_string(),
+			query,
+		})
+		.await
+		.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+	if let Err(err) = ctx.refresh_bucket_filters().await {
+		log::error!("failed to refresh bucket filters: {}", err);
+	}
+	Ok(Json(bucket))
+}
+
+pub async fn append_bucket_logs(
+	State(ctx): State<Arc<Context>>,
+	Path(bucket_id): Path<i32>,
+	Json(payload): Json<AppendBucketLogsRequest>,
+) -> Result<Json<LogBucket>, StatusCode> {
+	let logs: Vec<NewBucketLogEntry> = payload
+		.logs
+		.into_iter()
+		.filter_map(normalize_bucket_log)
+		.take(BUCKET_LOG_LIMIT)
+		.collect();
+	match ctx.db.append_bucket_logs(bucket_id, &logs).await {
+		Ok(Some(bucket)) => Ok(Json(bucket)),
+		Ok(None) => Err(StatusCode::NOT_FOUND),
+		Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+	}
+}
+
+pub async fn clear_bucket_logs(
+	State(ctx): State<Arc<Context>>,
+	Path(bucket_id): Path<i32>,
+) -> Result<Json<LogBucket>, StatusCode> {
+	match ctx.db.clear_bucket_logs(bucket_id).await {
+		Ok(Some(bucket)) => Ok(Json(bucket)),
+		Ok(None) => Err(StatusCode::NOT_FOUND),
+		Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+	}
+}
+
+pub async fn delete_bucket(
+	State(ctx): State<Arc<Context>>,
+	Path(bucket_id): Path<i32>,
+) -> StatusCode {
+	match ctx.db.delete_bucket(bucket_id).await {
+		Ok(true) => {
+			if let Err(err) = ctx.refresh_bucket_filters().await {
+				log::error!("failed to refresh bucket filters: {}", err);
+			}
+			StatusCode::NO_CONTENT
+		}
+		Ok(false) => StatusCode::NOT_FOUND,
+		Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+	}
 }
 
 pub async fn get_segment(
@@ -857,8 +1007,9 @@ mod tests {
 	use super::*;
 	use axum::body::{to_bytes, Body};
 	use axum::http::{Request, StatusCode};
-	use axum::routing::get;
+	use axum::routing::{delete, get, post};
 	use axum::Router;
+	use serde_json::{json, Value};
 	use tempfile::TempDir;
 	use tower::ServiceExt;
 
@@ -1003,6 +1154,139 @@ mod tests {
 		let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
 		let logs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
 		assert_eq!(logs.len(), 2);
+	}
+
+	#[tokio::test]
+	async fn bucket_endpoints_roundtrip() {
+		let dir = TempDir::new().unwrap();
+		let log_dir = dir.path().join("logs");
+		std::fs::create_dir_all(&log_dir).unwrap();
+		std::env::set_var("LOG_PATH", &log_dir);
+		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
+		std::fs::write(
+			dir.path().join("settings.json"),
+			"{\"collection_query\":\"\"}",
+		)
+		.unwrap();
+
+		let ctx = Arc::new(Context::new(log_dir).await);
+
+		let app = Router::new()
+			.route("/api/v1/buckets", get(list_buckets).post(upsert_bucket))
+			.route("/api/v1/buckets/{bucketId}/logs", post(append_bucket_logs))
+			.route("/api/v1/buckets/{bucketId}/clear", post(clear_bucket_logs))
+			.route("/api/v1/buckets/{bucketId}", delete(delete_bucket))
+			.with_state(ctx);
+
+		let create_res = app
+			.clone()
+			.oneshot(
+				Request::builder()
+					.method("POST")
+					.uri("/api/v1/buckets")
+					.header("content-type", "application/json")
+					.body(Body::from(
+						json!({
+								"name": "Errors",
+								"query": "level:error"
+						})
+						.to_string(),
+					))
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+		assert_eq!(create_res.status(), StatusCode::OK);
+		let body = to_bytes(create_res.into_body(), usize::MAX).await.unwrap();
+		let created: Value = serde_json::from_slice(&body).unwrap();
+		let bucket_id = created["id"].as_i64().unwrap() as i32;
+
+		let list_res = app
+			.clone()
+			.oneshot(
+				Request::builder()
+					.uri("/api/v1/buckets")
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+		assert_eq!(list_res.status(), StatusCode::OK);
+		let list_body = to_bytes(list_res.into_body(), usize::MAX).await.unwrap();
+		let listed: Value = serde_json::from_slice(&list_body).unwrap();
+		assert_eq!(listed.as_array().unwrap().len(), 1);
+
+		let append_payload = json!({
+				"logs": [
+						{
+								"id": "log-1",
+								"timestamp": Utc::now().to_rfc3339(),
+								"level": "info",
+								"msg": "hello",
+								"props": [{"key": "device", "value": "alpha"}]
+						}
+				]
+		});
+		let append_res = app
+			.clone()
+			.oneshot(
+				Request::builder()
+					.method("POST")
+					.uri(format!("/api/v1/buckets/{bucket_id}/logs"))
+					.header("content-type", "application/json")
+					.body(Body::from(append_payload.to_string()))
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+		assert_eq!(append_res.status(), StatusCode::OK);
+		let append_body = to_bytes(append_res.into_body(), usize::MAX).await.unwrap();
+		let appended: Value = serde_json::from_slice(&append_body).unwrap();
+		assert_eq!(appended["logs"].as_array().unwrap().len(), 1);
+
+		let clear_res = app
+			.clone()
+			.oneshot(
+				Request::builder()
+					.method("POST")
+					.uri(format!("/api/v1/buckets/{bucket_id}/clear"))
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+		assert_eq!(clear_res.status(), StatusCode::OK);
+		let cleared: Value =
+			serde_json::from_slice(&to_bytes(clear_res.into_body(), usize::MAX).await.unwrap())
+				.unwrap();
+		assert_eq!(cleared["logs"].as_array().unwrap().len(), 0);
+
+		let delete_res = app
+			.clone()
+			.oneshot(
+				Request::builder()
+					.method("DELETE")
+					.uri(format!("/api/v1/buckets/{bucket_id}"))
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+		assert_eq!(delete_res.status(), StatusCode::NO_CONTENT);
+
+		let final_list = app
+			.oneshot(
+				Request::builder()
+					.uri("/api/v1/buckets")
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+		let final_body = to_bytes(final_list.into_body(), usize::MAX).await.unwrap();
+		let after: Value = serde_json::from_slice(&final_body).unwrap();
+		assert!(after.as_array().unwrap().is_empty());
 	}
 
 	#[tokio::test]

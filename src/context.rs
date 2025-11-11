@@ -1,4 +1,7 @@
 use crate::db::open_db;
+use crate::db::BucketLogEntry;
+use crate::db::BucketProp;
+use crate::db::NewBucketLogEntry;
 use crate::db::NewSegmentArgs;
 use crate::db::DB;
 use crate::segment::compress_segment;
@@ -13,13 +16,17 @@ use crate::wal::Wal;
 use chrono::DateTime;
 use chrono::Utc;
 use puppylog::match_date_range;
+use puppylog::parse_log_query;
 use puppylog::LogEntry;
+use puppylog::LogLevel;
 use puppylog::Prop;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
-use puppylog::{check_expr, check_props, extract_device_ids, timestamp_bounds};
+use puppylog::{check_expr, check_props, extract_bucket_ids, extract_device_ids, timestamp_bounds};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
@@ -30,10 +37,11 @@ use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio::time::timeout;
 
 use serde::Serialize;
-use tokio::sync::Mutex;
 
 const CONCURRENCY_LIMIT: usize = 10;
 /// Default number of buffered log entries before logs are flushed to disk.
@@ -100,6 +108,58 @@ fn should_emit_progress(processed_logs: u64, last_emit: &Instant) -> bool {
 		|| last_emit.elapsed() >= Duration::from_millis(500)
 }
 
+#[derive(Debug, Clone)]
+struct BucketFilter {
+	id: i32,
+	query: QueryAst,
+}
+
+fn bucket_log_random(id: &str) -> u32 {
+	let mut hasher = DefaultHasher::new();
+	id.hash(&mut hasher);
+	(hasher.finish() & 0xffff_ffff) as u32
+}
+
+fn bucket_log_props(bucket_id: i32, props: Vec<BucketProp>) -> Vec<Prop> {
+	let mut converted: Vec<Prop> = props
+		.into_iter()
+		.map(|prop| Prop {
+			key: prop.key,
+			value: prop.value,
+		})
+		.collect();
+	if !converted.iter().any(|prop| prop.key == "bucketId") {
+		converted.push(Prop {
+			key: "bucketId".into(),
+			value: bucket_id.to_string(),
+		});
+	}
+	converted
+}
+
+fn bucket_log_entry_to_log_entry(bucket_id: i32, entry: BucketLogEntry) -> Option<LogEntry> {
+	let timestamp = chrono::DateTime::parse_from_rfc3339(&entry.timestamp)
+		.ok()?
+		.with_timezone(&Utc);
+	let mut log = LogEntry::default();
+	log.timestamp = timestamp;
+	log.level = LogLevel::from_string(&entry.level);
+	log.random = bucket_log_random(&entry.id);
+	log.msg = entry.msg;
+	log.props = bucket_log_props(bucket_id, entry.props);
+	Some(log)
+}
+
+fn to_bucket_props(props: &[Prop]) -> Vec<BucketProp> {
+	props
+		.iter()
+		.map(|prop| BucketProp {
+			key: prop.key.clone(),
+			value: prop.value.clone(),
+		})
+		.collect()
+}
+
 #[derive(Debug)]
 pub struct Context {
 	pub subscriber: Subscriber,
@@ -111,6 +171,7 @@ pub struct Context {
 	pub wal: Wal,
 	pub upload_queue: AtomicUsize,
 	upload_flush_threshold: AtomicUsize,
+	bucket_filters: RwLock<Vec<BucketFilter>>,
 	logs_path: PathBuf,
 	wal_max_bytes: u64,
 	flush_interval: Duration,
@@ -148,7 +209,7 @@ impl Context {
 			.map(Duration::from_secs)
 			.unwrap_or(Duration::from_secs(300)); // 5 minutes default
 
-		Context {
+		let ctx = Context {
 			subscriber: Subscriber::new(subtx),
 			publisher: pubtx,
 			settings,
@@ -158,11 +219,16 @@ impl Context {
 			wal,
 			upload_queue: AtomicUsize::new(0),
 			upload_flush_threshold: AtomicUsize::new(UPLOAD_FLUSH_THRESHOLD),
+			bucket_filters: RwLock::new(Vec::new()),
 			logs_path: logs_path.as_ref().to_owned(),
 			wal_max_bytes,
 			flush_interval,
 			last_flush: StdMutex::new(Instant::now()),
+		};
+		if let Err(err) = ctx.refresh_bucket_filters().await {
+			log::error!("failed to load bucket filters: {}", err);
 		}
+		ctx
 	}
 
 	/// Override the default flush threshold for uploaded logs.
@@ -171,7 +237,32 @@ impl Context {
 			.store(threshold, Ordering::Relaxed);
 	}
 
+	pub async fn refresh_bucket_filters(&self) -> anyhow::Result<()> {
+		let bucket_rows = self.db.list_bucket_queries().await?;
+		let mut filters = Vec::with_capacity(bucket_rows.len());
+		for (id, query) in bucket_rows {
+			let parsed = if query.trim().is_empty() {
+				QueryAst::default()
+			} else {
+				match parse_log_query(&query) {
+					Ok(ast) => ast,
+					Err(err) => {
+						log::warn!("skipping bucket {} due to invalid query: {}", id, err);
+						continue;
+					}
+				}
+			};
+			filters.push(BucketFilter { id, query: parsed });
+		}
+		let mut guard = self.bucket_filters.write().await;
+		*guard = filters;
+		Ok(())
+	}
+
 	pub async fn save_logs(&self, logs: &[LogEntry]) {
+		if let Err(err) = self.collect_bucket_matches(logs).await {
+			log::error!("failed to collect bucket matches: {}", err);
+		}
 		let mut current = self.current.lock().await;
 		current.buffer.extend_from_slice(logs);
 		for entry in logs {
@@ -291,6 +382,71 @@ impl Context {
 		self.flush_locked(&mut current).await;
 	}
 
+	async fn collect_bucket_matches(&self, logs: &[LogEntry]) -> anyhow::Result<()> {
+		if logs.is_empty() {
+			return Ok(());
+		}
+		let filters = {
+			let guard = self.bucket_filters.read().await;
+			guard.clone()
+		};
+		if filters.is_empty() {
+			return Ok(());
+		}
+		let mut per_bucket: HashMap<i32, Vec<NewBucketLogEntry>> = HashMap::new();
+		for log in logs {
+			for filter in &filters {
+				match filter.query.matches(log) {
+					Ok(true) => {
+						per_bucket
+							.entry(filter.id)
+							.or_default()
+							.push(NewBucketLogEntry {
+								id: log.id_string(),
+								timestamp: log.timestamp.to_rfc3339(),
+								level: log.level.to_string(),
+								msg: log.msg.clone(),
+								props: to_bucket_props(&log.props),
+							});
+					}
+					Ok(false) => {}
+					Err(err) => {
+						log::warn!("bucket {} evaluation failed: {}", filter.id, err);
+					}
+				}
+			}
+		}
+		for (bucket_id, entries) in per_bucket {
+			let _ = self.db.append_bucket_logs(bucket_id, &entries).await?;
+		}
+		Ok(())
+	}
+
+	async fn stream_bucket_logs(
+		&self,
+		bucket_ids: &[i32],
+		query: &QueryAst,
+		tx: &mpsc::Sender<LogStreamItem>,
+	) -> anyhow::Result<()> {
+		if bucket_ids.is_empty() {
+			return Ok(());
+		}
+		let tz = query
+			.tz_offset
+			.unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
+		let entries = self.db.fetch_bucket_logs(bucket_ids).await?;
+		for (bucket_id, entry) in entries {
+			if let Some(log) = bucket_log_entry_to_log_entry(bucket_id, entry) {
+				if check_expr(&query.root, &log, &tz).unwrap_or(false) {
+					if tx.send(LogStreamItem::Entry(log)).await.is_err() {
+						return Ok(());
+					}
+				}
+			}
+		}
+		Ok(())
+	}
+
 	pub async fn find_logs(
 		&self,
 		query: QueryAst,
@@ -302,6 +458,15 @@ impl Context {
 
 		let mut end = query.end_date.unwrap_or(Utc::now());
 		let device_ids = extract_device_ids(&query.root);
+		let mut bucket_ids: Vec<i32> = extract_bucket_ids(&query.root)
+			.into_iter()
+			.filter_map(|value| value.parse::<i32>().ok())
+			.collect();
+		bucket_ids.sort_unstable();
+		bucket_ids.dedup();
+		if !bucket_ids.is_empty() {
+			self.stream_bucket_logs(&bucket_ids, &query, tx).await?;
+		}
 		let tz = query
 			.tz_offset
 			.unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
@@ -607,7 +772,7 @@ impl Context {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::db::NewSegmentArgs;
+	use crate::db::{BucketProp, NewBucketLogEntry, NewSegmentArgs, UpsertBucketArgs};
 	use crate::segment::compress_segment;
 	use chrono::{Duration, Utc};
 	use puppylog::{parse_log_query, LogEntry, LogLevel, Prop};
@@ -722,6 +887,77 @@ mod tests {
 
 		assert_eq!(found.len(), 1);
 		assert_eq!(found[0].msg, "segment log");
+		drop(dir);
+	}
+
+	#[tokio::test]
+	async fn find_logs_from_bucket_ids() {
+		let (ctx, dir) = prepare_test_ctx().await;
+		let bucket = ctx
+			.db
+			.upsert_bucket(UpsertBucketArgs {
+				id: None,
+				name: "BucketSearch".into(),
+				query: "".into(),
+			})
+			.await
+			.unwrap();
+		let ts = Utc::now().to_rfc3339();
+		ctx.db
+			.append_bucket_logs(
+				bucket.id,
+				&[NewBucketLogEntry {
+					id: "bucket-log".into(),
+					timestamp: ts,
+					level: "error".into(),
+					msg: "bucket match".into(),
+					props: vec![BucketProp {
+						key: "deviceId".into(),
+						value: "bucket-device".into(),
+					}],
+				}],
+			)
+			.await
+			.unwrap();
+		let query = parse_log_query(&format!("bucketId = {}", bucket.id)).unwrap();
+		let (tx, mut rx) = mpsc::channel(10);
+		ctx.find_logs(query, &tx).await.unwrap();
+		drop(tx);
+		let mut found = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(entry) = item {
+				found.push(entry);
+			}
+		}
+		assert_eq!(found.len(), 1);
+		assert_eq!(found[0].msg, "bucket match");
+		assert!(found[0]
+			.props
+			.iter()
+			.any(|prop| prop.key == "bucketId" && prop.value == bucket.id.to_string()));
+		drop(dir);
+	}
+
+	#[tokio::test]
+	async fn bucket_collector_appends_matches() {
+		let (ctx, dir) = prepare_test_ctx().await;
+		let bucket = ctx
+			.db
+			.upsert_bucket(UpsertBucketArgs {
+				id: None,
+				name: "Collector".into(),
+				query: "msg = \"collect me\"".into(),
+			})
+			.await
+			.unwrap();
+		ctx.refresh_bucket_filters().await.unwrap();
+		let mut entry = LogEntry::default();
+		entry.msg = "collect me".into();
+		entry.timestamp = Utc::now();
+		ctx.save_logs(&[entry.clone()]).await;
+		let updated = ctx.db.get_bucket(bucket.id).await.unwrap().unwrap();
+		assert_eq!(updated.logs.len(), 1);
+		assert_eq!(updated.logs[0].id, entry.id_string());
 		drop(dir);
 	}
 
