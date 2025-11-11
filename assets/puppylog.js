@@ -1439,9 +1439,12 @@ var escapeHTML = (str) => {
   return div.innerHTML;
 };
 var truncateMessage = (msg) => msg.length > MESSAGE_TRUNCATE_LENGTH ? `${msg.slice(0, MESSAGE_TRUNCATE_LENGTH)}...` : msg;
+var formatRawMessage = (msg) => escapeHTML(msg.replace(/[\r\n]+/g, " "));
 var logsSearchPage = (args) => {
   const logIds = new Set;
   const logEntries = [];
+  let logViewMode = "structured";
+  let rawWrapEnabled = false;
   args.root.innerHTML = ``;
   const navbar = new Navbar;
   args.root.appendChild(navbar.root);
@@ -1470,6 +1473,44 @@ var logsSearchPage = (args) => {
   searchControls.className = "logs-search-controls";
   searchControls.append(searchButton, stopButton);
   rightPanel.append(searchControls);
+  const viewToggleWrapper = document.createElement("label");
+  viewToggleWrapper.className = "logs-view-toggle";
+  viewToggleWrapper.style.display = "flex";
+  viewToggleWrapper.style.alignItems = "center";
+  viewToggleWrapper.style.gap = "8px";
+  const viewToggleLabel = document.createElement("span");
+  viewToggleLabel.textContent = "View";
+  const viewToggle = document.createElement("select");
+  const viewStructured = document.createElement("option");
+  viewStructured.value = "structured";
+  viewStructured.textContent = "Structured";
+  const viewRaw = document.createElement("option");
+  viewRaw.value = "raw";
+  viewRaw.textContent = "Raw text";
+  viewToggle.append(viewStructured, viewRaw);
+  viewToggleWrapper.append(viewToggleLabel, viewToggle);
+  rightPanel.appendChild(viewToggleWrapper);
+  const wrapToggleWrapper = document.createElement("label");
+  wrapToggleWrapper.className = "logs-raw-wrap-toggle";
+  wrapToggleWrapper.style.display = "none";
+  wrapToggleWrapper.style.alignItems = "center";
+  wrapToggleWrapper.style.gap = "6px";
+  const wrapToggle = document.createElement("input");
+  wrapToggle.type = "checkbox";
+  const wrapToggleLabel = document.createElement("span");
+  wrapToggleLabel.textContent = "Wrap raw logs";
+  wrapToggleWrapper.append(wrapToggle, wrapToggleLabel);
+  rightPanel.appendChild(wrapToggleWrapper);
+  wrapToggle.addEventListener("change", () => {
+    rawWrapEnabled = wrapToggle.checked;
+    renderLogs();
+  });
+  viewToggle.addEventListener("change", () => {
+    logViewMode = viewToggle.value;
+    const isRaw = logViewMode === "raw";
+    wrapToggleWrapper.style.display = isRaw ? "flex" : "none";
+    renderLogs();
+  });
   const featuresList = new VList;
   const histogramToggle = document.createElement("label");
   histogramToggle.style.display = "flex";
@@ -1574,8 +1615,21 @@ var logsSearchPage = (args) => {
   let debounce;
   let pendingLogs = [];
   const renderLogs = () => {
-    logsList.innerHTML = logEntries.map((entry) => `
-			<div class="list-row">
+    logsList.classList.toggle("logs-list-raw", logViewMode === "raw");
+    logsList.classList.toggle("logs-list-raw-wrap", logViewMode === "raw" && rawWrapEnabled);
+    logsList.innerHTML = logEntries.map((entry, idx) => {
+      if (logViewMode === "raw") {
+        return `
+				<div class="list-row logs-raw-row" data-entry-index="${idx}">
+					<div>
+						${formatTimestamp2(entry.timestamp)}
+						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level.toUpperCase()}</span>
+						${formatRawMessage(entry.msg)}
+					</div>
+				</div>`;
+      }
+      return `
+			<div class="list-row" data-entry-index="${idx}">
 				<div>
 					${formatTimestamp2(entry.timestamp)}
 					<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
@@ -1584,21 +1638,27 @@ var logsSearchPage = (args) => {
 				<div class="logs-list-row-msg">
 					<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
 				</div>
-			</div>
-		`).join("");
-    document.querySelectorAll(".msg-summary").forEach((el, key) => {
-      el.addEventListener("click", () => {
-        const entry = logEntries[key];
-        const isTruncated = entry.msg.length > MESSAGE_TRUNCATE_LENGTH;
-        if (!isTruncated)
-          return;
-        showModal({
-          title: "Log Message",
-          content: formatLogMsg(entry.msg),
-          footer: []
+			</div>`;
+    }).join("");
+    if (logViewMode === "structured") {
+      logsList.querySelectorAll(".msg-summary").forEach((el) => {
+        el.addEventListener("click", () => {
+          const parent = el.closest("[data-entry-index]");
+          if (!parent)
+            return;
+          const key = Number(parent.getAttribute("data-entry-index"));
+          const entry = logEntries[key];
+          const isTruncated = entry.msg.length > MESSAGE_TRUNCATE_LENGTH;
+          if (!isTruncated)
+            return;
+          showModal({
+            title: "Log Message",
+            content: formatLogMsg(entry.msg),
+            footer: []
+          });
         });
       });
-    });
+    }
   };
   const addLogs = (log) => {
     pendingLogs.push(log);

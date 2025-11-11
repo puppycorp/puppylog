@@ -216,12 +216,36 @@ body {
 	overflow-x: auto;
 	padding: 16px;
 }
+.logs-list-raw {
+	gap: 0;
+	padding: 16px 16px 8px 16px;
+	overflow-x: auto;
+}
 .list-row {
 	border-bottom: 1px solid #e5e7eb;
 	padding: 2px;
 	background-color: #fff;
 	transition: box-shadow 0.2s ease;
 	cursor: pointer;
+}
+.logs-list-raw .list-row {
+	border-bottom: none;
+	padding: 0;
+	background-color: transparent;
+	cursor: default;
+	white-space: nowrap;
+	font-family:
+		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+		"Liberation Mono", monospace;
+}
+.logs-list-raw .list-row > div {
+	display: inline;
+}
+.logs-list-raw-wrap .list-row {
+	white-space: normal;
+}
+.logs-list-raw-wrap .list-row > div {
+	display: block;
 }
 .logs-list-row-msg {
 	position: relative;
