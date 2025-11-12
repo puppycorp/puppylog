@@ -1,3 +1,6 @@
+use std::fs::File;
+use std::io::{self, Read};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::body::{Body, BodyDataStream};
@@ -13,16 +16,18 @@ use puppylog::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string, Value};
-use tokio::fs::{self, read_dir, File, OpenOptions};
+use tokio::fs::{self, read_dir, File as TokioFile, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::task::spawn_blocking;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
+use zstd::Decoder;
 
 use crate::config::{log_path, upload_path};
 use crate::context::{Context, LogStreamItem, SearchProgress, SegmentProgress};
 use crate::db::{MetaProp, UpdateDeviceSettings};
+use crate::segment::{HEADER_SIZE, MAGIC, VERSION};
 use crate::types::GetSegmentsQuery;
 
 #[derive(Deserialize, Debug)]
@@ -128,7 +133,7 @@ pub async fn get_segment(
 
 pub async fn download_segment(Path(segment_id): Path<u32>) -> Response {
 	let path = log_path().join(format!("{segment_id}.log"));
-	let file = match File::open(&path).await {
+	let file = match TokioFile::open(&path).await {
 		Ok(f) => f,
 		Err(e) => {
 			return (
@@ -159,6 +164,55 @@ pub async fn download_segment(Path(segment_id): Path<u32>) -> Response {
 	}
 
 	(headers, body).into_response()
+}
+
+pub async fn download_segment_text(Path(segment_id): Path<u32>) -> Response {
+	let path = log_path().join(format!("{segment_id}.log"));
+	if !path.exists() {
+		return (
+			StatusCode::NOT_FOUND,
+			format!("segment {segment_id} not found"),
+		)
+			.into_response();
+	}
+	let read_path = path.clone();
+	let logs_result = spawn_blocking(move || read_segment_entries(read_path)).await;
+	let logs = match logs_result {
+		Ok(Ok(entries)) => entries,
+		Ok(Err(err)) => {
+			log::error!("failed to read segment {}: {}", segment_id, err);
+			return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to read segment").into_response();
+		}
+		Err(err) => {
+			log::error!(
+				"spawn_blocking failed while reading segment {}: {}",
+				segment_id,
+				err
+			);
+			return (
+				StatusCode::INTERNAL_SERVER_ERROR,
+				"Failed to prepare download",
+			)
+				.into_response();
+		}
+	};
+	let content = logs
+		.iter()
+		.map(logentry_to_text)
+		.collect::<Vec<_>>()
+		.join("\n");
+	let mut headers = HeaderMap::new();
+	headers.insert(
+		header::CONTENT_TYPE,
+		HeaderValue::from_static("text/plain; charset=utf-8"),
+	);
+	headers.insert(
+		header::CONTENT_DISPOSITION,
+		format!("attachment; filename=\"segment-{segment_id}.txt\"")
+			.parse()
+			.unwrap(),
+	);
+	(headers, content).into_response()
 }
 
 pub async fn delete_segment(
@@ -630,6 +684,72 @@ fn logentry_to_json(entry: &LogEntry) -> Value {
 			"msg": entry.msg,
 			"props": entry.props,
 	})
+}
+
+fn logentry_to_text(entry: &LogEntry) -> String {
+	let timestamp = entry.timestamp.format("%Y-%m-%d %H:%M:%S%.3f");
+	let level = entry.level.to_string().to_uppercase();
+	let props = if entry.props.is_empty() {
+		String::new()
+	} else {
+		format!(
+			" {}",
+			entry
+				.props
+				.iter()
+				.map(|prop| format!("{}={}", prop.key, prop.value))
+				.collect::<Vec<_>>()
+				.join(" ")
+		)
+	};
+	let mut message = entry.msg.replace('\n', " ");
+	message = message.replace('\r', " ");
+	let msg_part = if message.trim().is_empty() {
+		String::new()
+	} else {
+		format!(" {}", message.trim())
+	};
+	format!("{timestamp} {level}{props}{msg_part}")
+}
+
+fn read_segment_entries(path: PathBuf) -> io::Result<Vec<LogEntry>> {
+	let file = File::open(&path)?;
+	let mut decoder = Decoder::new(file)?;
+	let mut header = [0u8; HEADER_SIZE];
+	decoder.read_exact(&mut header)?;
+	if &header[..MAGIC.len()] != MAGIC.as_bytes() {
+		return Err(io::Error::new(
+			io::ErrorKind::InvalidData,
+			"invalid segment header",
+		));
+	}
+	let version_bytes = &header[MAGIC.len()..];
+	let version = u16::from_be_bytes(version_bytes.try_into().unwrap());
+	if version != VERSION {
+		return Err(io::Error::new(
+			io::ErrorKind::InvalidData,
+			"unsupported segment version",
+		));
+	}
+	let mut buff = Vec::new();
+	decoder.read_to_end(&mut buff)?;
+	let mut ptr = 0;
+	let mut logs = Vec::new();
+	loop {
+		match LogEntry::fast_deserialize(&buff, &mut ptr) {
+			Ok(log) => logs.push(log),
+			Err(LogentryDeserializerError::NotEnoughData) => break,
+			Err(err) => {
+				log::warn!(
+					"Failed to deserialize log entry from {}: {:?}",
+					path.display(),
+					err
+				);
+				continue;
+			}
+		}
+	}
+	Ok(logs)
 }
 
 fn segment_progress_to_json(progress: &SegmentProgress) -> Value {

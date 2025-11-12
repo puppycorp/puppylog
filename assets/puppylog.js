@@ -896,6 +896,7 @@ var devicesPage = async (root) => {
 };
 
 // ts/device-page.ts
+var SEGMENTS_PAGE_SIZE = 20;
 var fetchDevice = async (deviceId) => {
   const response = await fetch(`/api/v1/device/${encodeURIComponent(deviceId)}`);
   if (response.status === 404) {
@@ -905,6 +906,84 @@ var fetchDevice = async (deviceId) => {
     throw new Error(await response.text());
   }
   return await response.json();
+};
+var fetchDeviceSegments = async (deviceId, options) => {
+  const url = new URL("/api/segments", window.location.origin);
+  url.searchParams.append("device_ids[]", deviceId);
+  const count = options?.count ?? SEGMENTS_PAGE_SIZE;
+  url.searchParams.set("count", count.toString());
+  url.searchParams.set("sort", "desc");
+  if (options?.end)
+    url.searchParams.set("end", options.end.toISOString());
+  const response = await fetch(url.toString());
+  if (!response.ok)
+    throw new Error(await response.text());
+  return await response.json();
+};
+var downloadSegmentLogs = async (segmentId, button, statusEl) => {
+  const previousText = button.root.textContent || "Download logs";
+  setStatus(statusEl, "", "idle");
+  button.root.disabled = true;
+  button.root.textContent = "Downloading...";
+  try {
+    const res = await fetch(`/api/v1/segment/${segmentId}/logs.txt`);
+    if (!res.ok)
+      throw new Error(await res.text());
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `segment-${segmentId}.txt`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    setStatus(statusEl, error instanceof Error ? error.message || "Failed to download segment logs." : "Failed to download segment logs.", "error");
+  } finally {
+    button.root.disabled = false;
+    button.root.textContent = previousText;
+  }
+};
+var createSegmentCard = (segment, statusEl) => {
+  const table = new KeyValueTable([
+    {
+      key: "Segment",
+      value: `#${segment.id}`,
+      href: `/segment/${segment.id}`
+    },
+    {
+      key: "First timestamp",
+      value: formatDate(segment.firstTimestamp)
+    },
+    {
+      key: "Last timestamp",
+      value: formatDate(segment.lastTimestamp)
+    },
+    {
+      key: "Logs count",
+      value: formatNumber(segment.logsCount)
+    },
+    {
+      key: "Original size",
+      value: formatBytes(segment.originalSize)
+    },
+    {
+      key: "Compressed size",
+      value: formatBytes(segment.compressedSize)
+    }
+  ]);
+  const segmentCard = new VList({
+    style: { gap: "8px" }
+  });
+  segmentCard.root.classList.add("summary");
+  segmentCard.add(table);
+  const downloadButton = new Button({
+    text: "Download logs (.txt)"
+  });
+  downloadButton.onClick = () => downloadSegmentLogs(segment.id, downloadButton, statusEl);
+  segmentCard.add(downloadButton);
+  return segmentCard;
 };
 var updateDeviceSettings = async (deviceId, payload) => {
   const response = await fetch(`/api/v1/device/${encodeURIComponent(deviceId)}/settings`, {
@@ -1175,6 +1254,82 @@ var devicePage = async (root, deviceId) => {
   };
   metadataSection.add(propsList, addPropButton, metadataSaveButton);
   metadataSection.root.appendChild(metadataStatus);
+  const segmentsSection = createSection("Segments");
+  const segmentsList = new VList({
+    style: {
+      gap: "12px"
+    }
+  });
+  const segmentsStatus = document.createElement("div");
+  setStatus(segmentsStatus, "Loading segments…", "idle");
+  segmentsSection.add(segmentsList);
+  const loadMoreButton = new Button({ text: "Load more segments" });
+  loadMoreButton.root.style.alignSelf = "flex-start";
+  loadMoreButton.root.style.display = "none";
+  segmentsSection.add(loadMoreButton);
+  segmentsSection.root.appendChild(segmentsStatus);
+  content.add(segmentsSection);
+  let segmentsEndDate = null;
+  let segmentsExhausted = false;
+  let segmentsLoading = false;
+  const renderSegments = (segments) => {
+    segments.forEach((segment) => {
+      const card = createSegmentCard(segment, segmentsStatus);
+      segmentsList.add(card);
+    });
+  };
+  const updateLoadMoreVisibility = (lastBatchSize) => {
+    if (segmentsExhausted || lastBatchSize < SEGMENTS_PAGE_SIZE) {
+      loadMoreButton.root.style.display = "none";
+    } else {
+      loadMoreButton.root.style.display = "inline-flex";
+      loadMoreButton.root.disabled = false;
+      loadMoreButton.root.textContent = "Load more segments";
+    }
+  };
+  const loadSegments = async (append) => {
+    if (segmentsLoading)
+      return;
+    segmentsLoading = true;
+    if (!append) {
+      segmentsList.root.innerHTML = "";
+      setStatus(segmentsStatus, "Loading segments…", "idle");
+    } else {
+      loadMoreButton.root.disabled = true;
+      loadMoreButton.root.textContent = "Loading…";
+    }
+    try {
+      const segments = await fetchDeviceSegments(device.id, {
+        count: SEGMENTS_PAGE_SIZE,
+        end: segmentsEndDate
+      });
+      if (segments.length === 0 && !append) {
+        setStatus(segmentsStatus, "No segments for this device yet.", "idle");
+        loadMoreButton.root.style.display = "none";
+        segmentsExhausted = true;
+      } else {
+        setStatus(segmentsStatus, "", "idle");
+        renderSegments(segments);
+        if (segments.length > 0) {
+          const last = segments[segments.length - 1];
+          segmentsEndDate = new Date(last.lastTimestamp);
+        }
+        if (segments.length < SEGMENTS_PAGE_SIZE) {
+          segmentsExhausted = true;
+        }
+        updateLoadMoreVisibility(segments.length);
+      }
+    } catch (error) {
+      setStatus(segmentsStatus, error instanceof Error ? error.message || "Failed to load segments." : "Failed to load segments.", "error");
+      loadMoreButton.root.style.display = "inline-flex";
+      loadMoreButton.root.disabled = false;
+      loadMoreButton.root.textContent = "Retry";
+    } finally {
+      segmentsLoading = false;
+    }
+  };
+  loadMoreButton.onClick = () => loadSegments(true);
+  await loadSegments(false);
 };
 
 // ts/logmsg.ts

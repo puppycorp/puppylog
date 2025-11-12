@@ -134,6 +134,11 @@ async fn main() {
 		.route("/api/v1/segment/{segmentId}", get(controllers::get_segment))
 		.with_state(ctx.clone())
 		.route(
+			"/api/v1/segment/{segmentId}/logs.txt",
+			get(controllers::download_segment_text),
+		)
+		.with_state(ctx.clone())
+		.route(
 			"/api/v1/segment/{segmentId}/props",
 			get(controllers::get_segment_props),
 		)
