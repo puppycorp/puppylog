@@ -1,7 +1,7 @@
 import { showModal } from "./common"
 import { formatLogMsg } from "./logmsg"
 import { saveQuery } from "./queries"
-import { Collapsible, VList } from "./ui"
+import { Button, Collapsible, VList } from "./ui"
 import { Histogram, HistogramItem } from "./histogram"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 import { Navbar } from "./navbar"
@@ -107,6 +107,8 @@ interface LogsSearchPageArgs {
 const MAX_LOG_ENTRIES = 10_000
 const MESSAGE_TRUNCATE_LENGTH = 700
 const OBSERVER_THRESHOLD = 0.1
+const DEFAULT_DOWNLOAD_COUNT = 500
+const MAX_DOWNLOAD_COUNT = 50_000
 
 const LOG_COLORS = {
 	trace: "#6B7280",
@@ -159,6 +161,16 @@ const truncateMessage = (msg: string): string =>
 const formatRawMessage = (msg: string): string =>
 	escapeHTML(msg.replace(/[\r\n]+/g, " "))
 
+const formatDownloadLine = (entry: LogEntry): string => {
+	const propsText =
+		entry.props.length > 0
+			? ` ${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}`
+			: ""
+	const msg = entry.msg.replace(/[\r\n]+/g, " ").trim()
+	const msgText = msg ? ` ${msg}` : ""
+	return `${formatTimestamp(entry.timestamp)} ${entry.level.toUpperCase()}${propsText}${msgText}`
+}
+
 export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const logIds = new Set<string>()
 	const logEntries: LogEntry[] = []
@@ -183,10 +195,6 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	searchTextarea.value = getQueryParam("query") || ""
 	headerControls.appendChild(searchTextarea)
 
-	const rightPanel = document.createElement("div")
-	rightPanel.className = "logs-options-right-panel"
-	headerControls.appendChild(rightPanel)
-
 	const searchButton = document.createElement("button")
 	searchButton.innerHTML = searchSvg
 	searchButton.setAttribute("aria-busy", "false")
@@ -196,10 +204,21 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	stopButton.disabled = true
 	stopButton.style.display = "none"
 
+	const downloadButton = document.createElement("button")
+	downloadButton.textContent = "Download"
+
+	const actionBar = document.createElement("div")
+	actionBar.className = "logs-action-bar"
+	headerControls.appendChild(actionBar)
+
 	const searchControls = document.createElement("div")
 	searchControls.className = "logs-search-controls"
-	searchControls.append(searchButton, stopButton)
-	rightPanel.append(searchControls)
+	searchControls.append(searchButton, stopButton, downloadButton)
+	actionBar.appendChild(searchControls)
+
+	const viewActions = document.createElement("div")
+	viewActions.className = "logs-view-actions"
+	actionBar.appendChild(viewActions)
 
 	const viewToggleWrapper = document.createElement("label")
 	viewToggleWrapper.className = "logs-view-toggle"
@@ -217,7 +236,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	viewRaw.textContent = "Raw text"
 	viewToggle.append(viewStructured, viewRaw)
 	viewToggleWrapper.append(viewToggleLabel, viewToggle)
-	rightPanel.appendChild(viewToggleWrapper)
+	viewActions.appendChild(viewToggleWrapper)
 	const wrapToggleWrapper = document.createElement("label")
 	wrapToggleWrapper.className = "logs-raw-wrap-toggle"
 	wrapToggleWrapper.style.display = "none"
@@ -228,7 +247,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const wrapToggleLabel = document.createElement("span")
 	wrapToggleLabel.textContent = "Wrap raw logs"
 	wrapToggleWrapper.append(wrapToggle, wrapToggleLabel)
-	rightPanel.appendChild(wrapToggleWrapper)
+	viewActions.appendChild(wrapToggleWrapper)
 	wrapToggle.addEventListener("change", () => {
 		rawWrapEnabled = wrapToggle.checked
 		renderLogs()
@@ -347,6 +366,104 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const logsList = document.createElement("div")
 	logsList.className = "logs-list"
 	args.root.appendChild(logsList)
+
+	const fetchLogsForDownload = async (count: number): Promise<LogEntry[]> => {
+		const query = searchTextarea.value.trim()
+		if (query) {
+			const validationError = await args.validateQuery(query)
+			if (validationError) throw new Error(validationError)
+		}
+		const params = new URLSearchParams()
+		if (query) params.set("query", query)
+		params.set(
+			"count",
+			Math.max(1, Math.min(MAX_DOWNLOAD_COUNT, count)).toString(),
+		)
+		params.set("tzOffset", new Date().getTimezoneOffset().toString())
+		const res = await fetch(`/api/logs?${params.toString()}`, {
+			headers: {
+				Accept: "application/json",
+			},
+		})
+		if (!res.ok) {
+			const message = await res.text()
+			throw new Error(message || "Failed to download logs")
+		}
+		return (await res.json()) as LogEntry[]
+	}
+
+	const saveLogsToFile = (entries: LogEntry[]) => {
+		if (entries.length === 0)
+			throw new Error("No logs matched the current query.")
+		const content = entries
+			.map((entry) => formatDownloadLine(entry))
+			.join("\n")
+		const blob = new Blob([content], { type: "text/plain" })
+		const url = URL.createObjectURL(blob)
+		const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+		const filename = `puppylog-${entries.length}-logs-${timestamp}.log`
+		const anchor = document.createElement("a")
+		anchor.href = url
+		anchor.download = filename
+		document.body.appendChild(anchor)
+		anchor.click()
+		anchor.remove()
+		URL.revokeObjectURL(url)
+	}
+
+	const openDownloadModal = () => {
+		const modalContent = document.createElement("div")
+		modalContent.className = "logs-download-modal"
+		const description = document.createElement("p")
+		description.textContent = `Download up to ${MAX_DOWNLOAD_COUNT.toLocaleString()} logs that match the current query.`
+		const inputLabel = document.createElement("label")
+		inputLabel.textContent = "Number of logs"
+		const countInput = document.createElement("input")
+		countInput.type = "number"
+		countInput.min = "1"
+		countInput.max = MAX_DOWNLOAD_COUNT.toString()
+		countInput.value = DEFAULT_DOWNLOAD_COUNT.toString()
+		countInput.inputMode = "numeric"
+		const errorEl = document.createElement("div")
+		errorEl.className = "logs-download-error"
+		modalContent.append(description, inputLabel, countInput, errorEl)
+
+		const cancelButton = new Button({ text: "Cancel" })
+		const confirmButton = new Button({ text: "Download" })
+		const closeModal = showModal({
+			title: "Download logs",
+			minWidth: 360,
+			content: modalContent,
+			footer: [cancelButton, confirmButton],
+		})
+
+		cancelButton.onClick = () => closeModal()
+		confirmButton.onClick = async () => {
+			errorEl.textContent = ""
+			let desired = Number(countInput.value)
+			if (!Number.isFinite(desired) || desired <= 0) {
+				errorEl.textContent = "Enter a positive number."
+				return
+			}
+			if (desired > MAX_DOWNLOAD_COUNT) desired = MAX_DOWNLOAD_COUNT
+			confirmButton.root.disabled = true
+			confirmButton.root.textContent = "Downloading…"
+			try {
+				const entries = await fetchLogsForDownload(desired)
+				saveLogsToFile(entries)
+				closeModal()
+			} catch (err) {
+				errorEl.textContent =
+					err instanceof Error
+						? err.message
+						: "Unable to download logs"
+			} finally {
+				confirmButton.root.disabled = false
+				confirmButton.root.textContent = "Download"
+			}
+		}
+		countInput.select()
+	}
 
 	// Separate sentinel for infinite scroll
 	const scrollSentinel = document.createElement("div")
@@ -562,6 +679,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	})
 	searchButton.addEventListener("click", () => queryLogs(true))
 	stopButton.addEventListener("click", stopSearch)
+	downloadButton.addEventListener("click", openDownloadModal)
 
 	const observer = new IntersectionObserver(
 		(entries) => {
