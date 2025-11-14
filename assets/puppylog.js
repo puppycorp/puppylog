@@ -2415,9 +2415,32 @@ var PivotPage = (root) => {
 };
 
 // ts/segment-page.ts
-var fetchSegments = async (end) => {
+var SEGMENTS_PAGE_SIZE2 = 50;
+var parseDateInput = (value) => {
+  if (!value)
+    return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+var formatDateInputValue = (date) => {
+  if (!date)
+    return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+};
+var fetchSegments = async (args) => {
   const url = new URL("/api/segments", window.location.origin);
-  url.searchParams.set("end", end.toISOString());
+  url.searchParams.set("end", args.end.toISOString());
+  url.searchParams.set("sort", "desc");
+  const count = args.count ?? SEGMENTS_PAGE_SIZE2;
+  url.searchParams.set("count", count.toString());
+  if (args.start)
+    url.searchParams.set("start", args.start.toISOString());
   const res = await fetch(url.toString()).then((res2) => res2.json());
   return res;
 };
@@ -2469,48 +2492,156 @@ var segmentsPage = async (root) => {
   });
   const navbar = new Navbar({ right: [metadataCollapsible] });
   root.add(navbar);
+  const filtersPanel = document.createElement("div");
+  filtersPanel.style.display = "flex";
+  filtersPanel.style.flexWrap = "wrap";
+  filtersPanel.style.gap = "12px";
+  filtersPanel.style.alignItems = "flex-end";
+  filtersPanel.style.padding = "0 16px";
+  filtersPanel.style.marginBottom = "8px";
+  const createLabeledInput = (labelText) => {
+    const wrapper = document.createElement("label");
+    wrapper.style.display = "flex";
+    wrapper.style.flexDirection = "column";
+    wrapper.style.fontSize = "12px";
+    const label = document.createElement("span");
+    label.textContent = labelText;
+    label.style.marginBottom = "4px";
+    const input = document.createElement("input");
+    input.type = "datetime-local";
+    input.style.padding = "6px 8px";
+    input.style.border = "1px solid #d1d5db";
+    input.style.borderRadius = "4px";
+    wrapper.append(label, input);
+    return { wrapper, input };
+  };
+  const startInput = createLabeledInput("Start time");
+  const endInput = createLabeledInput("End time");
+  const applyFiltersButton = new Button({ text: "Apply" });
+  const clearFiltersButton = new Button({ text: "Clear" });
+  const filterStatus = document.createElement("div");
+  filterStatus.style.minHeight = "18px";
+  filterStatus.style.fontSize = "12px";
+  filterStatus.style.color = "#6b7280";
+  filterStatus.style.flexBasis = "100%";
+  filtersPanel.append(startInput.wrapper, endInput.wrapper, applyFiltersButton.root, clearFiltersButton.root, filterStatus);
+  root.root.appendChild(filtersPanel);
   const segmentList = new WrapList;
   const infiniteScroll = new InfiniteScroll({
     container: segmentList
   });
   root.add(infiniteScroll);
-  let endDate = new Date;
-  infiniteScroll.onLoadMore = async () => {
-    console.log("loadMore");
-    const segments = await fetchSegments(endDate);
-    endDate = new Date(segments[segments.length - 1].lastTimestamp);
-    for (const segment of segments) {
-      const table = new KeyValueTable([
-        {
-          key: "Segment ID",
-          value: segment.id.toString(),
-          href: `/segment/${segment.id}`
-        },
-        {
-          key: "First timestamp",
-          value: formatTimestamp(segment.firstTimestamp)
-        },
-        {
-          key: "Last timestamp",
-          value: formatTimestamp(segment.lastTimestamp)
-        },
-        {
-          key: "Original size",
-          value: formatBytes(segment.originalSize)
-        },
-        {
-          key: "Compressed size",
-          value: formatBytes(segment.compressedSize)
-        },
-        { key: "Logs count", value: formatNumber(segment.logsCount) },
-        {
-          key: "Compression ratio",
-          value: (segment.compressedSize / segment.originalSize * 100).toFixed(2) + "%"
+  let filterStart = null;
+  let filterEnd = null;
+  let cursorEnd = new Date;
+  let isLoadingSegments = false;
+  let segmentsExhausted = false;
+  const setFilterStatus = (message, type) => {
+    filterStatus.textContent = message;
+    if (type === "error")
+      filterStatus.style.color = "#b91c1c";
+    else if (type === "info")
+      filterStatus.style.color = "#047857";
+    else
+      filterStatus.style.color = "#6b7280";
+  };
+  const renderSegmentCard = (segment) => {
+    const table = new KeyValueTable([
+      {
+        key: "Segment ID",
+        value: segment.id.toString(),
+        href: `/segment/${segment.id}`
+      },
+      {
+        key: "First timestamp",
+        value: formatTimestamp(segment.firstTimestamp)
+      },
+      {
+        key: "Last timestamp",
+        value: formatTimestamp(segment.lastTimestamp)
+      },
+      {
+        key: "Original size",
+        value: formatBytes(segment.originalSize)
+      },
+      {
+        key: "Compressed size",
+        value: formatBytes(segment.compressedSize)
+      },
+      { key: "Logs count", value: formatNumber(segment.logsCount) },
+      {
+        key: "Compression ratio",
+        value: (segment.compressedSize / segment.originalSize * 100).toFixed(2) + "%"
+      }
+    ]);
+    segmentList.add(table);
+  };
+  const resetSegments = () => {
+    segmentList.root.innerHTML = "";
+    cursorEnd = filterEnd ? new Date(filterEnd) : new Date;
+    segmentsExhausted = false;
+  };
+  const loadMoreSegments = async (initial = false) => {
+    if (segmentsExhausted || isLoadingSegments || !cursorEnd)
+      return;
+    isLoadingSegments = true;
+    if (initial)
+      setFilterStatus("Loading segments…", "idle");
+    try {
+      const segments = await fetchSegments({
+        end: cursorEnd,
+        start: filterStart
+      });
+      if (segments.length === 0 && initial) {
+        setFilterStatus("No segments match the current filters.", "idle");
+        segmentsExhausted = true;
+      } else {
+        setFilterStatus("", "idle");
+        for (const segment of segments)
+          renderSegmentCard(segment);
+        if (segments.length > 0) {
+          const last = segments[segments.length - 1];
+          cursorEnd = new Date(last.lastTimestamp);
         }
-      ]);
-      segmentList.add(table);
+        if (segments.length < SEGMENTS_PAGE_SIZE2) {
+          segmentsExhausted = true;
+        }
+      }
+    } catch (error) {
+      setFilterStatus(error instanceof Error ? error.message || "Failed to load segments." : "Failed to load segments.", "error");
+    } finally {
+      isLoadingSegments = false;
     }
   };
+  infiniteScroll.onLoadMore = async () => {
+    if (!segmentsExhausted)
+      await loadMoreSegments();
+  };
+  const applyFilters = async () => {
+    const newStart = parseDateInput(startInput.input.value);
+    const newEnd = parseDateInput(endInput.input.value);
+    if (newStart && newEnd && newStart > newEnd) {
+      setFilterStatus("Start time must be before end time.", "error");
+      return;
+    }
+    filterStart = newStart;
+    filterEnd = newEnd;
+    resetSegments();
+    await loadMoreSegments(true);
+  };
+  const clearFilters = async () => {
+    filterStart = null;
+    filterEnd = null;
+    startInput.input.value = "";
+    endInput.input.value = "";
+    resetSegments();
+    await loadMoreSegments(true);
+  };
+  applyFiltersButton.onClick = applyFilters;
+  clearFiltersButton.onClick = clearFilters;
+  startInput.input.value = formatDateInputValue(filterStart);
+  endInput.input.value = formatDateInputValue(filterEnd);
+  await loadMoreSegments(true);
 };
 var segmentPage = async (root, segmentId) => {
   const segment = await fetch(`/api/v1/segment/${segmentId}`).then((res) => res.json());
