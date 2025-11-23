@@ -1103,9 +1103,7 @@ mod tests {
 		}
 
 		assert_eq!(entries.len(), 2);
-		assert!(entries
-			.iter()
-			.any(|e| e.level == LogLevel::Error));
+		assert!(entries.iter().any(|e| e.level == LogLevel::Error));
 		assert!(entries.iter().any(|e| e.level == LogLevel::Warn));
 	}
 
@@ -1367,7 +1365,11 @@ mod tests {
 		query.end_date = Some(now);
 		let (tx, mut rx) = mpsc::channel(32);
 		let mut searcher = env.searcher();
-		searcher.window = Duration::hours(96).to_std().ok().map(|_| chrono::Duration::hours(96)).unwrap();
+		searcher.window = Duration::hours(96)
+			.to_std()
+			.ok()
+			.map(|_| chrono::Duration::hours(96))
+			.unwrap();
 		searcher.search(query, &tx).await.unwrap();
 		drop(tx);
 
