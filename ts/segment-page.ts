@@ -178,7 +178,10 @@ export const segmentsPage = async (root: Container) => {
 	let isLoadingSegments = false
 	let segmentsExhausted = false
 
-	const setFilterStatus = (message: string, type: "info" | "error" | "idle") => {
+	const setFilterStatus = (
+		message: string,
+		type: "info" | "error" | "idle",
+	) => {
 		filterStatus.textContent = message
 		if (type === "error") filterStatus.style.color = "#b91c1c"
 		else if (type === "info") filterStatus.style.color = "#047857"
@@ -237,7 +240,10 @@ export const segmentsPage = async (root: Container) => {
 				start: filterStart,
 			})
 			if (segments.length === 0 && initial) {
-				setFilterStatus("No segments match the current filters.", "idle")
+				setFilterStatus(
+					"No segments match the current filters.",
+					"idle",
+				)
 				segmentsExhausted = true
 			} else {
 				setFilterStatus("", "idle")
