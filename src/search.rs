@@ -321,8 +321,8 @@ impl<'a> LogSearcher<'a> {
 					&tz,
 				);
 				if !time_match {
-					// Only time mismatch changes the `end` scan position.
-					end = segment.first_timestamp;
+					// IMPORTANT: do NOT move `end` here; otherwise segments from
+					// different days will cut off logs from the target time range.
 					continue;
 				}
 
