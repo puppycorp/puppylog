@@ -592,4 +592,558 @@ mod tests {
 		assert_eq!(entries[0].msg, "only-me");
 		assert_eq!(segments, vec![seg1]);
 	}
+
+	#[tokio::test]
+	async fn search_filters_by_level() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		// Add logs with different levels to memory
+		{
+			let mut current = env.current.lock().await;
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(3),
+				level: LogLevel::Error,
+				props: vec![],
+				msg: "error-log".into(),
+				..Default::default()
+			});
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(2),
+				level: LogLevel::Info,
+				props: vec![],
+				msg: "info-log".into(),
+				..Default::default()
+			});
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(1),
+				level: LogLevel::Debug,
+				props: vec![],
+				msg: "debug-log".into(),
+				..Default::default()
+			});
+			current.sort();
+		}
+
+		let mut query = parse_log_query("level = error").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		assert_eq!(entries.len(), 1);
+		assert_eq!(entries[0].msg, "error-log");
+		assert_eq!(entries[0].level, LogLevel::Error);
+	}
+
+	#[tokio::test]
+	async fn search_filters_by_property() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		{
+			let mut current = env.current.lock().await;
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(2),
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "service".into(),
+					value: "auth".into(),
+				}],
+				msg: "auth-log".into(),
+				..Default::default()
+			});
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(1),
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "service".into(),
+					value: "api".into(),
+				}],
+				msg: "api-log".into(),
+				..Default::default()
+			});
+			current.sort();
+		}
+
+		let mut query = parse_log_query("service = auth").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		assert_eq!(entries.len(), 1);
+		assert_eq!(entries[0].msg, "auth-log");
+	}
+
+	#[tokio::test]
+	async fn search_combines_memory_and_archive() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		// Add a log entry to archived segment
+		let archived_entry = LogEntry {
+			timestamp: now - Duration::hours(30),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "source".into(),
+				value: "test".into(),
+			}],
+			msg: "archived-log".into(),
+			..Default::default()
+		};
+		env.persist_segment(&archived_entry, None).await;
+
+		// Add a log entry to memory
+		{
+			let mut current = env.current.lock().await;
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(1),
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "source".into(),
+					value: "test".into(),
+				}],
+				msg: "memory-log".into(),
+				..Default::default()
+			});
+			current.sort();
+		}
+
+		let mut query = parse_log_query("source = test").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		assert_eq!(entries.len(), 2);
+		// Results should be in reverse chronological order (newest first)
+		assert_eq!(entries[0].msg, "memory-log");
+		assert_eq!(entries[1].msg, "archived-log");
+	}
+
+	#[tokio::test]
+	async fn search_returns_empty_for_no_matches() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		{
+			let mut current = env.current.lock().await;
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(1),
+				level: LogLevel::Info,
+				props: vec![],
+				msg: "existing-log".into(),
+				..Default::default()
+			});
+			current.sort();
+		}
+
+		let mut query = parse_log_query("msg = \"nonexistent\"").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		assert!(entries.is_empty());
+	}
+
+	#[tokio::test]
+	async fn search_emits_progress_events() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		{
+			let mut current = env.current.lock().await;
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(1),
+				level: LogLevel::Info,
+				props: vec![],
+				msg: "test-log".into(),
+				..Default::default()
+			});
+			current.sort();
+		}
+
+		let mut query = parse_log_query("level = info").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut progress_count = 0;
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::SearchProgress(_) = item {
+				progress_count += 1;
+			}
+		}
+
+		// Should have at least one progress event
+		assert!(progress_count >= 1);
+	}
+
+	#[tokio::test]
+	async fn search_emits_segment_progress() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		let entry = LogEntry {
+			timestamp: now - Duration::hours(30),
+			level: LogLevel::Info,
+			props: vec![],
+			msg: "segment-log".into(),
+			..Default::default()
+		};
+		let seg_id = env.persist_segment(&entry, None).await;
+
+		let mut query = parse_log_query("msg = \"segment-log\"").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut segment_progress = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::SegmentProgress(progress) = item {
+				segment_progress.push(progress);
+			}
+		}
+
+		assert_eq!(segment_progress.len(), 1);
+		assert_eq!(segment_progress[0].segment_id, seg_id);
+		assert_eq!(segment_progress[0].logs_count, 1);
+	}
+
+	#[tokio::test]
+	async fn search_handles_multiple_segments() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		// Create multiple segments at different times
+		for i in 1..=3 {
+			let entry = LogEntry {
+				timestamp: now - Duration::hours(i * 10),
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "batch".into(),
+					value: "test".into(),
+				}],
+				msg: format!("log-{}", i),
+				..Default::default()
+			};
+			env.persist_segment(&entry, None).await;
+		}
+
+		let mut query = parse_log_query("batch = test").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(32);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		let mut segments = Vec::new();
+		while let Some(item) = rx.recv().await {
+			match item {
+				LogStreamItem::Entry(log) => entries.push(log),
+				LogStreamItem::SegmentProgress(progress) => segments.push(progress.segment_id),
+				_ => {}
+			}
+		}
+
+		assert_eq!(entries.len(), 3);
+		assert_eq!(segments.len(), 3);
+	}
+
+	#[tokio::test]
+	async fn search_stops_when_channel_closed() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		// Add multiple entries to memory
+		{
+			let mut current = env.current.lock().await;
+			for i in 0..100 {
+				current.add_log_entry(LogEntry {
+					timestamp: now - Duration::seconds(i),
+					level: LogLevel::Info,
+					props: vec![],
+					msg: format!("log-{}", i),
+					..Default::default()
+				});
+			}
+			current.sort();
+		}
+
+		let mut query = parse_log_query("level = info").unwrap();
+		query.end_date = Some(now);
+		let (tx, rx) = mpsc::channel(1);
+
+		// Drop the receiver immediately to close the channel
+		drop(rx);
+
+		// Search should complete without error even though channel is closed
+		let result = env.searcher().search(query, &tx).await;
+		assert!(result.is_ok());
+	}
+
+	#[tokio::test]
+	async fn search_with_custom_window() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		// Create segment outside default 24h window but within custom window
+		let entry = LogEntry {
+			timestamp: now - Duration::hours(48),
+			level: LogLevel::Info,
+			props: vec![],
+			msg: "old-log".into(),
+			..Default::default()
+		};
+		env.persist_segment(&entry, None).await;
+
+		let mut searcher = env.searcher();
+		searcher.window = chrono::Duration::hours(72);
+
+		let mut query = parse_log_query("msg = \"old-log\"").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		searcher.search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		assert_eq!(entries.len(), 1);
+		assert_eq!(entries[0].msg, "old-log");
+	}
+
+	#[tokio::test]
+	async fn search_with_msg_like_pattern() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		{
+			let mut current = env.current.lock().await;
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(3),
+				level: LogLevel::Error,
+				props: vec![],
+				msg: "connection error: timeout".into(),
+				..Default::default()
+			});
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(2),
+				level: LogLevel::Info,
+				props: vec![],
+				msg: "connection established".into(),
+				..Default::default()
+			});
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(1),
+				level: LogLevel::Debug,
+				props: vec![],
+				msg: "debug info".into(),
+				..Default::default()
+			});
+			current.sort();
+		}
+
+		let mut query = parse_log_query("msg like \"connection\"").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		assert_eq!(entries.len(), 2);
+		assert!(entries.iter().all(|e| e.msg.contains("connection")));
+	}
+
+	#[tokio::test]
+	async fn search_with_and_condition() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		{
+			let mut current = env.current.lock().await;
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(3),
+				level: LogLevel::Error,
+				props: vec![Prop {
+					key: "service".into(),
+					value: "auth".into(),
+				}],
+				msg: "auth error".into(),
+				..Default::default()
+			});
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(2),
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "service".into(),
+					value: "auth".into(),
+				}],
+				msg: "auth success".into(),
+				..Default::default()
+			});
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(1),
+				level: LogLevel::Error,
+				props: vec![Prop {
+					key: "service".into(),
+					value: "api".into(),
+				}],
+				msg: "api error".into(),
+				..Default::default()
+			});
+			current.sort();
+		}
+
+		let mut query = parse_log_query("level = error and service = auth").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		assert_eq!(entries.len(), 1);
+		assert_eq!(entries[0].msg, "auth error");
+	}
+
+	#[tokio::test]
+	async fn search_with_or_condition() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		{
+			let mut current = env.current.lock().await;
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(3),
+				level: LogLevel::Error,
+				props: vec![],
+				msg: "error log".into(),
+				..Default::default()
+			});
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(2),
+				level: LogLevel::Warn,
+				props: vec![],
+				msg: "warn log".into(),
+				..Default::default()
+			});
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::seconds(1),
+				level: LogLevel::Info,
+				props: vec![],
+				msg: "info log".into(),
+				..Default::default()
+			});
+			current.sort();
+		}
+
+		let mut query = parse_log_query("level = error or level = warn").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		assert_eq!(entries.len(), 2);
+		assert!(entries
+			.iter()
+			.any(|e| e.level == LogLevel::Error));
+		assert!(entries.iter().any(|e| e.level == LogLevel::Warn));
+	}
+
+	#[tokio::test]
+	async fn search_respects_end_date_boundary() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		{
+			let mut current = env.current.lock().await;
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::hours(2),
+				level: LogLevel::Info,
+				props: vec![],
+				msg: "old-log".into(),
+				..Default::default()
+			});
+			current.add_log_entry(LogEntry {
+				timestamp: now - Duration::minutes(30),
+				level: LogLevel::Info,
+				props: vec![],
+				msg: "recent-log".into(),
+				..Default::default()
+			});
+			current.sort();
+		}
+
+		// Set end_date to 1 hour ago, should exclude "recent-log"
+		let mut query = parse_log_query("level = info").unwrap();
+		query.end_date = Some(now - Duration::hours(1));
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		assert_eq!(entries.len(), 1);
+		assert_eq!(entries[0].msg, "old-log");
+	}
 }
