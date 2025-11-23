@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::db::DB;
 use crate::segment::LogSegment;
-use crate::types::GetSegmentsQuery;
+use crate::types::{GetSegmentsQuery, SortDir};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -264,6 +264,7 @@ impl<'a> LogSearcher<'a> {
 					} else {
 						Some(device_ids.clone())
 					},
+					sort: Some(SortDir::Desc),
 					..Default::default()
 				})
 				.await
