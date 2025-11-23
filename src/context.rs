@@ -1,6 +1,8 @@
 use crate::db::open_db;
 use crate::db::NewSegmentArgs;
 use crate::db::DB;
+use crate::search::LogSearcher;
+pub use crate::search::{LogStreamItem, SearchProgress, SegmentProgress};
 use crate::segment::compress_segment;
 use crate::segment::LogSegment;
 use crate::settings::Settings;
@@ -12,12 +14,10 @@ use crate::wal::load_logs_from_wal;
 use crate::wal::Wal;
 use chrono::DateTime;
 use chrono::Utc;
-use puppylog::match_date_range;
 use puppylog::LogEntry;
 use puppylog::Prop;
 use puppylog::PuppylogEvent;
 use puppylog::QueryAst;
-use puppylog::{check_expr, check_props, extract_device_ids, timestamp_bounds};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
@@ -30,75 +30,12 @@ use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
-use tokio::time::timeout;
 
-use serde::Serialize;
 use tokio::sync::Mutex;
 
 const CONCURRENCY_LIMIT: usize = 10;
 /// Default number of buffered log entries before logs are flushed to disk.
 pub const UPLOAD_FLUSH_THRESHOLD: usize = 3_000_000;
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SegmentProgress {
-	pub segment_id: u32,
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub device_id: Option<String>,
-	pub first_timestamp: DateTime<Utc>,
-	pub last_timestamp: DateTime<Utc>,
-	pub logs_count: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SearchProgress {
-	pub processed_logs: u64,
-	pub logs_per_second: f64,
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub status: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub enum LogStreamItem {
-	Entry(LogEntry),
-	SegmentProgress(SegmentProgress),
-	SearchProgress(SearchProgress),
-}
-
-fn calculate_logs_per_second(processed_logs: u64, search_start: Instant) -> f64 {
-	if processed_logs == 0 {
-		return 0.0;
-	}
-	let seconds = search_start.elapsed().as_secs_f64();
-	if seconds > 0.0 {
-		processed_logs as f64 / seconds
-	} else {
-		0.0
-	}
-}
-
-async fn send_search_progress(
-	tx: &mpsc::Sender<LogStreamItem>,
-	processed_logs: u64,
-	logs_per_second: f64,
-	status: Option<&str>,
-) -> bool {
-	tx.send(LogStreamItem::SearchProgress(SearchProgress {
-		processed_logs,
-		logs_per_second,
-		status: status.map(|s| s.to_string()),
-	}))
-	.await
-	.is_err()
-}
-
-fn should_emit_progress(processed_logs: u64, last_emit: &Instant) -> bool {
-	processed_logs == 0
-		|| processed_logs == 1
-		|| processed_logs % 1_000 == 0
-		|| last_emit.elapsed() >= Duration::from_millis(500)
-}
 
 #[derive(Debug)]
 pub struct Context {
@@ -296,299 +233,8 @@ impl Context {
 		query: QueryAst,
 		tx: &mpsc::Sender<LogStreamItem>,
 	) -> anyhow::Result<()> {
-		let search_start = Instant::now();
-		let mut processed_logs: u64 = 0;
-		let mut last_progress_emit = search_start;
-
-		let mut end = query.end_date.unwrap_or(Utc::now());
-		let device_ids = extract_device_ids(&query.root);
-		let tz = query
-			.tz_offset
-			.unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap());
-		let (start_bound, end_bound) = timestamp_bounds(&query.root);
-		log::info!(
-			"start_bound = {:?}, end_bound = {:?}",
-			start_bound,
-			end_bound
-		);
-		if let Some(e) = end_bound {
-			if e < end {
-				end = e;
-			}
-		}
-		match timeout(Duration::from_millis(100), self.current.lock()).await {
-			Ok(current) => {
-				let mut end = end;
-				let iter = current.iter();
-				for entry in iter {
-					if tx.is_closed() {
-						return Ok(());
-					}
-					processed_logs += 1;
-					if should_emit_progress(processed_logs, &last_progress_emit) {
-						let speed = calculate_logs_per_second(processed_logs, search_start);
-						if send_search_progress(tx, processed_logs, speed, None).await {
-							return Ok(());
-						}
-						last_progress_emit = Instant::now();
-					}
-					if entry.timestamp > end {
-						continue;
-					}
-					if let Some(start) = start_bound {
-						if entry.timestamp < start {
-							continue;
-						}
-					}
-					end = entry.timestamp;
-					match check_expr(&query.root, entry, &tz) {
-						Ok(true) => {}
-						_ => continue,
-					}
-					if tx.send(LogStreamItem::Entry(entry.clone())).await.is_err() {
-						return Ok(());
-					}
-				}
-			}
-			Err(_) => {
-				if last_progress_emit.elapsed() >= Duration::from_millis(500) {
-					let speed = calculate_logs_per_second(processed_logs, search_start);
-					if send_search_progress(
-						tx,
-						processed_logs,
-						speed,
-						Some("waiting for in-memory log buffer"),
-					)
-					.await
-					{
-						return Ok(());
-					}
-					last_progress_emit = Instant::now();
-				}
-			}
-		}
-		log::info!("looking from archive");
-		let window = chrono::Duration::hours(24);
-		let mut prev_end: Option<DateTime<Utc>> = Some(end);
-		let mut processed_segments: HashSet<u32> = HashSet::new();
-		log::info!("prev_end: {:?}", prev_end);
-
-		'outer: loop {
-			if tx.is_closed() {
-				break;
-			}
-			let current_prev = match prev_end {
-				Some(ts) => ts,
-				None => {
-					log::info!("no previous end; stopping");
-					break;
-				}
-			};
-			let end_exists = self
-				.db
-				.segment_exists_at(
-					current_prev,
-					if device_ids.is_empty() {
-						None
-					} else {
-						Some(&device_ids)
-					},
-				)
-				.await?;
-			let mut end = if end_exists {
-				current_prev
-			} else {
-				match self
-					.db
-					.prev_segment_end(
-						Some(&current_prev),
-						if device_ids.is_empty() {
-							None
-						} else {
-							Some(&device_ids)
-						},
-					)
-					.await?
-				{
-					Some(e) => e,
-					None => {
-						log::info!("no more segments to load");
-						break;
-					}
-				}
-			};
-			if let Some(start) = start_bound {
-				if end < start {
-					break;
-				}
-			}
-			let mut start = end - window;
-			if let Some(bound) = start_bound {
-				if start < bound {
-					start = bound;
-				}
-			}
-			prev_end = Some(start);
-
-			let timer = std::time::Instant::now();
-			if last_progress_emit.elapsed() >= Duration::from_millis(500) {
-				let speed = calculate_logs_per_second(processed_logs, search_start);
-				if send_search_progress(
-					tx,
-					processed_logs,
-					speed,
-					Some("loading matching segments"),
-				)
-				.await
-				{
-					break;
-				}
-				last_progress_emit = Instant::now();
-			}
-			let segments = match self
-				.db
-				.find_segments(&GetSegmentsQuery {
-					start: Some(start),
-					end: Some(end),
-					device_ids: if device_ids.is_empty() {
-						None
-					} else {
-						Some(device_ids.clone())
-					},
-					..Default::default()
-				})
-				.await
-			{
-				Ok(segments) => segments,
-				Err(err) => {
-					log::error!("failed to load segments: {}", err);
-					return Err(err);
-				}
-			};
-			if segments.is_empty() {
-				log::info!("no segments found in the range {} - {}", start, end);
-				break;
-			}
-			log::info!(
-				"found {} segments in range {} - {} in {:?}",
-				segments.len(),
-				start,
-				end,
-				timer.elapsed()
-			);
-			for segment in &segments {
-				if tx.is_closed() {
-					break 'outer;
-				}
-				if !processed_segments.insert(segment.id) {
-					continue;
-				}
-				if last_progress_emit.elapsed() >= Duration::from_millis(500) {
-					let speed = calculate_logs_per_second(processed_logs, search_start);
-					if send_search_progress(
-						tx,
-						processed_logs,
-						speed,
-						Some("loading segment metadata"),
-					)
-					.await
-					{
-						break 'outer;
-					}
-					last_progress_emit = Instant::now();
-				}
-				let props = match self.db.fetch_segment_props(segment.id).await {
-					Ok(props) => props,
-					Err(err) => {
-						log::error!("failed to fetch segment props: {}", err);
-						continue;
-					}
-				};
-				// First check whether the segment’s time window could satisfy the query.
-				let time_match = match_date_range(
-					&query.root,
-					segment.first_timestamp,
-					segment.last_timestamp,
-					&tz,
-				);
-				if !time_match {
-					end = segment.first_timestamp;
-					continue;
-				}
-
-				// Only if the date range fits do we bother checking the segment’s properties.
-				let prop_match = check_props(&query.root, &props).unwrap_or_default();
-				if !prop_match {
-					end = segment.first_timestamp;
-					continue;
-				}
-				if tx
-					.send(LogStreamItem::SegmentProgress(SegmentProgress {
-						segment_id: segment.id,
-						device_id: segment.device_id.clone(),
-						first_timestamp: segment.first_timestamp,
-						last_timestamp: segment.last_timestamp,
-						logs_count: segment.logs_count,
-					}))
-					.await
-					.is_err()
-				{
-					break 'outer;
-				}
-				let path = self.logs_path.join(format!("{}.log", segment.id));
-				log::info!(
-					"loading {} segment {} - {}",
-					segment.id,
-					segment.first_timestamp,
-					segment.last_timestamp
-				);
-				let file: File = match File::open(path) {
-					Ok(file) => file,
-					Err(err) => {
-						log::error!("failed to open log file: {}", err);
-						continue;
-					}
-				};
-				let mut decoder = zstd::Decoder::new(file).unwrap();
-				let segment = LogSegment::parse(&mut decoder);
-				let iter = segment.iter();
-				for entry in iter {
-					if tx.is_closed() {
-						break 'outer;
-					}
-					processed_logs += 1;
-					if should_emit_progress(processed_logs, &last_progress_emit) {
-						let speed = calculate_logs_per_second(processed_logs, search_start);
-						if send_search_progress(tx, processed_logs, speed, None).await {
-							break 'outer;
-						}
-						last_progress_emit = Instant::now();
-					}
-					if entry.timestamp > end {
-						continue;
-					}
-					match check_expr(&query.root, entry, &tz) {
-						Ok(true) => {}
-						_ => continue,
-					}
-					if tx.send(LogStreamItem::Entry(entry.clone())).await.is_err() {
-						log::info!("stopped searching logs at {:?}", entry);
-						break 'outer;
-					}
-				}
-			}
-		}
-		if processed_logs > 0 {
-			let logs_per_second = calculate_logs_per_second(processed_logs, search_start);
-			let _ = tx
-				.send(LogStreamItem::SearchProgress(SearchProgress {
-					processed_logs,
-					logs_per_second,
-					status: None,
-				}))
-				.await;
-		}
-		Ok(())
+		let searcher = LogSearcher::new(&self.db, &self.current, &self.logs_path);
+		searcher.search(query, tx).await
 	}
 
 	pub fn allowed_to_upload(&self) -> bool {

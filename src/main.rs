@@ -20,6 +20,7 @@ mod dev_segment_merger;
 mod device_segment_compactor;
 mod logline;
 mod schema;
+mod search;
 mod segment;
 mod settings;
 mod slack;
