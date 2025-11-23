@@ -1150,4 +1150,238 @@ mod tests {
 		assert_eq!(entries.len(), 1);
 		assert_eq!(entries[0].msg, "old-log");
 	}
+
+	/// Test that segments are processed in reverse chronological order (newest first).
+	/// This ensures logs from different days don't get interleaved based on segment ID.
+	#[tokio::test]
+	async fn search_segments_ordered_by_timestamp_desc() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		// Create segments in non-chronological order (older one first in DB)
+		// This simulates segments being created out of order
+		let old_entry = LogEntry {
+			timestamp: now - Duration::hours(48), // 2 days ago
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "day".into(),
+				value: "old".into(),
+			}],
+			msg: "old-day-log".into(),
+			..Default::default()
+		};
+		env.persist_segment(&old_entry, None).await;
+
+		let new_entry = LogEntry {
+			timestamp: now - Duration::hours(24), // 1 day ago
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "day".into(),
+				value: "new".into(),
+			}],
+			msg: "new-day-log".into(),
+			..Default::default()
+		};
+		env.persist_segment(&new_entry, None).await;
+
+		let mut query = parse_log_query("level = info").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		let mut segment_order = Vec::new();
+		while let Some(item) = rx.recv().await {
+			match item {
+				LogStreamItem::Entry(log) => entries.push(log),
+				LogStreamItem::SegmentProgress(progress) => {
+					segment_order.push(progress.first_timestamp);
+				}
+				_ => {}
+			}
+		}
+
+		assert_eq!(entries.len(), 2);
+		// Results should be in reverse chronological order (newest first)
+		assert_eq!(entries[0].msg, "new-day-log");
+		assert_eq!(entries[1].msg, "old-day-log");
+
+		// Segment progress should also be in descending timestamp order
+		assert_eq!(segment_order.len(), 2);
+		assert!(
+			segment_order[0] > segment_order[1],
+			"Segments should be processed newest first: {:?}",
+			segment_order
+		);
+	}
+
+	/// Test that segments from different days with different devices are processed
+	/// in correct chronological order, not interleaved by device.
+	#[tokio::test]
+	async fn search_multi_device_segments_ordered_chronologically() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		// Create segments for different devices at different times
+		// Device A: older segment (created first in DB)
+		let dev_a_old = LogEntry {
+			timestamp: now - Duration::hours(36),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "deviceId".into(),
+				value: "devA".into(),
+			}],
+			msg: "devA-old".into(),
+			..Default::default()
+		};
+		env.persist_segment(&dev_a_old, Some("devA")).await;
+
+		// Device B: newer segment
+		let dev_b_new = LogEntry {
+			timestamp: now - Duration::hours(12),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "deviceId".into(),
+				value: "devB".into(),
+			}],
+			msg: "devB-new".into(),
+			..Default::default()
+		};
+		env.persist_segment(&dev_b_new, Some("devB")).await;
+
+		// Device A: newest segment (created last in DB but for same device as first)
+		let dev_a_new = LogEntry {
+			timestamp: now - Duration::hours(6),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "deviceId".into(),
+				value: "devA".into(),
+			}],
+			msg: "devA-new".into(),
+			..Default::default()
+		};
+		env.persist_segment(&dev_a_new, Some("devA")).await;
+
+		let mut query = parse_log_query("level = info").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(32);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		assert_eq!(entries.len(), 3);
+		// Should be in reverse chronological order regardless of device
+		assert_eq!(entries[0].msg, "devA-new"); // 6 hours ago
+		assert_eq!(entries[1].msg, "devB-new"); // 12 hours ago
+		assert_eq!(entries[2].msg, "devA-old"); // 36 hours ago
+	}
+
+	/// Test that when searching, segments from different days in a window
+	/// don't interfere with each other - newer segments should be processed
+	/// first and their logs should not be cut off by older segments.
+	#[tokio::test]
+	async fn search_time_filter_doesnt_cut_off_matching_segments() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		// Create segments from different days within the same 48-hour window
+		// The key is that they're created in a specific order in the DB (older first)
+		// but should still be processed in timestamp order (newer first)
+
+		// Segment 1: from 36 hours ago (created first in DB)
+		let older_entry = LogEntry {
+			timestamp: now - Duration::hours(36),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "batch".into(),
+				value: "older".into(),
+			}],
+			msg: "older-segment-log".into(),
+			..Default::default()
+		};
+		env.persist_segment(&older_entry, None).await;
+
+		// Segment 2: from 12 hours ago (created second in DB, but newer timestamp)
+		let newer_entry = LogEntry {
+			timestamp: now - Duration::hours(12),
+			level: LogLevel::Info,
+			props: vec![Prop {
+				key: "batch".into(),
+				value: "newer".into(),
+			}],
+			msg: "newer-segment-log".into(),
+			..Default::default()
+		};
+		env.persist_segment(&newer_entry, None).await;
+
+		// Search for the newer batch only - this tests that the older segment
+		// doesn't interfere with results from the newer segment
+		let mut query = parse_log_query("batch = newer").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(16);
+		env.searcher().search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		// Should get the newer log without interference from the older segment
+		assert_eq!(entries.len(), 1);
+		assert_eq!(entries[0].msg, "newer-segment-log");
+	}
+
+	/// Test that multiple segments from different days in the same search window
+	/// are all returned when no date filter is applied.
+	#[tokio::test]
+	async fn search_returns_all_days_without_date_filter() {
+		let env = TestSearcherEnv::new();
+		let now = Utc::now();
+
+		// Create segments across multiple days
+		for day in 0..3 {
+			let entry = LogEntry {
+				timestamp: now - Duration::hours(day * 24 + 12),
+				level: LogLevel::Info,
+				props: vec![Prop {
+					key: "day".into(),
+					value: format!("day{}", day),
+				}],
+				msg: format!("log-day-{}", day),
+				..Default::default()
+			};
+			env.persist_segment(&entry, None).await;
+		}
+
+		let mut query = parse_log_query("level = info").unwrap();
+		query.end_date = Some(now);
+		let (tx, mut rx) = mpsc::channel(32);
+		let mut searcher = env.searcher();
+		searcher.window = Duration::hours(96).to_std().ok().map(|_| chrono::Duration::hours(96)).unwrap();
+		searcher.search(query, &tx).await.unwrap();
+		drop(tx);
+
+		let mut entries = Vec::new();
+		while let Some(item) = rx.recv().await {
+			if let LogStreamItem::Entry(log) = item {
+				entries.push(log);
+			}
+		}
+
+		assert_eq!(entries.len(), 3);
+		// Verify chronological order (newest first)
+		assert_eq!(entries[0].msg, "log-day-0");
+		assert_eq!(entries[1].msg, "log-day-1");
+		assert_eq!(entries[2].msg, "log-day-2");
+	}
 }
