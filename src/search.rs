@@ -1,6 +1,9 @@
 use chrono::{DateTime, Utc};
-use puppylog::{check_expr, check_props, extract_device_ids, timestamp_bounds, LogEntry, QueryAst};
-use std::collections::HashSet;
+use puppylog::{
+	check_expr, check_props, extract_device_ids, match_date_range, timestamp_bounds, LogEntry,
+	PuppylogEvent, QueryAst,
+};
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -95,7 +98,7 @@ impl<'a> LogSearcher<'a> {
 
 	pub async fn search(
 		&self,
-		query: QueryAst,
+		mut query: QueryAst,
 		tx: &mpsc::Sender<LogStreamItem>,
 	) -> anyhow::Result<()> {
 		let search_start = Instant::now();
