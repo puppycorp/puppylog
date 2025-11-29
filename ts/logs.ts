@@ -5,6 +5,8 @@ import { Button, Collapsible, VList } from "./ui"
 import { Histogram, HistogramItem } from "./histogram"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 import { Navbar } from "./navbar"
+import { createAuthControls } from "./auth"
+import { withAuthQuery } from "./http"
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal"
 
@@ -178,7 +180,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	let rawWrapEnabled = false
 	args.root.innerHTML = ``
 
-	const navbar = new Navbar()
+	const navbar = new Navbar({ right: [createAuthControls()] })
 	args.root.appendChild(navbar.root)
 
 	const header = document.createElement("div")
@@ -293,7 +295,8 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		params.set("tzOffset", new Date().getTimezoneOffset().toString())
 		const url = new URL("/api/v1/logs/histogram", window.location.origin)
 		url.search = params.toString()
-		const es = new EventSource(url)
+		const authedUrl = withAuthQuery(url)
+		const es = new EventSource(authedUrl.toString())
 		es.onmessage = (ev) => {
 			const item = JSON.parse(ev.data) as HistogramItem
 			histogram.add(item)

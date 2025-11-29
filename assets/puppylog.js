@@ -560,16 +560,289 @@ var navigate = (path) => {
   handleRoute(path);
 };
 
+// ts/auth.ts
+var STORAGE_KEY = "puppylog.googleIdToken";
+var configPromise = null;
+var currentUser = null;
+var listeners = [];
+var googleScriptPromise = null;
+var googleClientInitializedFor = null;
+var notify = () => {
+  listeners.forEach((listener) => listener(currentUser));
+};
+var decodeJwt = (token) => {
+  const parts = token.split(".");
+  if (parts.length < 2)
+    return null;
+  const base = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base + "=".repeat((4 - base.length % 4) % 4);
+  try {
+    const json = atob(padded);
+    return JSON.parse(json);
+  } catch (err) {
+    console.error("Failed to decode token", err);
+    return null;
+  }
+};
+var storeUserFromToken = (token) => {
+  if (typeof window === "undefined")
+    return;
+  if (!token) {
+    currentUser = null;
+    window.localStorage.removeItem(STORAGE_KEY);
+    notify();
+    return;
+  }
+  const payload = decodeJwt(token);
+  if (!payload) {
+    currentUser = null;
+    window.localStorage.removeItem(STORAGE_KEY);
+    notify();
+    return;
+  }
+  const expiresAt = typeof payload.exp === "number" ? payload.exp * 1000 : undefined;
+  if (expiresAt && expiresAt <= Date.now()) {
+    currentUser = null;
+    window.localStorage.removeItem(STORAGE_KEY);
+    notify();
+    return;
+  }
+  currentUser = {
+    token,
+    email: payload.email,
+    name: payload.name,
+    picture: payload.picture,
+    expiresAt
+  };
+  window.localStorage.setItem(STORAGE_KEY, token);
+  notify();
+};
+var restoreFromStorage = () => {
+  if (typeof window === "undefined")
+    return;
+  const stored = window.localStorage.getItem(STORAGE_KEY);
+  if (stored) {
+    storeUserFromToken(stored);
+  }
+};
+restoreFromStorage();
+var ensureGoogleScript = async () => {
+  if (typeof window === "undefined")
+    return;
+  if (window.google && window.google.accounts && window.google.accounts.id) {
+    return;
+  }
+  if (!googleScriptPromise) {
+    googleScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      script.onload = () => resolve();
+      script.onerror = (event) => reject(event);
+      document.head.appendChild(script);
+    });
+  }
+  await googleScriptPromise;
+};
+var initializeGoogleClient = async (clientId) => {
+  await ensureGoogleScript();
+  if (!window.google?.accounts?.id) {
+    console.warn("Google Identity Services are unavailable");
+    return false;
+  }
+  if (googleClientInitializedFor !== clientId) {
+    window.google.accounts.id.initialize({
+      client_id: clientId,
+      callback: handleCredential
+    });
+    googleClientInitializedFor = clientId;
+  }
+  return true;
+};
+var hasAuthProviders = (config) => {
+  return Boolean(config.google?.clientId);
+};
+var getAuthConfig = async () => {
+  if (!configPromise) {
+    configPromise = fetch("/api/auth/config").then((response) => {
+      if (!response.ok) {
+        throw new Error(`Failed to load auth config: ${response.status}`);
+      }
+      return response.json();
+    }).catch((error) => {
+      console.warn("Could not load auth config", error);
+      return { enabled: false, google: null };
+    });
+  }
+  return configPromise;
+};
+var getCurrentUser = () => {
+  if (currentUser?.expiresAt && currentUser.expiresAt <= Date.now()) {
+    storeUserFromToken(null);
+  }
+  return currentUser;
+};
+var getIdToken = () => {
+  return getCurrentUser()?.token ?? null;
+};
+var onAuthStateChange = (listener) => {
+  listeners.push(listener);
+  listener(currentUser);
+  return () => {
+    listeners = listeners.filter((item) => item !== listener);
+  };
+};
+var handleCredential = (response) => {
+  storeUserFromToken(response.credential);
+};
+var signOut = () => {
+  if (typeof window !== "undefined" && window.google?.accounts?.id) {
+    try {
+      window.google.accounts.id.disableAutoSelect();
+    } catch (err) {
+      console.warn("Failed to disable auto select", err);
+    }
+  }
+  storeUserFromToken(null);
+};
+var renderGoogleSignInButton = async (container, config, options) => {
+  if (typeof window === "undefined")
+    return false;
+  const effectiveConfig = config ?? await getAuthConfig();
+  if (!effectiveConfig.enabled || !effectiveConfig.google?.clientId) {
+    return false;
+  }
+  const initialized = await initializeGoogleClient(effectiveConfig.google.clientId);
+  if (!initialized) {
+    return false;
+  }
+  container.innerHTML = "";
+  window.google.accounts.id.renderButton(container, {
+    theme: "outline",
+    size: "large",
+    ...options
+  });
+  return true;
+};
+
+class AuthControls extends UiComponent {
+  buttonContainer;
+  userContainer;
+  unsubscribe;
+  config = null;
+  constructor() {
+    super(document.createElement("div"));
+    this.root.classList.add("auth-controls");
+    this.buttonContainer = document.createElement("div");
+    this.buttonContainer.classList.add("auth-controls__buttons");
+    this.userContainer = document.createElement("div");
+    this.userContainer.classList.add("auth-controls__user");
+    this.userContainer.style.display = "none";
+    this.root.append(this.buttonContainer, this.userContainer);
+    this.initialize();
+  }
+  async initialize() {
+    const config = await getAuthConfig();
+    this.config = config;
+    if (!config.enabled || !hasAuthProviders(config)) {
+      this.root.style.display = "none";
+      return;
+    }
+    this.unsubscribe = onAuthStateChange((user) => this.render(user));
+    this.render(getCurrentUser());
+  }
+  render(user) {
+    if (user) {
+      this.buttonContainer.style.display = "none";
+      this.userContainer.style.display = "flex";
+      this.userContainer.innerHTML = "";
+      if (user.picture) {
+        const img = document.createElement("img");
+        img.src = user.picture;
+        img.alt = user.name || user.email || "Account";
+        img.width = 32;
+        img.height = 32;
+        img.referrerPolicy = "no-referrer";
+        img.classList.add("auth-controls__avatar");
+        this.userContainer.appendChild(img);
+      }
+      const label = document.createElement("span");
+      label.textContent = user.name || user.email || "Signed in";
+      label.classList.add("auth-controls__label");
+      this.userContainer.appendChild(label);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Sign out";
+      button.classList.add("auth-controls__signout");
+      button.onclick = () => signOut();
+      this.userContainer.appendChild(button);
+    } else {
+      if (!this.config || !hasAuthProviders(this.config)) {
+        this.root.style.display = "none";
+        return;
+      }
+      this.root.style.display = "flex";
+      this.buttonContainer.style.display = "flex";
+      this.buttonContainer.innerHTML = "";
+      this.userContainer.style.display = "none";
+      this.userContainer.innerHTML = "";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Sign in";
+      button.classList.add("auth-controls__signin");
+      button.onclick = (event) => {
+        event.preventDefault();
+        navigate("/signin");
+      };
+      this.buttonContainer.appendChild(button);
+    }
+  }
+  dispose() {
+    this.unsubscribe?.();
+  }
+}
+var createAuthControls = () => new AuthControls;
+
+// ts/http.ts
+var cachedToken = getIdToken();
+onAuthStateChange((user) => {
+  cachedToken = user?.token ?? null;
+});
+var buildHeaders = (init) => {
+  const headers = new Headers(init?.headers || undefined);
+  if (cachedToken) {
+    headers.set("Authorization", `Bearer ${cachedToken}`);
+  }
+  return headers;
+};
+var apiFetch = async (input, init) => {
+  const response = await fetch(input, {
+    ...init,
+    headers: buildHeaders(init)
+  });
+  if (response.status === 401 && cachedToken) {
+    signOut();
+  }
+  return response;
+};
+var withAuthQuery = (url) => {
+  if (cachedToken) {
+    url.searchParams.set("token", cachedToken);
+  }
+  return url;
+};
+
 // ts/devices.ts
 var saveDeviceSettings = async (device) => {
-  await fetch(`/api/v1/device/${device.id}/settings`, {
+  await apiFetch(`/api/v1/device/${device.id}/settings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(device)
   });
 };
 var bulkEdit = async (args) => {
-  await fetch(`/api/v1/device_bulkedit`, {
+  await apiFetch(`/api/v1/device_bulkedit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(args)
@@ -715,10 +988,10 @@ class DevicesList {
 var devicesPage = async (root) => {
   root.innerHTML = "";
   const page = new Container(root);
-  const navbar = new Navbar;
+  const authControls = createAuthControls();
+  const navbar = new Navbar({ right: [authControls] });
   page.add(navbar);
-  const res = await fetch("/api/v1/devices");
-  const devices = await res.json();
+  const devices = await apiFetch("/api/v1/devices").then((res) => res.json());
   let totalLogsCount = 0, totalLogsSize = 0;
   let earliestTimestamp = Infinity, latestTimestamp = -Infinity;
   let totalLogsPerSecond = 0;
@@ -746,7 +1019,7 @@ var devicesPage = async (root) => {
     buttonText: "Metadata",
     content: metadataTable
   });
-  navbar.setRight([metadataCollapsible]);
+  navbar.setRight([metadataCollapsible, authControls]);
   const sendLogsSearchOption = new SelectGroup({
     label: "Sending logs",
     value: "all",
@@ -898,7 +1171,7 @@ var devicesPage = async (root) => {
 // ts/device-page.ts
 var SEGMENTS_PAGE_SIZE = 20;
 var fetchDevice = async (deviceId) => {
-  const response = await fetch(`/api/v1/device/${encodeURIComponent(deviceId)}`);
+  const response = await apiFetch(`/api/v1/device/${encodeURIComponent(deviceId)}`);
   if (response.status === 404) {
     throw new Error("Device not found");
   }
@@ -986,7 +1259,7 @@ var createSegmentCard = (segment, statusEl) => {
   return segmentCard;
 };
 var updateDeviceSettings = async (deviceId, payload) => {
-  const response = await fetch(`/api/v1/device/${encodeURIComponent(deviceId)}/settings`, {
+  const response = await apiFetch(`/api/v1/device/${encodeURIComponent(deviceId)}/settings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
@@ -996,7 +1269,7 @@ var updateDeviceSettings = async (deviceId, payload) => {
   }
 };
 var updateDeviceMetadata = async (deviceId, props) => {
-  const response = await fetch(`/api/v1/device/${encodeURIComponent(deviceId)}/metadata`, {
+  const response = await apiFetch(`/api/v1/device/${encodeURIComponent(deviceId)}/metadata`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(props)
@@ -1050,7 +1323,7 @@ var setStatus = (element, message, type) => {
 var devicePage = async (root, deviceId) => {
   root.innerHTML = "";
   const page = new Container(root);
-  const navbar = new Navbar;
+  const navbar = new Navbar({ right: [createAuthControls()] });
   page.add(navbar);
   const content = new VList({
     style: {
@@ -1611,7 +1884,7 @@ var logsSearchPage = (args) => {
   let logViewMode = "structured";
   let rawWrapEnabled = false;
   args.root.innerHTML = ``;
-  const navbar = new Navbar;
+  const navbar = new Navbar({ right: [createAuthControls()] });
   args.root.appendChild(navbar.root);
   const header = document.createElement("div");
   header.className = "page-header logs-header";
@@ -1710,7 +1983,8 @@ var logsSearchPage = (args) => {
     params.set("tzOffset", new Date().getTimezoneOffset().toString());
     const url = new URL("/api/v1/logs/histogram", window.location.origin);
     url.search = params.toString();
-    const es = new EventSource(url);
+    const authedUrl = withAuthQuery(url);
+    const es = new EventSource(authedUrl.toString());
     es.onmessage = (ev) => {
       const item = JSON.parse(ev.data);
       histogram.add(item);
@@ -2204,7 +2478,8 @@ var mainPage = (root) => {
       streamQuery.append("tzOffset", new Date().getTimezoneOffset().toString());
       const streamUrl = new URL("/api/logs", window.location.origin);
       streamUrl.search = streamQuery.toString();
-      const eventSource = new EventSource(streamUrl);
+      const authedUrl = withAuthQuery(streamUrl);
+      const eventSource = new EventSource(authedUrl.toString());
       eventSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
         onNewLog(data);
@@ -2224,7 +2499,7 @@ var mainPage = (root) => {
       return () => eventSource.close();
     },
     validateQuery: async (query2) => {
-      let res = await fetch(`/api/v1/validate_query?query=${encodeURIComponent(query2)}`);
+      let res = await apiFetch(`/api/v1/validate_query?query=${encodeURIComponent(query2)}`);
       if (res.status === 200)
         return null;
       return res.text();
@@ -2441,12 +2716,12 @@ var fetchSegments = async (args) => {
   url.searchParams.set("count", count.toString());
   if (args.start)
     url.searchParams.set("start", args.start.toISOString());
-  const res = await fetch(url.toString()).then((res2) => res2.json());
+  const res = await apiFetch(url.toString()).then((res2) => res2.json());
   return res;
 };
 var segmentsPage = async (root) => {
   root.root.innerHTML = "";
-  const segementsMetadata = await fetch("/api/segment/metadata").then((res) => res.json());
+  const segementsMetadata = await apiFetch("/api/segment/metadata").then((res) => res.json());
   const compressionRatio = segementsMetadata.compressedSize / segementsMetadata.originalSize * 100;
   const averageCompressedLogSize = segementsMetadata.compressedSize / segementsMetadata.logsCount;
   const averageOriginalLogSize = segementsMetadata.originalSize / segementsMetadata.logsCount;
@@ -2490,7 +2765,9 @@ var segmentsPage = async (root) => {
     buttonText: "Metadata",
     content: metadata
   });
-  const navbar = new Navbar({ right: [metadataCollapsible] });
+  const navbar = new Navbar({
+    right: [metadataCollapsible, createAuthControls()]
+  });
   root.add(navbar);
   const filtersPanel = document.createElement("div");
   filtersPanel.style.display = "flex";
@@ -2644,33 +2921,38 @@ var segmentsPage = async (root) => {
   await loadMoreSegments(true);
 };
 var segmentPage = async (root, segmentId) => {
-  const segment = await fetch(`/api/v1/segment/${segmentId}`).then((res) => res.json());
-  const props = await fetch(`/api/v1/segment/${segmentId}/props`).then((res) => res.json());
+  const segment = await apiFetch(`/api/v1/segment/${segmentId}`).then((res) => res.json());
+  const props = await apiFetch(`/api/v1/segment/${segmentId}/props`).then((res) => res.json());
   const totalOriginalSize = segment.originalSize;
   const totalCompressedSize = segment.compressedSize;
   const totalLogsCount = segment.logsCount;
   const compressRatio = totalCompressedSize / totalOriginalSize * 100;
-  root.innerHTML = `
-		<div class="page-header">
-			<h1 style="flex-grow: 1">Segment ${segmentId}</h1>
-			<div class="summary">
-				<div><strong>First timestamp:</strong> ${formatTimestamp(segment.firstTimestamp)}</div>
-				<div><strong>Last timestamp:</strong> ${formatTimestamp(segment.lastTimestamp)}</div>
-				<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
-				<div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
-				<div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
-				<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
-			</div>
-		</div>
-		<div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px">
-			${props.map((prop) => `
-				<div class="list-row">
-					<div class="table-cell"><strong>Key:</strong> ${prop.key}</div>
-					<div class="table-cell"><strong>Value:</strong> ${prop.value}</div>
-				</div>
-			`).join("")}
-		</div>
-	`;
+  root.innerHTML = "";
+  const navbar = new Navbar({ right: [createAuthControls()] });
+  root.appendChild(navbar.root);
+  const pageWrapper = document.createElement("div");
+  pageWrapper.innerHTML = `
+                <div class="page-header">
+                        <h1 style="flex-grow: 1">Segment ${segmentId}</h1>
+                        <div class="summary">
+                                <div><strong>First timestamp:</strong> ${formatTimestamp(segment.firstTimestamp)}</div>
+                                <div><strong>Last timestamp:</strong> ${formatTimestamp(segment.lastTimestamp)}</div>
+                                <div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
+                                <div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
+                                <div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
+                                <div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
+                        </div>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px">
+                        ${props.map((prop) => `
+                                <div class="list-row">
+                                        <div class="table-cell"><strong>Key:</strong> ${prop.key}</div>
+                                        <div class="table-cell"><strong>Value:</strong> ${prop.value}</div>
+                                </div>
+                        `).join("")}
+                </div>
+        `;
+  root.appendChild(pageWrapper);
 };
 
 // ts/settings.ts
@@ -2739,9 +3021,10 @@ var queriesPage = (root) => {
 // ts/server.ts
 var serverPage = async (root) => {
   root.root.innerHTML = "";
+  root.add(new Navbar({ right: [createAuthControls()] }));
   let info = null;
   try {
-    info = await fetch("/api/v1/server_info").then((r) => r.json());
+    info = await apiFetch("/api/v1/server_info").then((r) => r.json());
   } catch (e) {
     root.add(new KeyValueTable([{ key: "Error", value: String(e) }]));
     return;
@@ -2762,6 +3045,124 @@ var serverPage = async (root) => {
   ]));
 };
 
+// ts/sign-in-page.ts
+var formatAllowedDomains = (config) => {
+  const domains = config.google?.allowedDomains;
+  if (!domains || domains.length === 0)
+    return null;
+  return domains.join(", ");
+};
+var updateAccountBanner = (banner, avatar, nameEl, emailEl, summary, user) => {
+  if (user) {
+    banner.style.display = "flex";
+    if (user.picture) {
+      avatar.src = user.picture;
+      avatar.alt = user.name || user.email || "Account";
+      avatar.style.display = "block";
+    } else {
+      avatar.removeAttribute("src");
+      avatar.alt = "Account";
+      avatar.style.display = "none";
+    }
+    const displayName = user.name || user.email || "Signed in";
+    nameEl.textContent = displayName;
+    if (user.email && user.email !== displayName) {
+      emailEl.textContent = user.email;
+      emailEl.style.display = "block";
+    } else {
+      emailEl.textContent = "";
+      emailEl.style.display = "none";
+    }
+    summary.textContent = "You're signed in. You can switch accounts below.";
+  } else {
+    banner.style.display = "none";
+    summary.textContent = "Choose a sign-in provider to continue.";
+  }
+};
+var signInPage = async (root) => {
+  root.innerHTML = "";
+  const navbar = new Navbar({ right: [createAuthControls()] });
+  root.appendChild(navbar.root);
+  const page = document.createElement("div");
+  page.className = "signin-page";
+  root.appendChild(page);
+  const title = document.createElement("h1");
+  title.textContent = "Sign in";
+  page.appendChild(title);
+  const summary = document.createElement("p");
+  summary.className = "signin-summary";
+  summary.textContent = "Choose a sign-in provider to continue.";
+  page.appendChild(summary);
+  const accountBanner = document.createElement("div");
+  accountBanner.className = "signin-account";
+  accountBanner.style.display = "none";
+  page.appendChild(accountBanner);
+  const accountAvatar = document.createElement("img");
+  accountAvatar.className = "signin-account__avatar";
+  accountAvatar.alt = "Account";
+  accountAvatar.style.display = "none";
+  accountAvatar.referrerPolicy = "no-referrer";
+  accountBanner.appendChild(accountAvatar);
+  const accountInfo = document.createElement("div");
+  accountInfo.className = "signin-account__info";
+  accountBanner.appendChild(accountInfo);
+  const accountLabel = document.createElement("span");
+  accountLabel.className = "signin-account__label";
+  accountLabel.textContent = "Signed in as";
+  accountInfo.appendChild(accountLabel);
+  const accountName = document.createElement("span");
+  accountName.className = "signin-account__name";
+  accountInfo.appendChild(accountName);
+  const accountEmail = document.createElement("span");
+  accountEmail.className = "signin-account__email";
+  accountInfo.appendChild(accountEmail);
+  const providers = document.createElement("div");
+  providers.className = "signin-providers";
+  page.appendChild(providers);
+  const config = await getAuthConfig();
+  if (!config.enabled || !config.google?.clientId) {
+    summary.textContent = "Authentication is not configured for this server.";
+    providers.style.display = "none";
+    return;
+  }
+  const googleCard = document.createElement("div");
+  googleCard.className = "signin-provider";
+  providers.appendChild(googleCard);
+  const googleTitle = document.createElement("h2");
+  googleTitle.className = "signin-provider__title";
+  googleTitle.textContent = "Google";
+  googleCard.appendChild(googleTitle);
+  const googleDetails = document.createElement("p");
+  googleDetails.className = "signin-provider__details";
+  googleDetails.textContent = "Use your Google account to access PuppyLog.";
+  googleCard.appendChild(googleDetails);
+  const allowedDomains = formatAllowedDomains(config);
+  if (allowedDomains) {
+    const domains = document.createElement("p");
+    domains.className = "signin-provider__domains";
+    domains.textContent = `Allowed domains: ${allowedDomains}`;
+    googleCard.appendChild(domains);
+  }
+  const googleButton = document.createElement("div");
+  googleButton.className = "signin-provider__button";
+  googleCard.appendChild(googleButton);
+  try {
+    const rendered = await renderGoogleSignInButton(googleButton, config, {
+      theme: "outline",
+      size: "large"
+    });
+    if (!rendered) {
+      googleButton.textContent = "Google sign-in is currently unavailable.";
+    }
+  } catch (error) {
+    console.error("Failed to render Google sign-in button", error);
+    googleButton.textContent = "Google sign-in is currently unavailable.";
+  }
+  const initialUser = getCurrentUser();
+  updateAccountBanner(accountBanner, accountAvatar, accountName, accountEmail, summary, initialUser);
+  onAuthStateChange((user) => updateAccountBanner(accountBanner, accountAvatar, accountName, accountEmail, summary, user));
+};
+
 // ts/app.ts
 window.onload = () => {
   const body = document.querySelector("body");
@@ -2773,6 +3174,7 @@ window.onload = () => {
     "/tests/logs": () => logtableTest(body),
     "/settings": () => settingsPage(container),
     "/server": () => serverPage(container),
+    "/signin": () => signInPage(body),
     "/devices": () => devicesPage(body),
     "/device/:deviceId": (params) => devicePage(body, params.deviceId),
     "/segments": () => segmentsPage(container),

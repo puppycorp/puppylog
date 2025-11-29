@@ -9,6 +9,7 @@ import { settingsPage } from "./settings"
 import { Container } from "./ui"
 import { queriesPage } from "./queries"
 import { serverPage } from "./server"
+import { signInPage } from "./sign-in-page"
 
 window.onload = () => {
 	const body = document.querySelector("body")
@@ -20,6 +21,7 @@ window.onload = () => {
 		"/tests/logs": () => logtableTest(body),
 		"/settings": () => settingsPage(container),
 		"/server": () => serverPage(container),
+		"/signin": () => signInPage(body),
 		"/devices": () => devicesPage(body),
 		"/device/:deviceId": (params: any) => devicePage(body, params.deviceId),
 		"/segments": () => segmentsPage(container),

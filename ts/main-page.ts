@@ -4,6 +4,7 @@ import {
 	isSegmentProgressEvent,
 } from "./logs"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
+import { apiFetch, withAuthQuery } from "./http"
 
 export const mainPage = (root: HTMLElement) => {
 	let query: string | undefined = getQueryParam("query") || ""
@@ -21,7 +22,8 @@ export const mainPage = (root: HTMLElement) => {
 			)
 			const streamUrl = new URL("/api/logs", window.location.origin)
 			streamUrl.search = streamQuery.toString()
-			const eventSource = new EventSource(streamUrl)
+			const authedUrl = withAuthQuery(streamUrl)
+			const eventSource = new EventSource(authedUrl.toString())
 			eventSource.onmessage = (event) => {
 				const data = JSON.parse(event.data)
 				onNewLog(data)
@@ -41,7 +43,7 @@ export const mainPage = (root: HTMLElement) => {
 			return () => eventSource.close()
 		},
 		validateQuery: async (query) => {
-			let res = await fetch(
+			let res = await apiFetch(
 				`/api/v1/validate_query?query=${encodeURIComponent(query)}`,
 			)
 			if (res.status === 200) return null

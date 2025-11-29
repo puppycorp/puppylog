@@ -1,5 +1,8 @@
 import { Container, KeyValueTable } from "./ui"
 import { formatBytes } from "./utility"
+import { apiFetch } from "./http"
+import { Navbar } from "./navbar"
+import { createAuthControls } from "./auth"
 
 type ServerInfo = {
 	freeBytes: number
@@ -12,10 +15,11 @@ type ServerInfo = {
 
 export const serverPage = async (root: Container) => {
 	root.root.innerHTML = ""
+	root.add(new Navbar({ right: [createAuthControls()] }))
 
 	let info: ServerInfo | null = null
 	try {
-		info = await fetch("/api/v1/server_info").then((r) => r.json())
+		info = await apiFetch("/api/v1/server_info").then((r) => r.json())
 	} catch (e) {
 		root.add(new KeyValueTable([{ key: "Error", value: String(e) }]))
 		return

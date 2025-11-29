@@ -1,3 +1,4 @@
+use crate::auth::GoogleAuth;
 use crate::db::open_db;
 use crate::db::NewSegmentArgs;
 use crate::db::DB;
@@ -52,6 +53,7 @@ pub struct Context {
 	wal_max_bytes: u64,
 	flush_interval: Duration,
 	last_flush: StdMutex<Instant>,
+	google_auth: Option<GoogleAuth>,
 }
 
 impl Context {
@@ -74,6 +76,7 @@ impl Context {
 		} else {
 			Settings::load().unwrap_or_else(|_| Settings::new())
 		};
+		let google_auth = GoogleAuth::from_env();
 		// Read optional env overrides for WAL/flush policy
 		let wal_max_bytes = std::env::var("WAL_MAX_BYTES")
 			.ok()
@@ -99,6 +102,7 @@ impl Context {
 			wal_max_bytes,
 			flush_interval,
 			last_flush: StdMutex::new(Instant::now()),
+			google_auth,
 		}
 	}
 
@@ -219,6 +223,10 @@ impl Context {
 		if let Ok(mut t) = self.last_flush.lock() {
 			*t = Instant::now();
 		}
+	}
+
+	pub fn google_auth(&self) -> Option<&GoogleAuth> {
+		self.google_auth.as_ref()
 	}
 
 	/// Force a flush of the current in-memory logs to segments and clear WAL,

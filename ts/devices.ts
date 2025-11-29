@@ -17,9 +17,11 @@ import { Navbar } from "./navbar"
 import { formatBytes, formatNumber } from "./utility"
 import { navigate } from "./router"
 import type { Prop } from "./types"
+import { apiFetch } from "./http"
+import { createAuthControls } from "./auth"
 
 const saveDeviceSettings = async (device: DeviceSetting) => {
-	await fetch(`/api/v1/device/${device.id}/settings`, {
+	await apiFetch(`/api/v1/device/${device.id}/settings`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(device),
@@ -32,7 +34,7 @@ const bulkEdit = async (args: {
 	filterLevel: string
 	sendInterval: number
 }) => {
-	await fetch(`/api/v1/device_bulkedit`, {
+	await apiFetch(`/api/v1/device_bulkedit`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(args),
@@ -224,12 +226,14 @@ class DevicesList implements UiComponent<HTMLDivElement> {
 export const devicesPage = async (root: HTMLElement) => {
 	root.innerHTML = ""
 	const page = new Container(root)
-	const navbar = new Navbar()
+	const authControls = createAuthControls()
+	const navbar = new Navbar({ right: [authControls] })
 	page.add(navbar)
 
 	// Fetch and compute metadata
-	const res = await fetch("/api/v1/devices")
-	const devices = (await res.json()) as DeviceSetting[]
+	const devices = (await apiFetch("/api/v1/devices").then((res) =>
+		res.json(),
+	)) as DeviceSetting[]
 	let totalLogsCount = 0,
 		totalLogsSize = 0
 	let earliestTimestamp = Infinity,
@@ -263,7 +267,7 @@ export const devicesPage = async (root: HTMLElement) => {
 		buttonText: "Metadata",
 		content: metadataTable,
 	})
-	navbar.setRight([metadataCollapsible])
+	navbar.setRight([metadataCollapsible, authControls])
 
 	const sendLogsSearchOption = new SelectGroup({
 		label: "Sending logs",

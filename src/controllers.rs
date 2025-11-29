@@ -24,6 +24,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 use zstd::Decoder;
 
+use crate::auth::MaybeAuthUser;
 use crate::config::{log_path, upload_path};
 use crate::context::{Context, LogStreamItem, SearchProgress, SegmentProgress};
 use crate::db::{MetaProp, UpdateDeviceSettings};
@@ -37,6 +38,7 @@ pub(crate) struct GetLogsQuery {
 	pub query: Option<String>,
 	pub end_date: Option<DateTime<Utc>>,
 	pub tz_offset: Option<i32>,
+	pub token: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -46,6 +48,7 @@ pub(crate) struct GetHistogramQuery {
 	pub bucket_secs: Option<u64>,
 	pub end_date: Option<DateTime<Utc>>,
 	pub tz_offset: Option<i32>,
+	pub token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -59,7 +62,21 @@ struct ServerInfo {
 	upload_bytes: u64,
 }
 
-pub async fn get_server_info() -> Json<Value> {
+pub async fn get_auth_config(State(ctx): State<Arc<Context>>) -> Json<Value> {
+	let google = ctx.google_auth().map(|auth| {
+		let cfg = auth.config();
+		json!({
+				"clientId": cfg.client_id,
+				"allowedDomains": cfg.allowed_domains,
+		})
+	});
+	Json(json!({
+			"enabled": google.is_some(),
+			"google": google,
+	}))
+}
+
+pub async fn get_server_info(_auth: MaybeAuthUser) -> Json<Value> {
 	use crate::utility::disk_usage;
 
 	let upload_dir = upload_path();
@@ -109,7 +126,10 @@ pub async fn get_server_info() -> Json<Value> {
 	)
 }
 
-pub async fn get_segment_metadata(State(ctx): State<Arc<Context>>) -> Json<Value> {
+pub async fn get_segment_metadata(
+	_auth: MaybeAuthUser,
+	State(ctx): State<Arc<Context>>,
+) -> Json<Value> {
 	let meta = ctx.db.fetch_segments_metadata().await.unwrap();
 	let avg_logs_per_segment = meta.logs_count as f64 / meta.segment_count as f64;
 	let avg_segment_size = meta.original_size as f64 / meta.segment_count as f64;
@@ -124,6 +144,7 @@ pub async fn get_segment_metadata(State(ctx): State<Arc<Context>>) -> Json<Value
 }
 
 pub async fn get_segment(
+	_auth: MaybeAuthUser,
 	State(ctx): State<Arc<Context>>,
 	Path(segment_id): Path<u32>,
 ) -> Json<Value> {
@@ -131,7 +152,7 @@ pub async fn get_segment(
 	Json(serde_json::to_value(&segment).unwrap())
 }
 
-pub async fn download_segment(Path(segment_id): Path<u32>) -> Response {
+pub async fn download_segment(_auth: MaybeAuthUser, Path(segment_id): Path<u32>) -> Response {
 	let path = log_path().join(format!("{segment_id}.log"));
 	let file = match TokioFile::open(&path).await {
 		Ok(f) => f,
@@ -216,6 +237,7 @@ pub async fn download_segment_text(Path(segment_id): Path<u32>) -> Response {
 }
 
 pub async fn delete_segment(
+	_auth: MaybeAuthUser,
 	State(ctx): State<Arc<Context>>,
 	Path(segment_id): Path<u32>,
 ) -> &'static str {
@@ -234,6 +256,7 @@ pub async fn delete_segment(
 }
 
 pub async fn get_segment_props(
+	_auth: MaybeAuthUser,
 	State(ctx): State<Arc<Context>>,
 	Path(segment_id): Path<u32>,
 ) -> Json<Value> {
@@ -250,7 +273,11 @@ pub(crate) struct BulkEdit {
 	pub device_ids: Vec<String>,
 }
 
-pub async fn bulk_edit(State(ctx): State<Arc<Context>>, body: Json<BulkEdit>) -> &'static str {
+pub async fn bulk_edit(
+	_auth: MaybeAuthUser,
+	State(ctx): State<Arc<Context>>,
+	body: Json<BulkEdit>,
+) -> &'static str {
 	log::info!("bulk_edit: {:?}", body);
 	for device_id in body.device_ids.iter() {
 		ctx.db
@@ -267,7 +294,10 @@ pub async fn bulk_edit(State(ctx): State<Arc<Context>>, body: Json<BulkEdit>) ->
 	"ok"
 }
 
-pub async fn validate_query(Query(params): Query<GetLogsQuery>) -> Result<(), BadRequestError> {
+pub async fn validate_query(
+	_auth: MaybeAuthUser,
+	Query(params): Query<GetLogsQuery>,
+) -> Result<(), BadRequestError> {
 	log::info!("validate_query {:?}", params);
 	match params.query {
 		Some(ref q) => {
@@ -291,6 +321,7 @@ pub async fn validate_query(Query(params): Query<GetLogsQuery>) -> Result<(), Ba
 }
 
 pub async fn update_device_settings(
+	_auth: MaybeAuthUser,
 	State(ctx): State<Arc<Context>>,
 	Path(device_id): Path<String>,
 	body: Json<UpdateDeviceSettings>,
@@ -300,12 +331,13 @@ pub async fn update_device_settings(
 	"ok"
 }
 
-pub async fn get_devices(State(ctx): State<Arc<Context>>) -> Json<Value> {
+pub async fn get_devices(_auth: MaybeAuthUser, State(ctx): State<Arc<Context>>) -> Json<Value> {
 	let devices = ctx.db.get_devices().await.unwrap();
 	Json(serde_json::to_value(&devices).unwrap())
 }
 
 pub async fn get_device(
+	_auth: MaybeAuthUser,
 	State(ctx): State<Arc<Context>>,
 	Path(device_id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
@@ -320,6 +352,7 @@ pub async fn get_device(
 }
 
 pub async fn get_segments(
+	_auth: MaybeAuthUser,
 	State(ctx): State<Arc<Context>>,
 	Query(mut params): Query<GetSegmentsQuery>,
 ) -> Json<Value> {
@@ -616,7 +649,11 @@ struct UpdateQuery {
 	pub query: String,
 }
 
-pub async fn post_settings_query(State(ctx): State<Arc<Context>>, body: String) -> &'static str {
+pub async fn post_settings_query(
+	_auth: MaybeAuthUser,
+	State(ctx): State<Arc<Context>>,
+	body: String,
+) -> &'static str {
 	log::info!("post_settings_query: {:?}", body);
 	let mut settings = ctx.settings.inner().await;
 	settings.collection_query = body.clone();
@@ -627,7 +664,7 @@ pub async fn post_settings_query(State(ctx): State<Arc<Context>>, body: String) 
 	"ok"
 }
 
-pub async fn get_settings_query(State(ctx): State<Arc<Context>>) -> String {
+pub async fn get_settings_query(_auth: MaybeAuthUser, State(ctx): State<Arc<Context>>) -> String {
 	let settings = ctx.settings.inner().await;
 	settings.collection_query.clone()
 }
@@ -773,6 +810,7 @@ fn search_progress_to_json(progress: &SearchProgress) -> Value {
 }
 
 pub async fn get_logs(
+	_auth: MaybeAuthUser,
 	State(ctx): State<Arc<Context>>,
 	Query(params): Query<GetLogsQuery>,
 	headers: HeaderMap,
@@ -879,6 +917,7 @@ pub async fn get_logs(
 }
 
 pub async fn stream_logs(
+	_auth: MaybeAuthUser,
 	State(ctx): State<Arc<Context>>,
 	Query(params): Query<GetLogsQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, BadRequestError> {
@@ -902,6 +941,7 @@ pub async fn stream_logs(
 }
 
 pub async fn get_histogram(
+	_auth: MaybeAuthUser,
 	State(ctx): State<Arc<Context>>,
 	Query(params): Query<GetHistogramQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, BadRequestError> {
@@ -1238,19 +1278,8 @@ mod tests {
 		std::fs::write(&f1, b"hello").unwrap();
 		std::fs::write(&f2, b"world!").unwrap();
 
-		let app = Router::new().route("/api/v1/server_info", get(get_server_info));
-		let res = app
-			.oneshot(
-				Request::builder()
-					.uri("/api/v1/server_info")
-					.body(Body::empty())
-					.unwrap(),
-			)
-			.await
-			.unwrap();
-		assert_eq!(res.status(), StatusCode::OK);
-		let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-		let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+		let response = get_server_info(MaybeAuthUser(None)).await;
+		let v = response.0;
 		assert!(v.get("freeBytes").is_some());
 		assert!(v.get("totalBytes").is_some());
 		assert_eq!(v.get("uploadFilesCount").unwrap().as_u64().unwrap(), 2);

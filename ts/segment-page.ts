@@ -11,6 +11,8 @@ import { Navbar } from "./navbar"
 import { formatBytes, formatNumber, formatTimestamp } from "./utility"
 const SEGMENTS_PAGE_SIZE = 50
 
+import { apiFetch } from "./http"
+import { createAuthControls } from "./auth"
 type Segment = {
 	id: number
 	firstTimestamp: string
@@ -57,7 +59,7 @@ const fetchSegments = async (args: {
 	const count = args.count ?? SEGMENTS_PAGE_SIZE
 	url.searchParams.set("count", count.toString())
 	if (args.start) url.searchParams.set("start", args.start.toISOString())
-	const res = (await fetch(url.toString()).then((res) =>
+	const res = (await apiFetch(url.toString()).then((res) =>
 		res.json(),
 	)) as Segment[]
 	return res
@@ -65,7 +67,7 @@ const fetchSegments = async (args: {
 
 export const segmentsPage = async (root: Container) => {
 	root.root.innerHTML = ""
-	const segementsMetadata = (await fetch("/api/segment/metadata").then(
+	const segementsMetadata = (await apiFetch("/api/segment/metadata").then(
 		(res) => res.json(),
 	)) as SegementsMetadata
 	const compressionRatio =
@@ -119,7 +121,9 @@ export const segmentsPage = async (root: Container) => {
 		buttonText: "Metadata",
 		content: metadata,
 	})
-	const navbar = new Navbar({ right: [metadataCollapsible] })
+	const navbar = new Navbar({
+		right: [metadataCollapsible, createAuthControls()],
+	})
 	root.add(navbar)
 
 	const filtersPanel = document.createElement("div")
@@ -178,7 +182,10 @@ export const segmentsPage = async (root: Container) => {
 	let isLoadingSegments = false
 	let segmentsExhausted = false
 
-	const setFilterStatus = (message: string, type: "info" | "error" | "idle") => {
+	const setFilterStatus = (
+		message: string,
+		type: "info" | "error" | "idle",
+	) => {
 		filterStatus.textContent = message
 		if (type === "error") filterStatus.style.color = "#b91c1c"
 		else if (type === "info") filterStatus.style.color = "#047857"
@@ -237,7 +244,10 @@ export const segmentsPage = async (root: Container) => {
 				start: filterStart,
 			})
 			if (segments.length === 0 && initial) {
-				setFilterStatus("No segments match the current filters.", "idle")
+				setFilterStatus(
+					"No segments match the current filters.",
+					"idle",
+				)
 				segmentsExhausted = true
 			} else {
 				setFilterStatus("", "idle")
@@ -297,10 +307,10 @@ export const segmentsPage = async (root: Container) => {
 }
 
 export const segmentPage = async (root: HTMLElement, segmentId: number) => {
-	const segment = (await fetch(`/api/v1/segment/${segmentId}`).then((res) =>
-		res.json(),
+	const segment = (await apiFetch(`/api/v1/segment/${segmentId}`).then(
+		(res) => res.json(),
 	)) as Segment
-	const props = (await fetch(`/api/v1/segment/${segmentId}/props`).then(
+	const props = (await apiFetch(`/api/v1/segment/${segmentId}/props`).then(
 		(res) => res.json(),
 	)) as Prop[]
 
@@ -308,29 +318,36 @@ export const segmentPage = async (root: HTMLElement, segmentId: number) => {
 	const totalCompressedSize = segment.compressedSize
 	const totalLogsCount = segment.logsCount
 	const compressRatio = (totalCompressedSize / totalOriginalSize) * 100
-	root.innerHTML = `
-		<div class="page-header">
-			<h1 style="flex-grow: 1">Segment ${segmentId}</h1>
-			<div class="summary">
-				<div><strong>First timestamp:</strong> ${formatTimestamp(segment.firstTimestamp)}</div>
-				<div><strong>Last timestamp:</strong> ${formatTimestamp(segment.lastTimestamp)}</div>
-				<div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
-				<div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
-				<div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
-				<div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
-			</div>
-		</div>
-		<div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px">
-			${props
-				.map(
-					(prop) => `
-				<div class="list-row">
-					<div class="table-cell"><strong>Key:</strong> ${prop.key}</div>
-					<div class="table-cell"><strong>Value:</strong> ${prop.value}</div>
-				</div>
-			`,
-				)
-				.join("")}
-		</div>
-	`
+
+	root.innerHTML = ""
+	const navbar = new Navbar({ right: [createAuthControls()] })
+	root.appendChild(navbar.root)
+
+	const pageWrapper = document.createElement("div")
+	pageWrapper.innerHTML = `
+                <div class="page-header">
+                        <h1 style="flex-grow: 1">Segment ${segmentId}</h1>
+                        <div class="summary">
+                                <div><strong>First timestamp:</strong> ${formatTimestamp(segment.firstTimestamp)}</div>
+                                <div><strong>Last timestamp:</strong> ${formatTimestamp(segment.lastTimestamp)}</div>
+                                <div><strong>Total original size:</strong> ${formatBytes(totalOriginalSize)}</div>
+                                <div><strong>Total compressed size:</strong> ${formatBytes(totalCompressedSize)}</div>
+                                <div><strong>Total logs count:</strong> ${formatNumber(totalLogsCount)}</div>
+                                <div><strong>Compression ratio:</strong> ${compressRatio.toFixed(2)}%</div>
+                        </div>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin: 10px">
+                        ${props
+							.map(
+								(prop) => `
+                                <div class="list-row">
+                                        <div class="table-cell"><strong>Key:</strong> ${prop.key}</div>
+                                        <div class="table-cell"><strong>Value:</strong> ${prop.value}</div>
+                                </div>
+                        `,
+							)
+							.join("")}
+                </div>
+        `
+	root.appendChild(pageWrapper)
 }

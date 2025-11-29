@@ -2,6 +2,19 @@
 
 PuppyLog is a log collection server where clients can submit logs and send queries using the Puppy Query Language (PQL) to retrieve logs. Server supports streaming logs and querying logs. Protocol is designed to be efficient and easy to implement in different environments like server, desktop, mobile and IOT devices.
 
+## Authentication
+
+PuppyLog can optionally protect the web experience with Google OAuth. Set the following environment variables when starting the server:
+
+| Variable                       | Description                                                                                                                      |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_OAUTH_CLIENT_ID`       | **Required** to enable authentication. Google OAuth 2.0 client ID used to validate ID tokens.                                    |
+| `GOOGLE_OAUTH_ALLOWED_DOMAINS` | Optional comma-separated list of email domains that are permitted to sign in. If unset, any verified Google account is accepted. |
+
+When Google OAuth is enabled, all UI API endpoints require a valid Google ID token presented as a `Bearer` token in the `Authorization` header (or as a `token` query parameter for streaming endpoints). The web UI automatically retrieves this token using Google Identity Services and includes it with each request.
+
+The server exposes `/api/auth/config` so the frontend can discover whether authentication is enabled and load the correct Google client ID.
+
 ## PQL - Puppy Query Language
 
 **Compare Operators**

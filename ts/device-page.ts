@@ -10,6 +10,8 @@ import { Navbar } from "./navbar"
 import { formatBytes, formatNumber } from "./utility"
 import { DeviceSetting, levels } from "./devices"
 import type { Prop } from "./types"
+import { apiFetch } from "./http"
+import { createAuthControls } from "./auth"
 
 type DeviceSegment = {
 	id: number
@@ -23,7 +25,7 @@ type DeviceSegment = {
 const SEGMENTS_PAGE_SIZE = 20
 
 const fetchDevice = async (deviceId: string): Promise<DeviceSetting> => {
-	const response = await fetch(
+	const response = await apiFetch(
 		`/api/v1/device/${encodeURIComponent(deviceId)}`,
 	)
 	if (response.status === 404) {
@@ -131,7 +133,7 @@ const updateDeviceSettings = async (
 	deviceId: string,
 	payload: { sendLogs: boolean; filterLevel: string; sendInterval: number },
 ) => {
-	const response = await fetch(
+	const response = await apiFetch(
 		`/api/v1/device/${encodeURIComponent(deviceId)}/settings`,
 		{
 			method: "POST",
@@ -145,7 +147,7 @@ const updateDeviceSettings = async (
 }
 
 const updateDeviceMetadata = async (deviceId: string, props: Prop[]) => {
-	const response = await fetch(
+	const response = await apiFetch(
 		`/api/v1/device/${encodeURIComponent(deviceId)}/metadata`,
 		{
 			method: "POST",
@@ -208,7 +210,7 @@ const setStatus = (
 export const devicePage = async (root: HTMLElement, deviceId: string) => {
 	root.innerHTML = ""
 	const page = new Container(root)
-	const navbar = new Navbar()
+	const navbar = new Navbar({ right: [createAuthControls()] })
 	page.add(navbar)
 
 	const content = new VList({

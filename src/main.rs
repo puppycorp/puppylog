@@ -10,6 +10,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use tower_http::decompression::RequestDecompressionLayer;
 
+mod auth;
 mod cache;
 mod cleanup;
 mod config;
@@ -72,6 +73,7 @@ async fn main() {
 		.route("/favicon-192x192.png", get(controllers::favicon_192x192))
 		.route("/favicon-512x512.png", get(controllers::favicon_512x512))
 		.route("/manifest.json", get(controllers::manifest))
+		.route("/api/auth/config", get(controllers::get_auth_config))
 		.route("/api/logs", get(controllers::get_logs))
 		.layer(CompressionLayer::new())
 		.layer(cors.clone())
@@ -81,16 +83,12 @@ async fn main() {
 			"/api/settings/query",
 			post(controllers::post_settings_query),
 		)
-		.with_state(ctx.clone())
 		.route("/api/settings/query", get(controllers::get_settings_query))
-		.with_state(ctx.clone())
 		.route("/api/segments", get(controllers::get_segments))
-		.with_state(ctx.clone())
 		.route(
 			"/api/segment/metadata",
 			get(controllers::get_segment_metadata),
 		)
-		.with_state(ctx.clone())
 		.route("/api/v1/validate_query", get(controllers::validate_query))
 		.route("/api/v1/logs/stream", get(controllers::stream_logs))
 		.layer(cors.clone())
@@ -101,9 +99,7 @@ async fn main() {
 			get(controllers::get_device_status),
 		)
 		.layer(cors.clone())
-		.with_state(ctx.clone())
 		.route("/api/v1/device/{deviceId}", get(controllers::get_device))
-		.with_state(ctx.clone())
 		.route(
 			"/api/v1/device/{deviceId}/logs",
 			post(controllers::upload_device_logs),
@@ -111,29 +107,20 @@ async fn main() {
 		.layer(cors.clone())
 		.layer(DefaultBodyLimit::max(1024 * 1024 * 1000))
 		.layer(RequestDecompressionLayer::new().gzip(true).zstd(true))
-		.with_state(ctx.clone())
 		.route(
 			"/api/v1/device/{deviceId}/metadata",
 			post(controllers::update_device_metadata),
 		)
-		.with_state(ctx.clone())
 		.route(
 			"/api/v1/device/{deviceId}/settings",
 			post(controllers::update_device_settings),
 		)
-		.with_state(ctx.clone())
 		.route("/api/v1/device_bulkedit", post(controllers::bulk_edit))
-		.with_state(ctx.clone())
 		.route("/api/v1/settings", post(controllers::post_settings_query))
-		.with_state(ctx.clone())
 		.route("/api/v1/settings", get(controllers::get_settings_query))
-		.with_state(ctx.clone())
 		.route("/api/v1/devices", get(controllers::get_devices))
-		.with_state(ctx.clone())
 		.route("/api/v1/segments", get(controllers::get_segments))
-		.with_state(ctx.clone())
 		.route("/api/v1/segment/{segmentId}", get(controllers::get_segment))
-		.with_state(ctx.clone())
 		.route(
 			"/api/v1/segment/{segmentId}/logs.txt",
 			get(controllers::download_segment_text),
@@ -143,7 +130,6 @@ async fn main() {
 			"/api/v1/segment/{segmentId}/props",
 			get(controllers::get_segment_props),
 		)
-		.with_state(ctx.clone())
 		.route(
 			"/api/v1/segment/{segmentId}/download",
 			get(controllers::download_segment),
@@ -152,10 +138,9 @@ async fn main() {
 			"/api/v1/segment/{segmentId}",
 			delete(controllers::delete_segment),
 		)
-		.with_state(ctx.clone())
 		.route("/api/v1/server_info", get(controllers::get_server_info))
-		.with_state(ctx.clone())
-		.fallback(get(controllers::root));
+		.fallback(get(controllers::root))
+		.with_state(ctx.clone());
 
 	// run our app with hyper, listening globally on port 3000
 	let listener = tokio::net::TcpListener::bind("0.0.0.0:3337").await.unwrap();
