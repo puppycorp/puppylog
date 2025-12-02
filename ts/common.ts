@@ -16,6 +16,7 @@ export const showModal = (args: {
 	const body = document.querySelector("body")
 
 	const modalOverlay = document.createElement("div")
+	modalOverlay.className = "modal-overlay"
 	modalOverlay.style.position = "fixed"
 	modalOverlay.style.top = "0"
 	modalOverlay.style.left = "0"
@@ -67,8 +68,5 @@ export const showModal = (args: {
 	})
 
 	modalOverlay.appendChild(modalContent)
-
-	return () => {
-		modalOverlay.remove()
-	}
+	return () => modalOverlay.remove()
 }

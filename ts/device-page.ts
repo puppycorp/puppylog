@@ -11,6 +11,17 @@ import { formatBytes, formatNumber } from "./utility"
 import { DeviceSetting, levels } from "./devices"
 import type { Prop } from "./types"
 
+type DeviceSegment = {
+	id: number
+	firstTimestamp: string
+	lastTimestamp: string
+	originalSize: number
+	compressedSize: number
+	logsCount: number
+}
+
+const SEGMENTS_PAGE_SIZE = 20
+
 const fetchDevice = async (deviceId: string): Promise<DeviceSetting> => {
 	const response = await fetch(
 		`/api/v1/device/${encodeURIComponent(deviceId)}`,
@@ -22,6 +33,98 @@ const fetchDevice = async (deviceId: string): Promise<DeviceSetting> => {
 		throw new Error(await response.text())
 	}
 	return (await response.json()) as DeviceSetting
+}
+
+const fetchDeviceSegments = async (
+	deviceId: string,
+	options?: { count?: number; end?: Date | null },
+): Promise<DeviceSegment[]> => {
+	const url = new URL("/api/segments", window.location.origin)
+	url.searchParams.append("device_ids[]", deviceId)
+	const count = options?.count ?? SEGMENTS_PAGE_SIZE
+	url.searchParams.set("count", count.toString())
+	url.searchParams.set("sort", "desc")
+	if (options?.end) url.searchParams.set("end", options.end.toISOString())
+	const response = await fetch(url.toString())
+	if (!response.ok) throw new Error(await response.text())
+	return (await response.json()) as DeviceSegment[]
+}
+
+const downloadSegmentLogs = async (
+	segmentId: number,
+	button: Button,
+	statusEl: HTMLElement,
+) => {
+	const previousText = button.root.textContent || "Download logs"
+	setStatus(statusEl, "", "idle")
+	button.root.disabled = true
+	button.root.textContent = "Downloading..."
+	try {
+		const res = await fetch(`/api/v1/segment/${segmentId}/logs.txt`)
+		if (!res.ok) throw new Error(await res.text())
+		const blob = await res.blob()
+		const url = URL.createObjectURL(blob)
+		const anchor = document.createElement("a")
+		anchor.href = url
+		anchor.download = `segment-${segmentId}.txt`
+		document.body.appendChild(anchor)
+		anchor.click()
+		anchor.remove()
+		URL.revokeObjectURL(url)
+	} catch (error) {
+		setStatus(
+			statusEl,
+			error instanceof Error
+				? error.message || "Failed to download segment logs."
+				: "Failed to download segment logs.",
+			"error",
+		)
+	} finally {
+		button.root.disabled = false
+		button.root.textContent = previousText
+	}
+}
+
+const createSegmentCard = (segment: DeviceSegment, statusEl: HTMLElement) => {
+	const table = new KeyValueTable([
+		{
+			key: "Segment",
+			value: `#${segment.id}`,
+			href: `/segment/${segment.id}`,
+		},
+		{
+			key: "First timestamp",
+			value: formatDate(segment.firstTimestamp),
+		},
+		{
+			key: "Last timestamp",
+			value: formatDate(segment.lastTimestamp),
+		},
+		{
+			key: "Logs count",
+			value: formatNumber(segment.logsCount),
+		},
+		{
+			key: "Original size",
+			value: formatBytes(segment.originalSize),
+		},
+		{
+			key: "Compressed size",
+			value: formatBytes(segment.compressedSize),
+		},
+	])
+	const segmentCard = new VList({
+		style: { gap: "8px" },
+	})
+	segmentCard.root.classList.add("summary")
+	segmentCard.add(table)
+	const downloadButton = new Button({
+		text: "Download logs (.txt)",
+	})
+	downloadButton.onClick = () =>
+		downloadSegmentLogs(segment.id, downloadButton, statusEl)
+	segmentCard.add(downloadButton)
+	return segmentCard
 }
 
 const updateDeviceSettings = async (
@@ -372,4 +475,95 @@ export const devicePage = async (root: HTMLElement, deviceId: string) => {
 
 	metadataSection.add(propsList, addPropButton, metadataSaveButton)
 	metadataSection.root.appendChild(metadataStatus)
+
+	const segmentsSection = createSection("Segments")
+	const segmentsList = new VList({
+		style: {
+			gap: "12px",
+		},
+	})
+	const segmentsStatus = document.createElement("div")
+	setStatus(segmentsStatus, "Loading segments…", "idle")
+	segmentsSection.add(segmentsList)
+	const loadMoreButton = new Button({ text: "Load more segments" })
+	loadMoreButton.root.style.alignSelf = "flex-start"
+	loadMoreButton.root.style.display = "none"
+	segmentsSection.add(loadMoreButton)
+	segmentsSection.root.appendChild(segmentsStatus)
+	content.add(segmentsSection)
+
+	let segmentsEndDate: Date | null = null
+	let segmentsExhausted = false
+	let segmentsLoading = false
+
+	const renderSegments = (segments: DeviceSegment[]) => {
+		segments.forEach((segment) => {
+			const card = createSegmentCard(segment, segmentsStatus)
+			segmentsList.add(card)
+		})
+	}
+
+	const updateLoadMoreVisibility = (lastBatchSize: number) => {
+		if (segmentsExhausted || lastBatchSize < SEGMENTS_PAGE_SIZE) {
+			loadMoreButton.root.style.display = "none"
+		} else {
+			loadMoreButton.root.style.display = "inline-flex"
+			loadMoreButton.root.disabled = false
+			loadMoreButton.root.textContent = "Load more segments"
+		}
+	}
+
+	const loadSegments = async (append: boolean) => {
+		if (segmentsLoading) return
+		segmentsLoading = true
+		if (!append) {
+			segmentsList.root.innerHTML = ""
+			setStatus(segmentsStatus, "Loading segments…", "idle")
+		} else {
+			loadMoreButton.root.disabled = true
+			loadMoreButton.root.textContent = "Loading…"
+		}
+		try {
+			const segments = await fetchDeviceSegments(device.id, {
+				count: SEGMENTS_PAGE_SIZE,
+				end: segmentsEndDate,
+			})
+			if (segments.length === 0 && !append) {
+				setStatus(
+					segmentsStatus,
+					"No segments for this device yet.",
+					"idle",
+				)
+				loadMoreButton.root.style.display = "none"
+				segmentsExhausted = true
+			} else {
+				setStatus(segmentsStatus, "", "idle")
+				renderSegments(segments)
+				if (segments.length > 0) {
+					const last = segments[segments.length - 1]
+					segmentsEndDate = new Date(last.lastTimestamp)
+				}
+				if (segments.length < SEGMENTS_PAGE_SIZE) {
+					segmentsExhausted = true
+				}
+				updateLoadMoreVisibility(segments.length)
+			}
+		} catch (error) {
+			setStatus(
+				segmentsStatus,
+				error instanceof Error
+					? error.message || "Failed to load segments."
+					: "Failed to load segments.",
+				"error",
+			)
+			loadMoreButton.root.style.display = "inline-flex"
+			loadMoreButton.root.disabled = false
+			loadMoreButton.root.textContent = "Retry"
+		} finally {
+			segmentsLoading = false
+		}
+	}
+
+	loadMoreButton.onClick = () => loadSegments(true)
+	await loadSegments(false)
 }

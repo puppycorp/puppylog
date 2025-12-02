@@ -27,25 +27,33 @@ body {
 }
 .logs-header-controls {
 	display: flex;
-	align-items: center;
-	gap: 10px;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 8px;
 	width: 100%;
 }
 .logs-header .logs-loading-indicator {
 	width: 100%;
 	box-sizing: border-box;
 }
-.logs-options-right-panel {
+.logs-action-bar {
 	display: flex;
-	flex-direction: column;
-	gap: 10px;
-	margin-left: auto;
-	align-items: flex-end;
+	flex-wrap: wrap;
+	gap: 12px;
+	align-items: center;
+	justify-content: space-between;
 }
 .logs-search-controls {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	flex-wrap: wrap;
+}
+.logs-view-actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
 }
 .logs-search-status {
 	display: flex;
@@ -71,13 +79,14 @@ body {
 	}
 }
 .logs-search-bar {
-	resize: none;
+	resize: vertical;
 	flex-grow: 1;
 	padding: 8px;
 	border: 1px solid #d1d5db;
 	border-radius: 4px;
 	font-family: inherit;
-	height: 87px;
+	min-height: 56px;
+	max-height: 160px;
 }
 .logs-button,
 button {
@@ -216,6 +225,11 @@ body {
 	overflow-x: auto;
 	padding: 16px;
 }
+.logs-list-raw {
+	gap: 0;
+	padding: 16px 16px 8px 16px;
+	overflow-x: auto;
+}
 .list-row {
 	border-bottom: 1px solid #e5e7eb;
 	padding: 2px;
@@ -223,10 +237,46 @@ body {
 	transition: box-shadow 0.2s ease;
 	cursor: pointer;
 }
+.logs-list-raw .list-row {
+	border-bottom: none;
+	padding: 0;
+	background-color: transparent;
+	cursor: default;
+	white-space: nowrap;
+	font-family:
+		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+		"Liberation Mono", monospace;
+}
+.logs-list-raw .list-row > div {
+	display: inline;
+}
+.logs-list-raw-wrap .list-row {
+	white-space: normal;
+}
+.logs-list-raw-wrap .list-row > div {
+	display: block;
+}
 .logs-list-row-msg {
 	position: relative;
 	display: inline-block;
 	max-width: 100%;
+}
+.logs-download-modal {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.logs-download-modal input[type="number"] {
+	padding: 6px 8px;
+	width: 100%;
+	border: 1px solid #d1d5db;
+	border-radius: 4px;
+	font-size: 14px;
+}
+.logs-download-error {
+	min-height: 16px;
+	font-size: 12px;
+	color: #dc2626;
 }
 .msg-summary {
 	overflow: hidden;

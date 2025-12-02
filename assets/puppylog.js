@@ -344,6 +344,7 @@ class Collapsible extends UiComponent {
 var showModal = (args) => {
   const body = document.querySelector("body");
   const modalOverlay = document.createElement("div");
+  modalOverlay.className = "modal-overlay";
   modalOverlay.style.position = "fixed";
   modalOverlay.style.top = "0";
   modalOverlay.style.left = "0";
@@ -386,9 +387,7 @@ var showModal = (args) => {
     modalOverlay.remove();
   });
   modalOverlay.appendChild(modalContent);
-  return () => {
-    modalOverlay.remove();
-  };
+  return () => modalOverlay.remove();
 };
 
 // ts/navbar.ts
@@ -908,6 +907,7 @@ var devicesPage = async (root) => {
 };
 
 // ts/device-page.ts
+var SEGMENTS_PAGE_SIZE = 20;
 var fetchDevice = async (deviceId) => {
   const response = await fetch(`/api/v1/device/${encodeURIComponent(deviceId)}`);
   if (response.status === 404) {
@@ -917,6 +917,84 @@ var fetchDevice = async (deviceId) => {
     throw new Error(await response.text());
   }
   return await response.json();
+};
+var fetchDeviceSegments = async (deviceId, options) => {
+  const url = new URL("/api/segments", window.location.origin);
+  url.searchParams.append("device_ids[]", deviceId);
+  const count = options?.count ?? SEGMENTS_PAGE_SIZE;
+  url.searchParams.set("count", count.toString());
+  url.searchParams.set("sort", "desc");
+  if (options?.end)
+    url.searchParams.set("end", options.end.toISOString());
+  const response = await fetch(url.toString());
+  if (!response.ok)
+    throw new Error(await response.text());
+  return await response.json();
+};
+var downloadSegmentLogs = async (segmentId, button, statusEl) => {
+  const previousText = button.root.textContent || "Download logs";
+  setStatus(statusEl, "", "idle");
+  button.root.disabled = true;
+  button.root.textContent = "Downloading...";
+  try {
+    const res = await fetch(`/api/v1/segment/${segmentId}/logs.txt`);
+    if (!res.ok)
+      throw new Error(await res.text());
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `segment-${segmentId}.txt`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    setStatus(statusEl, error instanceof Error ? error.message || "Failed to download segment logs." : "Failed to download segment logs.", "error");
+  } finally {
+    button.root.disabled = false;
+    button.root.textContent = previousText;
+  }
+};
+var createSegmentCard = (segment, statusEl) => {
+  const table = new KeyValueTable([
+    {
+      key: "Segment",
+      value: `#${segment.id}`,
+      href: `/segment/${segment.id}`
+    },
+    {
+      key: "First timestamp",
+      value: formatDate(segment.firstTimestamp)
+    },
+    {
+      key: "Last timestamp",
+      value: formatDate(segment.lastTimestamp)
+    },
+    {
+      key: "Logs count",
+      value: formatNumber(segment.logsCount)
+    },
+    {
+      key: "Original size",
+      value: formatBytes(segment.originalSize)
+    },
+    {
+      key: "Compressed size",
+      value: formatBytes(segment.compressedSize)
+    }
+  ]);
+  const segmentCard = new VList({
+    style: { gap: "8px" }
+  });
+  segmentCard.root.classList.add("summary");
+  segmentCard.add(table);
+  const downloadButton = new Button({
+    text: "Download logs (.txt)"
+  });
+  downloadButton.onClick = () => downloadSegmentLogs(segment.id, downloadButton, statusEl);
+  segmentCard.add(downloadButton);
+  return segmentCard;
 };
 var updateDeviceSettings = async (deviceId, payload) => {
   const response = await fetch(`/api/v1/device/${encodeURIComponent(deviceId)}/settings`, {
@@ -1187,6 +1265,82 @@ var devicePage = async (root, deviceId) => {
   };
   metadataSection.add(propsList, addPropButton, metadataSaveButton);
   metadataSection.root.appendChild(metadataStatus);
+  const segmentsSection = createSection("Segments");
+  const segmentsList = new VList({
+    style: {
+      gap: "12px"
+    }
+  });
+  const segmentsStatus = document.createElement("div");
+  setStatus(segmentsStatus, "Loading segments…", "idle");
+  segmentsSection.add(segmentsList);
+  const loadMoreButton = new Button({ text: "Load more segments" });
+  loadMoreButton.root.style.alignSelf = "flex-start";
+  loadMoreButton.root.style.display = "none";
+  segmentsSection.add(loadMoreButton);
+  segmentsSection.root.appendChild(segmentsStatus);
+  content.add(segmentsSection);
+  let segmentsEndDate = null;
+  let segmentsExhausted = false;
+  let segmentsLoading = false;
+  const renderSegments = (segments) => {
+    segments.forEach((segment) => {
+      const card = createSegmentCard(segment, segmentsStatus);
+      segmentsList.add(card);
+    });
+  };
+  const updateLoadMoreVisibility = (lastBatchSize) => {
+    if (segmentsExhausted || lastBatchSize < SEGMENTS_PAGE_SIZE) {
+      loadMoreButton.root.style.display = "none";
+    } else {
+      loadMoreButton.root.style.display = "inline-flex";
+      loadMoreButton.root.disabled = false;
+      loadMoreButton.root.textContent = "Load more segments";
+    }
+  };
+  const loadSegments = async (append) => {
+    if (segmentsLoading)
+      return;
+    segmentsLoading = true;
+    if (!append) {
+      segmentsList.root.innerHTML = "";
+      setStatus(segmentsStatus, "Loading segments…", "idle");
+    } else {
+      loadMoreButton.root.disabled = true;
+      loadMoreButton.root.textContent = "Loading…";
+    }
+    try {
+      const segments = await fetchDeviceSegments(device.id, {
+        count: SEGMENTS_PAGE_SIZE,
+        end: segmentsEndDate
+      });
+      if (segments.length === 0 && !append) {
+        setStatus(segmentsStatus, "No segments for this device yet.", "idle");
+        loadMoreButton.root.style.display = "none";
+        segmentsExhausted = true;
+      } else {
+        setStatus(segmentsStatus, "", "idle");
+        renderSegments(segments);
+        if (segments.length > 0) {
+          const last = segments[segments.length - 1];
+          segmentsEndDate = new Date(last.lastTimestamp);
+        }
+        if (segments.length < SEGMENTS_PAGE_SIZE) {
+          segmentsExhausted = true;
+        }
+        updateLoadMoreVisibility(segments.length);
+      }
+    } catch (error) {
+      setStatus(segmentsStatus, error instanceof Error ? error.message || "Failed to load segments." : "Failed to load segments.", "error");
+      loadMoreButton.root.style.display = "inline-flex";
+      loadMoreButton.root.disabled = false;
+      loadMoreButton.root.textContent = "Retry";
+    } finally {
+      segmentsLoading = false;
+    }
+  };
+  loadMoreButton.onClick = () => loadSegments(true);
+  await loadSegments(false);
 };
 
 // ts/logmsg.ts
@@ -1555,6 +1709,8 @@ var isSearchProgressEvent = (value) => {
 var MAX_LOG_ENTRIES = 1e4;
 var MESSAGE_TRUNCATE_LENGTH = 700;
 var OBSERVER_THRESHOLD = 0.1;
+var DEFAULT_DOWNLOAD_COUNT = 500;
+var MAX_DOWNLOAD_COUNT = 50000;
 var LOG_COLORS = {
   trace: "#6B7280",
   debug: "#3B82F6",
@@ -1590,10 +1746,19 @@ var escapeHTML = (str) => {
   return div.innerHTML;
 };
 var truncateMessage = (msg) => msg.length > MESSAGE_TRUNCATE_LENGTH ? `${msg.slice(0, MESSAGE_TRUNCATE_LENGTH)}...` : msg;
+var formatRawMessage = (msg) => escapeHTML(msg.replace(/[\r\n]+/g, " "));
+var formatDownloadLine = (entry) => {
+  const propsText = entry.props.length > 0 ? ` ${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}` : "";
+  const msg = entry.msg.replace(/[\r\n]+/g, " ").trim();
+  const msgText = msg ? ` ${msg}` : "";
+  return `${formatTimestamp2(entry.timestamp)} ${entry.level.toUpperCase()}${propsText}${msgText}`;
+};
 var logsSearchPage = (args) => {
   const logIds = new Set;
   const logEntries = [];
   let activeBucket = null;
+  let logViewMode = "structured";
+  let rawWrapEnabled = false;
   args.root.innerHTML = ``;
   const navbar = new Navbar;
   args.root.appendChild(navbar.root);
@@ -1608,9 +1773,6 @@ var logsSearchPage = (args) => {
   searchTextarea.placeholder = "Search logs (ctrl+enter to search)";
   searchTextarea.value = getQueryParam("query") || "";
   headerControls.appendChild(searchTextarea);
-  const rightPanel = document.createElement("div");
-  rightPanel.className = "logs-options-right-panel";
-  headerControls.appendChild(rightPanel);
   const searchButton = document.createElement("button");
   searchButton.innerHTML = searchSvg;
   searchButton.setAttribute("aria-busy", "false");
@@ -1618,10 +1780,15 @@ var logsSearchPage = (args) => {
   stopButton.textContent = "Stop";
   stopButton.disabled = true;
   stopButton.style.display = "none";
+  const downloadButton = document.createElement("button");
+  downloadButton.textContent = "Download";
+  const actionBar = document.createElement("div");
+  actionBar.className = "logs-action-bar";
+  headerControls.appendChild(actionBar);
   const searchControls = document.createElement("div");
   searchControls.className = "logs-search-controls";
-  searchControls.append(searchButton, stopButton);
-  rightPanel.append(searchControls);
+  searchControls.append(searchButton, stopButton, downloadButton);
+  actionBar.appendChild(searchControls);
   const bucketControls = document.createElement("div");
   bucketControls.className = "logs-bucket-controls";
   bucketControls.style.display = "flex";
@@ -1632,7 +1799,7 @@ var logsSearchPage = (args) => {
   bucketButton.textContent = "Collect logs";
   bucketButton.setAttribute("aria-pressed", "false");
   bucketControls.appendChild(bucketButton);
-  rightPanel.appendChild(bucketControls);
+  actionBar.appendChild(bucketControls);
   const bucketBanner = document.createElement("div");
   bucketBanner.className = "logs-bucket-banner";
   bucketBanner.style.display = "none";
@@ -1844,6 +2011,47 @@ var logsSearchPage = (args) => {
   bucketButton.onclick = () => {
     openBucketModal();
   };
+  const viewActions = document.createElement("div");
+  viewActions.className = "logs-view-actions";
+  actionBar.appendChild(viewActions);
+  const viewToggleWrapper = document.createElement("label");
+  viewToggleWrapper.className = "logs-view-toggle";
+  viewToggleWrapper.style.display = "flex";
+  viewToggleWrapper.style.alignItems = "center";
+  viewToggleWrapper.style.gap = "8px";
+  const viewToggleLabel = document.createElement("span");
+  viewToggleLabel.textContent = "View";
+  const viewToggle = document.createElement("select");
+  const viewStructured = document.createElement("option");
+  viewStructured.value = "structured";
+  viewStructured.textContent = "Structured";
+  const viewRaw = document.createElement("option");
+  viewRaw.value = "raw";
+  viewRaw.textContent = "Raw text";
+  viewToggle.append(viewStructured, viewRaw);
+  viewToggleWrapper.append(viewToggleLabel, viewToggle);
+  viewActions.appendChild(viewToggleWrapper);
+  const wrapToggleWrapper = document.createElement("label");
+  wrapToggleWrapper.className = "logs-raw-wrap-toggle";
+  wrapToggleWrapper.style.display = "none";
+  wrapToggleWrapper.style.alignItems = "center";
+  wrapToggleWrapper.style.gap = "6px";
+  const wrapToggle = document.createElement("input");
+  wrapToggle.type = "checkbox";
+  const wrapToggleLabel = document.createElement("span");
+  wrapToggleLabel.textContent = "Wrap raw logs";
+  wrapToggleWrapper.append(wrapToggle, wrapToggleLabel);
+  viewActions.appendChild(wrapToggleWrapper);
+  wrapToggle.addEventListener("change", () => {
+    rawWrapEnabled = wrapToggle.checked;
+    renderLogs();
+  });
+  viewToggle.addEventListener("change", () => {
+    logViewMode = viewToggle.value;
+    const isRaw = logViewMode === "raw";
+    wrapToggleWrapper.style.display = isRaw ? "flex" : "none";
+    renderLogs();
+  });
   const featuresList = new VList;
   const histogramToggle = document.createElement("label");
   histogramToggle.style.display = "flex";
@@ -1940,6 +2148,95 @@ var logsSearchPage = (args) => {
   const logsList = document.createElement("div");
   logsList.className = "logs-list";
   args.root.appendChild(logsList);
+  const fetchLogsForDownload = async (count) => {
+    const query = searchTextarea.value.trim();
+    if (query) {
+      const validationError = await args.validateQuery(query);
+      if (validationError)
+        throw new Error(validationError);
+    }
+    const params = new URLSearchParams;
+    if (query)
+      params.set("query", query);
+    params.set("count", Math.max(1, Math.min(MAX_DOWNLOAD_COUNT, count)).toString());
+    params.set("tzOffset", new Date().getTimezoneOffset().toString());
+    const res = await fetch(`/api/logs?${params.toString()}`, {
+      headers: {
+        Accept: "application/json"
+      }
+    });
+    if (!res.ok) {
+      const message = await res.text();
+      throw new Error(message || "Failed to download logs");
+    }
+    return await res.json();
+  };
+  const saveLogsToFile = (entries) => {
+    if (entries.length === 0)
+      throw new Error("No logs matched the current query.");
+    const content = entries.map((entry) => formatDownloadLine(entry)).join(`
+`);
+    const blob = new Blob([content], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `puppylog-${entries.length}-logs-${timestamp}.log`;
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+  const openDownloadModal = () => {
+    const modalContent = document.createElement("div");
+    modalContent.className = "logs-download-modal";
+    const description = document.createElement("p");
+    description.textContent = `Download up to ${MAX_DOWNLOAD_COUNT.toLocaleString()} logs that match the current query.`;
+    const inputLabel = document.createElement("label");
+    inputLabel.textContent = "Number of logs";
+    const countInput = document.createElement("input");
+    countInput.type = "number";
+    countInput.min = "1";
+    countInput.max = MAX_DOWNLOAD_COUNT.toString();
+    countInput.value = DEFAULT_DOWNLOAD_COUNT.toString();
+    countInput.inputMode = "numeric";
+    const errorEl = document.createElement("div");
+    errorEl.className = "logs-download-error";
+    modalContent.append(description, inputLabel, countInput, errorEl);
+    const cancelButton = new Button({ text: "Cancel" });
+    const confirmButton = new Button({ text: "Download" });
+    const closeModal = showModal({
+      title: "Download logs",
+      minWidth: 360,
+      content: modalContent,
+      footer: [cancelButton, confirmButton]
+    });
+    cancelButton.onClick = () => closeModal();
+    confirmButton.onClick = async () => {
+      errorEl.textContent = "";
+      let desired = Number(countInput.value);
+      if (!Number.isFinite(desired) || desired <= 0) {
+        errorEl.textContent = "Enter a positive number.";
+        return;
+      }
+      if (desired > MAX_DOWNLOAD_COUNT)
+        desired = MAX_DOWNLOAD_COUNT;
+      confirmButton.root.disabled = true;
+      confirmButton.root.textContent = "Downloading…";
+      try {
+        const entries = await fetchLogsForDownload(desired);
+        saveLogsToFile(entries);
+        closeModal();
+      } catch (err) {
+        errorEl.textContent = err instanceof Error ? err.message : "Unable to download logs";
+      } finally {
+        confirmButton.root.disabled = false;
+        confirmButton.root.textContent = "Download";
+      }
+    };
+    countInput.select();
+  };
   const scrollSentinel = document.createElement("div");
   scrollSentinel.style.height = "1px";
   scrollSentinel.style.width = "100%";
@@ -1948,8 +2245,21 @@ var logsSearchPage = (args) => {
   let debounce;
   let pendingLogs = [];
   const renderLogs = () => {
-    logsList.innerHTML = logEntries.map((entry) => `
-			<div class="list-row">
+    logsList.classList.toggle("logs-list-raw", logViewMode === "raw");
+    logsList.classList.toggle("logs-list-raw-wrap", logViewMode === "raw" && rawWrapEnabled);
+    logsList.innerHTML = logEntries.map((entry, idx) => {
+      if (logViewMode === "raw") {
+        return `
+				<div class="list-row logs-raw-row" data-entry-index="${idx}">
+					<div>
+						${formatTimestamp2(entry.timestamp)}
+						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level.toUpperCase()}</span>
+						${formatRawMessage(entry.msg)}
+					</div>
+				</div>`;
+      }
+      return `
+			<div class="list-row" data-entry-index="${idx}">
 				<div>
 					${formatTimestamp2(entry.timestamp)}
 					<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
@@ -1958,21 +2268,27 @@ var logsSearchPage = (args) => {
 				<div class="logs-list-row-msg">
 					<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
 				</div>
-			</div>
-		`).join("");
-    document.querySelectorAll(".msg-summary").forEach((el, key) => {
-      el.addEventListener("click", () => {
-        const entry = logEntries[key];
-        const isTruncated = entry.msg.length > MESSAGE_TRUNCATE_LENGTH;
-        if (!isTruncated)
-          return;
-        showModal({
-          title: "Log Message",
-          content: formatLogMsg(entry.msg),
-          footer: []
+			</div>`;
+    }).join("");
+    if (logViewMode === "structured") {
+      logsList.querySelectorAll(".msg-summary").forEach((el) => {
+        el.addEventListener("click", () => {
+          const parent = el.closest("[data-entry-index]");
+          if (!parent)
+            return;
+          const key = Number(parent.getAttribute("data-entry-index"));
+          const entry = logEntries[key];
+          const isTruncated = entry.msg.length > MESSAGE_TRUNCATE_LENGTH;
+          if (!isTruncated)
+            return;
+          showModal({
+            title: "Log Message",
+            content: formatLogMsg(entry.msg),
+            footer: []
+          });
         });
       });
-    });
+    }
   };
   const addLogs = (log) => {
     pendingLogs.push(log);
@@ -2144,6 +2460,7 @@ var logsSearchPage = (args) => {
   });
   searchButton.addEventListener("click", () => queryLogs(true));
   stopButton.addEventListener("click", stopSearch);
+  downloadButton.addEventListener("click", openDownloadModal);
   const observer = new IntersectionObserver((entries) => {
     if (!entries[0].isIntersecting)
       return;
@@ -2499,9 +2816,32 @@ var PivotPage = (root) => {
 };
 
 // ts/segment-page.ts
-var fetchSegments = async (end) => {
+var SEGMENTS_PAGE_SIZE2 = 50;
+var parseDateInput = (value) => {
+  if (!value)
+    return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+var formatDateInputValue = (date) => {
+  if (!date)
+    return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+};
+var fetchSegments = async (args) => {
   const url = new URL("/api/segments", window.location.origin);
-  url.searchParams.set("end", end.toISOString());
+  url.searchParams.set("end", args.end.toISOString());
+  url.searchParams.set("sort", "desc");
+  const count = args.count ?? SEGMENTS_PAGE_SIZE2;
+  url.searchParams.set("count", count.toString());
+  if (args.start)
+    url.searchParams.set("start", args.start.toISOString());
   const res = await fetch(url.toString()).then((res2) => res2.json());
   return res;
 };
@@ -2553,48 +2893,156 @@ var segmentsPage = async (root) => {
   });
   const navbar = new Navbar({ right: [metadataCollapsible] });
   root.add(navbar);
+  const filtersPanel = document.createElement("div");
+  filtersPanel.style.display = "flex";
+  filtersPanel.style.flexWrap = "wrap";
+  filtersPanel.style.gap = "12px";
+  filtersPanel.style.alignItems = "flex-end";
+  filtersPanel.style.padding = "0 16px";
+  filtersPanel.style.marginBottom = "8px";
+  const createLabeledInput = (labelText) => {
+    const wrapper = document.createElement("label");
+    wrapper.style.display = "flex";
+    wrapper.style.flexDirection = "column";
+    wrapper.style.fontSize = "12px";
+    const label = document.createElement("span");
+    label.textContent = labelText;
+    label.style.marginBottom = "4px";
+    const input = document.createElement("input");
+    input.type = "datetime-local";
+    input.style.padding = "6px 8px";
+    input.style.border = "1px solid #d1d5db";
+    input.style.borderRadius = "4px";
+    wrapper.append(label, input);
+    return { wrapper, input };
+  };
+  const startInput = createLabeledInput("Start time");
+  const endInput = createLabeledInput("End time");
+  const applyFiltersButton = new Button({ text: "Apply" });
+  const clearFiltersButton = new Button({ text: "Clear" });
+  const filterStatus = document.createElement("div");
+  filterStatus.style.minHeight = "18px";
+  filterStatus.style.fontSize = "12px";
+  filterStatus.style.color = "#6b7280";
+  filterStatus.style.flexBasis = "100%";
+  filtersPanel.append(startInput.wrapper, endInput.wrapper, applyFiltersButton.root, clearFiltersButton.root, filterStatus);
+  root.root.appendChild(filtersPanel);
   const segmentList = new WrapList;
   const infiniteScroll = new InfiniteScroll({
     container: segmentList
   });
   root.add(infiniteScroll);
-  let endDate = new Date;
-  infiniteScroll.onLoadMore = async () => {
-    console.log("loadMore");
-    const segments = await fetchSegments(endDate);
-    endDate = new Date(segments[segments.length - 1].lastTimestamp);
-    for (const segment of segments) {
-      const table = new KeyValueTable([
-        {
-          key: "Segment ID",
-          value: segment.id.toString(),
-          href: `/segment/${segment.id}`
-        },
-        {
-          key: "First timestamp",
-          value: formatTimestamp(segment.firstTimestamp)
-        },
-        {
-          key: "Last timestamp",
-          value: formatTimestamp(segment.lastTimestamp)
-        },
-        {
-          key: "Original size",
-          value: formatBytes(segment.originalSize)
-        },
-        {
-          key: "Compressed size",
-          value: formatBytes(segment.compressedSize)
-        },
-        { key: "Logs count", value: formatNumber(segment.logsCount) },
-        {
-          key: "Compression ratio",
-          value: (segment.compressedSize / segment.originalSize * 100).toFixed(2) + "%"
+  let filterStart = null;
+  let filterEnd = null;
+  let cursorEnd = new Date;
+  let isLoadingSegments = false;
+  let segmentsExhausted = false;
+  const setFilterStatus = (message, type) => {
+    filterStatus.textContent = message;
+    if (type === "error")
+      filterStatus.style.color = "#b91c1c";
+    else if (type === "info")
+      filterStatus.style.color = "#047857";
+    else
+      filterStatus.style.color = "#6b7280";
+  };
+  const renderSegmentCard = (segment) => {
+    const table = new KeyValueTable([
+      {
+        key: "Segment ID",
+        value: segment.id.toString(),
+        href: `/segment/${segment.id}`
+      },
+      {
+        key: "First timestamp",
+        value: formatTimestamp(segment.firstTimestamp)
+      },
+      {
+        key: "Last timestamp",
+        value: formatTimestamp(segment.lastTimestamp)
+      },
+      {
+        key: "Original size",
+        value: formatBytes(segment.originalSize)
+      },
+      {
+        key: "Compressed size",
+        value: formatBytes(segment.compressedSize)
+      },
+      { key: "Logs count", value: formatNumber(segment.logsCount) },
+      {
+        key: "Compression ratio",
+        value: (segment.compressedSize / segment.originalSize * 100).toFixed(2) + "%"
+      }
+    ]);
+    segmentList.add(table);
+  };
+  const resetSegments = () => {
+    segmentList.root.innerHTML = "";
+    cursorEnd = filterEnd ? new Date(filterEnd) : new Date;
+    segmentsExhausted = false;
+  };
+  const loadMoreSegments = async (initial = false) => {
+    if (segmentsExhausted || isLoadingSegments || !cursorEnd)
+      return;
+    isLoadingSegments = true;
+    if (initial)
+      setFilterStatus("Loading segments…", "idle");
+    try {
+      const segments = await fetchSegments({
+        end: cursorEnd,
+        start: filterStart
+      });
+      if (segments.length === 0 && initial) {
+        setFilterStatus("No segments match the current filters.", "idle");
+        segmentsExhausted = true;
+      } else {
+        setFilterStatus("", "idle");
+        for (const segment of segments)
+          renderSegmentCard(segment);
+        if (segments.length > 0) {
+          const last = segments[segments.length - 1];
+          cursorEnd = new Date(last.lastTimestamp);
         }
-      ]);
-      segmentList.add(table);
+        if (segments.length < SEGMENTS_PAGE_SIZE2) {
+          segmentsExhausted = true;
+        }
+      }
+    } catch (error) {
+      setFilterStatus(error instanceof Error ? error.message || "Failed to load segments." : "Failed to load segments.", "error");
+    } finally {
+      isLoadingSegments = false;
     }
   };
+  infiniteScroll.onLoadMore = async () => {
+    if (!segmentsExhausted)
+      await loadMoreSegments();
+  };
+  const applyFilters = async () => {
+    const newStart = parseDateInput(startInput.input.value);
+    const newEnd = parseDateInput(endInput.input.value);
+    if (newStart && newEnd && newStart > newEnd) {
+      setFilterStatus("Start time must be before end time.", "error");
+      return;
+    }
+    filterStart = newStart;
+    filterEnd = newEnd;
+    resetSegments();
+    await loadMoreSegments(true);
+  };
+  const clearFilters = async () => {
+    filterStart = null;
+    filterEnd = null;
+    startInput.input.value = "";
+    endInput.input.value = "";
+    resetSegments();
+    await loadMoreSegments(true);
+  };
+  applyFiltersButton.onClick = applyFilters;
+  clearFiltersButton.onClick = clearFilters;
+  startInput.input.value = formatDateInputValue(filterStart);
+  endInput.input.value = formatDateInputValue(filterEnd);
+  await loadMoreSegments(true);
 };
 var segmentPage = async (root, segmentId) => {
   const segment = await fetch(`/api/v1/segment/${segmentId}`).then((res) => res.json());

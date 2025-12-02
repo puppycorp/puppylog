@@ -114,6 +114,8 @@ interface LogsSearchPageArgs {
 const MAX_LOG_ENTRIES = 10_000
 const MESSAGE_TRUNCATE_LENGTH = 700
 const OBSERVER_THRESHOLD = 0.1
+const DEFAULT_DOWNLOAD_COUNT = 500
+const MAX_DOWNLOAD_COUNT = 50_000
 
 const LOG_COLORS = {
 	trace: "#6B7280",
@@ -123,6 +125,8 @@ const LOG_COLORS = {
 	error: "#EF4444",
 	fatal: "#8B5CF6",
 } as const
+
+type LogViewMode = "structured" | "raw"
 
 export const searchSvg = `<svg xmlns="http://www.w3.org/2000/svg"  viewBox="0 0 50 50" width="20px" height="20px"><path d="M 21 3 C 11.601563 3 4 10.601563 4 20 C 4 29.398438 11.601563 37 21 37 C 24.355469 37 27.460938 36.015625 30.09375 34.34375 L 42.375 46.625 L 46.625 42.375 L 34.5 30.28125 C 36.679688 27.421875 38 23.878906 38 20 C 38 10.601563 30.398438 3 21 3 Z M 21 7 C 28.199219 7 34 12.800781 34 20 C 34 27.199219 28.199219 33 21 33 C 13.800781 33 8 27.199219 8 20 C 8 12.800781 13.800781 7 21 7 Z"/></svg>`
 
@@ -161,10 +165,25 @@ const truncateMessage = (msg: string): string =>
 		? `${msg.slice(0, MESSAGE_TRUNCATE_LENGTH)}...`
 		: msg
 
+const formatRawMessage = (msg: string): string =>
+	escapeHTML(msg.replace(/[\r\n]+/g, " "))
+
+const formatDownloadLine = (entry: LogEntry): string => {
+	const propsText =
+		entry.props.length > 0
+			? ` ${entry.props.map((p) => `${p.key}=${p.value}`).join(" ")}`
+			: ""
+	const msg = entry.msg.replace(/[\r\n]+/g, " ").trim()
+	const msgText = msg ? ` ${msg}` : ""
+	return `${formatTimestamp(entry.timestamp)} ${entry.level.toUpperCase()}${propsText}${msgText}`
+}
+
 export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const logIds = new Set<string>()
 	const logEntries: LogEntry[] = []
 	let activeBucket: LogBucket | null = null
+	let logViewMode: LogViewMode = "structured"
+	let rawWrapEnabled = false
 	args.root.innerHTML = ``
 
 	const navbar = new Navbar()
@@ -184,10 +203,6 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	searchTextarea.value = getQueryParam("query") || ""
 	headerControls.appendChild(searchTextarea)
 
-	const rightPanel = document.createElement("div")
-	rightPanel.className = "logs-options-right-panel"
-	headerControls.appendChild(rightPanel)
-
 	const searchButton = document.createElement("button")
 	searchButton.innerHTML = searchSvg
 	searchButton.setAttribute("aria-busy", "false")
@@ -197,10 +212,17 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	stopButton.disabled = true
 	stopButton.style.display = "none"
 
+	const downloadButton = document.createElement("button")
+	downloadButton.textContent = "Download"
+
+	const actionBar = document.createElement("div")
+	actionBar.className = "logs-action-bar"
+	headerControls.appendChild(actionBar)
+
 	const searchControls = document.createElement("div")
 	searchControls.className = "logs-search-controls"
-	searchControls.append(searchButton, stopButton)
-	rightPanel.append(searchControls)
+	searchControls.append(searchButton, stopButton, downloadButton)
+	actionBar.appendChild(searchControls)
 
 	const bucketControls = document.createElement("div")
 	bucketControls.className = "logs-bucket-controls"
@@ -213,7 +235,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	bucketButton.textContent = "Collect logs"
 	bucketButton.setAttribute("aria-pressed", "false")
 	bucketControls.appendChild(bucketButton)
-	rightPanel.appendChild(bucketControls)
+	actionBar.appendChild(bucketControls)
 
 	const bucketBanner = document.createElement("div")
 	bucketBanner.className = "logs-bucket-banner"
@@ -305,34 +327,29 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	}
 
 	const openBucketModal = async () => {
-		let closeModal: () => void = () => {}
+		let closeModal = () => {}
 		const container = document.createElement("div")
 		container.style.display = "flex"
 		container.style.flexDirection = "column"
 		container.style.gap = "12px"
-
 		const description = document.createElement("p")
 		description.textContent =
 			"Buckets store a copy of matching log lines for quick access."
 		description.style.margin = "0"
 		container.appendChild(description)
-
 		const existingTitle = document.createElement("h4")
 		existingTitle.textContent = "Use an existing bucket"
 		existingTitle.style.margin = "0"
 		container.appendChild(existingTitle)
-
 		const errorText = document.createElement("span")
 		errorText.style.color = "#dc2626"
 		errorText.style.fontSize = "12px"
 		errorText.style.minHeight = "16px"
-
 		const existingList = document.createElement("div")
 		existingList.style.display = "flex"
 		existingList.style.flexDirection = "column"
 		existingList.style.gap = "8px"
 		container.appendChild(existingList)
-
 		let buckets: LogBucket[] = []
 		let loadError: string | null = null
 		try {
@@ -341,7 +358,6 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			console.error("Failed to load buckets", error)
 			loadError = "Unable to load buckets from the server."
 		}
-
 		if (loadError) {
 			const failed = document.createElement("span")
 			failed.textContent = loadError
@@ -379,17 +395,14 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 				existingList.appendChild(option)
 			})
 		}
-
-		const createSection = document.createElement("div")
-		createSection.style.display = "flex"
-		createSection.style.flexDirection = "column"
-		createSection.style.gap = "8px"
-
+		const createSection2 = document.createElement("div")
+		createSection2.style.display = "flex"
+		createSection2.style.flexDirection = "column"
+		createSection2.style.gap = "8px"
 		const createTitle = document.createElement("h4")
 		createTitle.textContent = "Create a new bucket"
 		createTitle.style.margin = "0"
-		createSection.appendChild(createTitle)
-
+		createSection2.appendChild(createTitle)
 		const nameInput = document.createElement("input")
 		nameInput.type = "text"
 		nameInput.placeholder = "Bucket name"
@@ -397,16 +410,13 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		nameInput.style.padding = "6px"
 		nameInput.style.border = "1px solid #d1d5db"
 		nameInput.style.borderRadius = "4px"
-		createSection.appendChild(nameInput)
-
+		createSection2.appendChild(nameInput)
 		const helper = document.createElement("span")
 		helper.textContent = `Each bucket keeps up to ${MAX_BUCKET_ENTRIES} log lines.`
 		helper.style.fontSize = "12px"
 		helper.style.color = "#6b7280"
-		createSection.appendChild(helper)
-
-		createSection.appendChild(errorText)
-
+		createSection2.appendChild(helper)
+		createSection2.appendChild(errorText)
 		const createButton = document.createElement("button")
 		createButton.type = "button"
 		createButton.textContent = "Create & collect"
@@ -417,10 +427,8 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		createButton.style.color = "white"
 		createButton.style.borderRadius = "4px"
 		createButton.style.cursor = "pointer"
-		createSection.appendChild(createButton)
-
-		container.appendChild(createSection)
-
+		createSection2.appendChild(createButton)
+		container.appendChild(createSection2)
 		const closeButton = new Button({ text: "Close" })
 		const footerButtons: Button[] = []
 		if (activeBucket) {
@@ -432,16 +440,13 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			footerButtons.push(stopButton)
 		}
 		footerButtons.push(closeButton)
-
 		closeModal = showModal({
 			title: "Collect logs in a bucket",
 			minWidth: 360,
 			content: container,
 			footer: footerButtons,
 		})
-
 		closeButton.onClick = () => closeModal()
-
 		createButton.onclick = () => {
 			errorText.textContent = ""
 			const name = nameInput.value.trim()
@@ -465,14 +470,53 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 			})()
 		}
 	}
-
 	updateBucketUI()
-
 	bucketButton.onclick = () => {
 		void openBucketModal()
 	}
 
-	// Options dropdown (currently only histogram)
+	const viewActions = document.createElement("div")
+	viewActions.className = "logs-view-actions"
+	actionBar.appendChild(viewActions)
+
+	const viewToggleWrapper = document.createElement("label")
+	viewToggleWrapper.className = "logs-view-toggle"
+	viewToggleWrapper.style.display = "flex"
+	viewToggleWrapper.style.alignItems = "center"
+	viewToggleWrapper.style.gap = "8px"
+	const viewToggleLabel = document.createElement("span")
+	viewToggleLabel.textContent = "View"
+	const viewToggle = document.createElement("select")
+	const viewStructured = document.createElement("option")
+	viewStructured.value = "structured"
+	viewStructured.textContent = "Structured"
+	const viewRaw = document.createElement("option")
+	viewRaw.value = "raw"
+	viewRaw.textContent = "Raw text"
+	viewToggle.append(viewStructured, viewRaw)
+	viewToggleWrapper.append(viewToggleLabel, viewToggle)
+	viewActions.appendChild(viewToggleWrapper)
+	const wrapToggleWrapper = document.createElement("label")
+	wrapToggleWrapper.className = "logs-raw-wrap-toggle"
+	wrapToggleWrapper.style.display = "none"
+	wrapToggleWrapper.style.alignItems = "center"
+	wrapToggleWrapper.style.gap = "6px"
+	const wrapToggle = document.createElement("input")
+	wrapToggle.type = "checkbox"
+	const wrapToggleLabel = document.createElement("span")
+	wrapToggleLabel.textContent = "Wrap raw logs"
+	wrapToggleWrapper.append(wrapToggle, wrapToggleLabel)
+	viewActions.appendChild(wrapToggleWrapper)
+	wrapToggle.addEventListener("change", () => {
+		rawWrapEnabled = wrapToggle.checked
+		renderLogs()
+	})
+	viewToggle.addEventListener("change", () => {
+		logViewMode = viewToggle.value as LogViewMode
+		const isRaw = logViewMode === "raw"
+		wrapToggleWrapper.style.display = isRaw ? "flex" : "none"
+		renderLogs()
+	})
 	const featuresList = new VList()
 	const histogramToggle = document.createElement("label")
 	histogramToggle.style.display = "flex"
@@ -487,7 +531,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		content: featuresList,
 	})
 	// If you want to show the dropdown uncomment next line
-	// rightPanel.appendChild(featuresDropdown.root)
+	// actionBar.appendChild(featuresDropdown.root)
 
 	// Histogram container
 	const histogramContainer = document.createElement("div")
@@ -580,6 +624,104 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	logsList.className = "logs-list"
 	args.root.appendChild(logsList)
 
+	const fetchLogsForDownload = async (count: number): Promise<LogEntry[]> => {
+		const query = searchTextarea.value.trim()
+		if (query) {
+			const validationError = await args.validateQuery(query)
+			if (validationError) throw new Error(validationError)
+		}
+		const params = new URLSearchParams()
+		if (query) params.set("query", query)
+		params.set(
+			"count",
+			Math.max(1, Math.min(MAX_DOWNLOAD_COUNT, count)).toString(),
+		)
+		params.set("tzOffset", new Date().getTimezoneOffset().toString())
+		const res = await fetch(`/api/logs?${params.toString()}`, {
+			headers: {
+				Accept: "application/json",
+			},
+		})
+		if (!res.ok) {
+			const message = await res.text()
+			throw new Error(message || "Failed to download logs")
+		}
+		return (await res.json()) as LogEntry[]
+	}
+
+	const saveLogsToFile = (entries: LogEntry[]) => {
+		if (entries.length === 0)
+			throw new Error("No logs matched the current query.")
+		const content = entries
+			.map((entry) => formatDownloadLine(entry))
+			.join("\n")
+		const blob = new Blob([content], { type: "text/plain" })
+		const url = URL.createObjectURL(blob)
+		const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
+		const filename = `puppylog-${entries.length}-logs-${timestamp}.log`
+		const anchor = document.createElement("a")
+		anchor.href = url
+		anchor.download = filename
+		document.body.appendChild(anchor)
+		anchor.click()
+		anchor.remove()
+		URL.revokeObjectURL(url)
+	}
+
+	const openDownloadModal = () => {
+		const modalContent = document.createElement("div")
+		modalContent.className = "logs-download-modal"
+		const description = document.createElement("p")
+		description.textContent = `Download up to ${MAX_DOWNLOAD_COUNT.toLocaleString()} logs that match the current query.`
+		const inputLabel = document.createElement("label")
+		inputLabel.textContent = "Number of logs"
+		const countInput = document.createElement("input")
+		countInput.type = "number"
+		countInput.min = "1"
+		countInput.max = MAX_DOWNLOAD_COUNT.toString()
+		countInput.value = DEFAULT_DOWNLOAD_COUNT.toString()
+		countInput.inputMode = "numeric"
+		const errorEl = document.createElement("div")
+		errorEl.className = "logs-download-error"
+		modalContent.append(description, inputLabel, countInput, errorEl)
+
+		const cancelButton = new Button({ text: "Cancel" })
+		const confirmButton = new Button({ text: "Download" })
+		const closeModal = showModal({
+			title: "Download logs",
+			minWidth: 360,
+			content: modalContent,
+			footer: [cancelButton, confirmButton],
+		})
+
+		cancelButton.onClick = () => closeModal()
+		confirmButton.onClick = async () => {
+			errorEl.textContent = ""
+			let desired = Number(countInput.value)
+			if (!Number.isFinite(desired) || desired <= 0) {
+				errorEl.textContent = "Enter a positive number."
+				return
+			}
+			if (desired > MAX_DOWNLOAD_COUNT) desired = MAX_DOWNLOAD_COUNT
+			confirmButton.root.disabled = true
+			confirmButton.root.textContent = "Downloading…"
+			try {
+				const entries = await fetchLogsForDownload(desired)
+				saveLogsToFile(entries)
+				closeModal()
+			} catch (err) {
+				errorEl.textContent =
+					err instanceof Error
+						? err.message
+						: "Unable to download logs"
+			} finally {
+				confirmButton.root.disabled = false
+				confirmButton.root.textContent = "Download"
+			}
+		}
+		countInput.select()
+	}
+
 	// Separate sentinel for infinite scroll
 	const scrollSentinel = document.createElement("div")
 	scrollSentinel.style.height = "1px"
@@ -592,10 +734,25 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 
 	const renderLogs = () => {
 		// Keep list rows only (loading indicator is outside)
+		logsList.classList.toggle("logs-list-raw", logViewMode === "raw")
+		logsList.classList.toggle(
+			"logs-list-raw-wrap",
+			logViewMode === "raw" && rawWrapEnabled,
+		)
 		logsList.innerHTML = logEntries
-			.map(
-				(entry) => `
-			<div class="list-row">
+			.map((entry, idx) => {
+				if (logViewMode === "raw") {
+					return `
+				<div class="list-row logs-raw-row" data-entry-index="${idx}">
+					<div>
+						${formatTimestamp(entry.timestamp)}
+						<span style="color: ${LOG_COLORS[entry.level]}">${entry.level.toUpperCase()}</span>
+						${formatRawMessage(entry.msg)}
+					</div>
+				</div>`
+				}
+				return `
+			<div class="list-row" data-entry-index="${idx}">
 				<div>
 					${formatTimestamp(entry.timestamp)}
 					<span style="color: ${LOG_COLORS[entry.level]}">${entry.level}</span>
@@ -604,22 +761,27 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 				<div class="logs-list-row-msg">
 					<div class="msg-summary">${escapeHTML(truncateMessage(entry.msg))}</div>
 				</div>
-			</div>
-		`,
-			)
+			</div>`
+			})
 			.join("")
-		document.querySelectorAll(".msg-summary").forEach((el, key) => {
-			el.addEventListener("click", () => {
-				const entry = logEntries[key]
-				const isTruncated = entry.msg.length > MESSAGE_TRUNCATE_LENGTH
-				if (!isTruncated) return
-				showModal({
-					title: "Log Message",
-					content: formatLogMsg(entry.msg),
-					footer: [],
+		if (logViewMode === "structured") {
+			logsList.querySelectorAll(".msg-summary").forEach((el) => {
+				el.addEventListener("click", () => {
+					const parent = el.closest("[data-entry-index]")
+					if (!parent) return
+					const key = Number(parent.getAttribute("data-entry-index"))
+					const entry = logEntries[key]
+					const isTruncated =
+						entry.msg.length > MESSAGE_TRUNCATE_LENGTH
+					if (!isTruncated) return
+					showModal({
+						title: "Log Message",
+						content: formatLogMsg(entry.msg),
+						footer: [],
+					})
 				})
 			})
-		})
+		}
 	}
 
 	const addLogs = (log: LogEntry) => {
@@ -818,6 +980,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	})
 	searchButton.addEventListener("click", () => queryLogs(true))
 	stopButton.addEventListener("click", stopSearch)
+	downloadButton.addEventListener("click", openDownloadModal)
 
 	const observer = new IntersectionObserver(
 		(entries) => {

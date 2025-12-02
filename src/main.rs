@@ -20,6 +20,7 @@ mod dev_segment_merger;
 mod device_segment_compactor;
 mod logline;
 mod schema;
+mod search;
 mod segment;
 mod settings;
 mod slack;
@@ -151,6 +152,11 @@ async fn main() {
 		)
 		.with_state(ctx.clone())
 		.route("/api/v1/segment/{segmentId}", get(controllers::get_segment))
+		.with_state(ctx.clone())
+		.route(
+			"/api/v1/segment/{segmentId}/logs.txt",
+			get(controllers::download_segment_text),
+		)
 		.with_state(ctx.clone())
 		.route(
 			"/api/v1/segment/{segmentId}/props",

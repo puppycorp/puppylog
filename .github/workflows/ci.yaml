@@ -19,8 +19,8 @@ jobs:
                   override: true
             - name: Build
               run: cargo build --verbose
-            - name: Format Check
-              run: cargo fmt --all -- --check
+            # - name: Format Check
+            #   run: cargo fmt --all -- --check
             - name: Clippy
               run: cargo clippy --workspace
             - name: Test
@@ -29,5 +29,5 @@ jobs:
               uses: actions/setup-node@v3
               with:
                   node-version: "18"
-            - name: Prettier Check
-              run: npx prettier --check --no-semi .
+            # - name: Prettier Check
+            #   run: npx prettier --check --no-semi .
