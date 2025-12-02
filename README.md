@@ -213,6 +213,80 @@ Each event contains a JSON object:
 }
 ```
 
+### Bucket API
+
+Buckets store copies of log lines that matched a saved query. Each bucket keeps at most 200 log entries, deduplicated by the ori
+ginal log identifier.
+
+#### Bucket object
+
+```json
+{
+	"id": 1,
+	"name": "Errors",
+	"query": "level:error",
+	"createdAt": "2025-03-01T12:00:00Z",
+	"updatedAt": "2025-03-01T12:10:00Z",
+	"logs": [
+		{
+			"id": "abc123",
+			"timestamp": "2025-03-01T12:09:45Z",
+			"level": "error",
+			"msg": "Something exploded",
+			"props": [{ "key": "device", "value": "alpha" }]
+		}
+	]
+}
+```
+
+### GET /api/v1/buckets
+
+Returns an array of bucket objects sorted by `updatedAt` (most recent first).
+
+### POST /api/v1/buckets
+
+Creates or updates a bucket. When an `id` is supplied the existing bucket is updated; otherwise a bucket is created (or the name
+is reused if it already exists).
+
+```json
+{
+	"id": 1,
+	"name": "Errors",
+	"query": "level:error"
+}
+```
+
+Returns the updated bucket object.
+
+### POST /api/v1/buckets/{bucketId}/logs
+
+Appends new log entries to the bucket. Existing entries with the same `id` are ignored, and the bucket is truncated to 200 logs.
+
+```json
+{
+	"logs": [
+		{
+			"id": "abc123",
+			"timestamp": "2025-03-01T12:09:45Z",
+			"level": "error",
+			"msg": "Something exploded",
+			"props": [{ "key": "device", "value": "alpha" }]
+		}
+	]
+}
+```
+
+Returns the updated bucket, or HTTP 404 if the bucket does not exist.
+
+### POST /api/v1/buckets/{bucketId}/clear
+
+Removes all stored log entries from the bucket and returns the emptied bucket object. Responds with HTTP 404 if the bucket does
+not exist.
+
+### DELETE /api/v1/buckets/{bucketId}
+
+Deletes the bucket and all stored copies. Returns HTTP 204 on success or HTTP 404 if the bucket is missing.
+
 ### POST /api/v1/device/settings
 
 Apply settings to many devices at once. Devices are matched based on metadata uploaded by devices.
