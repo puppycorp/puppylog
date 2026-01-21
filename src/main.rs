@@ -52,7 +52,9 @@ async fn main() {
 	let ctx = Arc::new(ctx);
 
 	tokio::spawn(upload::process_log_uploads(ctx.clone()));
-	tokio::spawn(cleanup::run_disk_space_monitor(ctx.clone()));
+	if std::env::var("DISK_SPACE_MONITOR").as_deref() == Ok("1") {
+		tokio::spawn(cleanup::run_disk_space_monitor(ctx.clone()));
+	}
 	tokio::spawn(dev_segment_merger::run_dev_segment_merger(ctx.clone()));
 	tokio::spawn(device_segment_compactor::run_device_segment_compactor(
 		ctx.clone(),

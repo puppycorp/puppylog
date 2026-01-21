@@ -444,6 +444,7 @@ PuppyLog supports tuning of its in-memory buffering and merge batching behavior 
 - **MERGER_RUN**: Enables or disables merger background processing. Defaults to `true`.
 - **UPLOAD_FLUSH_THRESHOLD**: Number of buffered log entries received via the upload API before they are persisted to storage. The server reads this value at startup. Defaults to the compile-time constant `UPLOAD_FLUSH_THRESHOLD`.
 - **RUN_SEGMENT_COMPACTOR**: Enables or disables the segment compactor background process. Defaults to `true`. It tries to compact device segment logs up to 300k entries per segment. This helps to improve compression ratio and query performance with less files on disk.
+- **DISK_SPACE_MONITOR**: Set to `1` to enable the disk-space-monitor background task. When enabled the server will spawn `cleanup::run_disk_space_monitor`, which periodically checks the upload directory, logs the available MB, notifies Slack once per low-disk incident, flushes in-memory buffers, and deletes the oldest segments until free space recovers (honoring `CLEANUP_DELETE_COUNT`). The monitor stays disabled otherwise so disk cleanup only runs when you opt in.
 
 To override these at runtime, set the variables before starting the server, for example:
 
