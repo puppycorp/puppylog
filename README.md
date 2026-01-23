@@ -424,15 +424,18 @@ Flags you can tweak:
 The simulator automatically seeds each log with metadata such as firmware
 version and region so uploads look like realistic device traffic.
 
-### Building the Web UI
+### Frontend
 
-The web interface is written in TypeScript. Bundle the assets with `bun` and
-type‑check the sources using `tsc`:
+The browser UI is now driven by the `wgui` crate and served from the Axum
+application at `/`, `/index.js`, `/index.css`, and `/ws`. The server keeps the
+compiled `wgui` bundle embedded via its `dist` module, so you no longer need to
+build the TypeScript assets in this repository—wgui handles that
+distribution internally.
 
-```
-bun build ./ts/app.ts --outfile=./assets/puppylog.js
-bun x tsc --noEmit
-```
+If you want to customize the experience, edit the wgui workspace that is
+referenced in `Cargo.toml`, rebuild its bundle (for example, run `bun build
+./ts/app.ts --outfile=./dist/index.js` inside the wgui checkout), and then pin
+the dependency to the commit that contains your updated `dist`.
 
 ## Configuration
 

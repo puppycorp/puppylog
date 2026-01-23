@@ -7,7 +7,7 @@ use axum::body::{Body, BodyDataStream};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::Event;
-use axum::response::{Html, IntoResponse, Response, Sse};
+use axum::response::{IntoResponse, Response, Sse};
 use axum::Json;
 use chrono::{DateTime, Utc};
 use futures::executor::block_on;
@@ -16,8 +16,8 @@ use puppylog::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string, Value};
-use tokio::fs::{self, read_dir, File as TokioFile, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::fs::{self, File as TokioFile, OpenOptions};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::task::spawn_blocking;
 use tokio_stream::wrappers::ReceiverStream;
@@ -28,6 +28,7 @@ use crate::config::{log_path, upload_path};
 use crate::context::{Context, LogStreamItem, SearchProgress, SegmentProgress};
 use crate::db::{MetaProp, UpdateDeviceSettings};
 use crate::segment::{HEADER_SIZE, MAGIC, VERSION};
+use crate::server_info::{fetch_server_info, ServerInfo};
 use crate::types::GetSegmentsQuery;
 
 #[derive(Deserialize, Debug)]
@@ -48,65 +49,9 @@ pub(crate) struct GetHistogramQuery {
 	pub tz_offset: Option<i32>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ServerInfo {
-	free_bytes: u64,
-	total_bytes: u64,
-	used_bytes: u64,
-	used_percent: f64,
-	upload_files_count: u64,
-	upload_bytes: u64,
-}
-
-pub async fn get_server_info() -> Json<Value> {
-	use crate::utility::disk_usage;
-
-	let upload_dir = upload_path();
-
-	// Disk usage (free and total for the filesystem hosting uploads path)
-	let (free, total) = match disk_usage(&upload_dir) {
-		Some(v) => v,
-		None => (0, 0),
-	};
-	let used = total.saturating_sub(free);
-	let used_percent = if total > 0 {
-		(used as f64) / (total as f64) * 100.0
-	} else {
-		0.0
-	};
-
-	// Count files and sum bytes in the upload directory
-	let mut upload_files_count: u64 = 0;
-	let mut upload_bytes: u64 = 0;
-	if upload_dir.exists() {
-		if let Ok(mut dir) = read_dir(&upload_dir).await {
-			while let Ok(Some(entry)) = dir.next_entry().await {
-				let path = entry.path();
-				if let Ok(meta) = entry.metadata().await {
-					if meta.is_file() {
-						upload_files_count = upload_files_count.saturating_add(1);
-						upload_bytes = upload_bytes.saturating_add(meta.len());
-					}
-				} else if path.is_file() {
-					// Fallback if metadata() fails but path suggests file
-					upload_files_count = upload_files_count.saturating_add(1);
-				}
-			}
-		}
-	}
-
-	Json(
-		serde_json::to_value(ServerInfo {
-			free_bytes: free,
-			total_bytes: total,
-			used_bytes: used,
-			used_percent,
-			upload_files_count,
-			upload_bytes,
-		})
-		.unwrap(),
-	)
+pub async fn get_server_info() -> Json<ServerInfo> {
+	let info = fetch_server_info().await;
+	Json(info)
 }
 
 pub async fn get_segment_metadata(State(ctx): State<Arc<Context>>) -> Json<Value> {
@@ -463,12 +408,9 @@ pub async fn update_device_metadata(
 	"ok"
 }
 
-const INDEX_HTML: &str = include_str!("../assets/index.html");
-const JS_HTML: &str = include_str!("../assets/puppylog.js");
 const FAVICON: &[u8] = include_bytes!("../assets/favicon.ico");
 const FAVICON_192x192: &[u8] = include_bytes!("../assets/favicon-192x192.png");
 const FAVICON_512x512: &[u8] = include_bytes!("../assets/favicon-512x512.png");
-const CSS: &str = include_str!("../assets/puppylog.css");
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
 	const FNV_OFFSET: u64 = 0xcbf29ce484222325;
@@ -535,80 +477,6 @@ fn cached_bytes_response(
 		HeaderValue::from_static(content_type),
 	);
 	(StatusCode::OK, headers, bytes).into_response()
-}
-
-fn cached_string_response(
-	content: &str,
-	content_type: &'static str,
-	req_headers: &HeaderMap,
-) -> Response {
-	let bytes = content.as_bytes();
-	let etag = etag_for(bytes);
-	if let Some(candidate) = req_headers.get(axum::http::header::IF_NONE_MATCH) {
-		if if_none_match_matches(&etag, candidate) {
-			let mut headers = HeaderMap::new();
-			headers.insert(
-				axum::http::header::ETAG,
-				HeaderValue::from_str(&etag).unwrap(),
-			);
-			headers.insert(
-				axum::http::header::CACHE_CONTROL,
-				HeaderValue::from_static("public, max-age=31536000, immutable"),
-			);
-			headers.insert(
-				axum::http::header::CONTENT_TYPE,
-				HeaderValue::from_static(content_type),
-			);
-			return (StatusCode::NOT_MODIFIED, headers).into_response();
-		}
-	}
-
-	let mut headers = HeaderMap::new();
-	headers.insert(
-		axum::http::header::ETAG,
-		HeaderValue::from_str(&etag).unwrap(),
-	);
-	headers.insert(
-		axum::http::header::CACHE_CONTROL,
-		HeaderValue::from_static("public, max-age=31536000, immutable"),
-	);
-	headers.insert(
-		axum::http::header::CONTENT_TYPE,
-		HeaderValue::from_static(content_type),
-	);
-	(StatusCode::OK, headers, content.to_string()).into_response()
-}
-
-#[cfg(debug_assertions)]
-pub async fn css(headers: HeaderMap) -> Response {
-	let mut file = tokio::fs::File::open("assets/puppylog.css").await.unwrap();
-	let mut contents = String::new();
-	file.read_to_string(&mut contents).await.unwrap();
-	cached_string_response(&contents, "text/css; charset=utf-8", &headers)
-}
-
-#[cfg(not(debug_assertions))]
-pub async fn css(headers: HeaderMap) -> Response {
-	cached_string_response(CSS, "text/css; charset=utf-8", &headers)
-}
-
-// basic handler that responds with a static string
-pub async fn root() -> Html<&'static str> {
-	// Intentionally do not set long-lived cache for index.html
-	Html(INDEX_HTML)
-}
-
-#[cfg(debug_assertions)]
-pub async fn js(headers: HeaderMap) -> Response {
-	let mut file = tokio::fs::File::open("assets/puppylog.js").await.unwrap();
-	let mut contents = String::new();
-	file.read_to_string(&mut contents).await.unwrap();
-	cached_string_response(&contents, "application/javascript; charset=utf-8", &headers)
-}
-
-#[cfg(not(debug_assertions))]
-pub async fn js(headers: HeaderMap) -> Response {
-	cached_string_response(JS_HTML, "application/javascript; charset=utf-8", &headers)
 }
 
 #[derive(Deserialize, Debug)]
@@ -1123,107 +991,6 @@ mod tests {
 		let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
 		let logs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
 		assert_eq!(logs.len(), 2);
-	}
-
-	#[tokio::test]
-	async fn static_js_sets_etag_and_304() {
-		let app = Router::new().route("/puppylog.js", get(js));
-
-		let res1 = app
-			.clone()
-			.oneshot(
-				Request::builder()
-					.uri("/puppylog.js")
-					.body(Body::empty())
-					.unwrap(),
-			)
-			.await
-			.unwrap();
-		assert_eq!(res1.status(), StatusCode::OK);
-		let etag = res1
-			.headers()
-			.get(axum::http::header::ETAG)
-			.expect("ETag header present")
-			.to_str()
-			.unwrap()
-			.to_string();
-
-		let res2 = app
-			.oneshot(
-				Request::builder()
-					.uri("/puppylog.js")
-					.header(axum::http::header::IF_NONE_MATCH, etag)
-					.body(Body::empty())
-					.unwrap(),
-			)
-			.await
-			.unwrap();
-		assert_eq!(res2.status(), StatusCode::NOT_MODIFIED);
-	}
-
-	#[tokio::test]
-	async fn static_js_handles_complex_if_none_match_headers() {
-		let app = Router::new().route("/puppylog.js", get(js));
-
-		let res1 = app
-			.clone()
-			.oneshot(
-				Request::builder()
-					.uri("/puppylog.js")
-					.body(Body::empty())
-					.unwrap(),
-			)
-			.await
-			.unwrap();
-		assert_eq!(res1.status(), StatusCode::OK);
-		let etag = res1
-			.headers()
-			.get(axum::http::header::ETAG)
-			.expect("ETag header present")
-			.to_str()
-			.unwrap()
-			.to_string();
-
-		let res_with_multiple = app
-			.clone()
-			.oneshot(
-				Request::builder()
-					.uri("/puppylog.js")
-					.header(
-						axum::http::header::IF_NONE_MATCH,
-						format!("{}, \"other\"", etag),
-					)
-					.body(Body::empty())
-					.unwrap(),
-			)
-			.await
-			.unwrap();
-		assert_eq!(res_with_multiple.status(), StatusCode::NOT_MODIFIED);
-
-		let res_with_weak = app
-			.clone()
-			.oneshot(
-				Request::builder()
-					.uri("/puppylog.js")
-					.header(axum::http::header::IF_NONE_MATCH, format!("W/{}", etag))
-					.body(Body::empty())
-					.unwrap(),
-			)
-			.await
-			.unwrap();
-		assert_eq!(res_with_weak.status(), StatusCode::NOT_MODIFIED);
-
-		let res_with_star = app
-			.oneshot(
-				Request::builder()
-					.uri("/puppylog.js")
-					.header(axum::http::header::IF_NONE_MATCH, "*")
-					.body(Body::empty())
-					.unwrap(),
-			)
-			.await
-			.unwrap();
-		assert_eq!(res_with_star.status(), StatusCode::NOT_MODIFIED);
 	}
 
 	#[tokio::test]

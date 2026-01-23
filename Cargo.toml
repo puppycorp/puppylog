@@ -14,6 +14,7 @@ axum = { version = "0.8", features = ["macros", "ws"] }
 headers = "0.4"
 serde = { version = "1", features = ["derive"] }
 tower-http = { version = "0.6", features = ["decompression-gzip", "decompression-zstd", "compression-gzip", "compression-zstd", "cors"] }
+tower = "0.5"
 futures-util = "0.3"
 serde_json = "1"
 futures = "0.3"
@@ -32,10 +33,10 @@ reqwest = { version = "0.12", features = ["json"] }
 libc = "0.2"
 lru = "0.14"
 num_cpus = "1"
+wgui = { git = "https://github.com/J45k4/wgui.git", rev = "e0a80f841e70bf202ea0358d2eacca0c0dc94a86", features = ["axum"] }
 
 [dev-dependencies]
 tempfile = "3"
-tower = "0.5"
 serial_test = "3"
 hyper = { version = "1", features = ["full"] }
 
