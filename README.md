@@ -250,6 +250,30 @@ Response
 }
 ```
 
+### GET /health
+
+Liveness/readiness endpoint for local probes.
+
+Response code:
+- `200 OK` when database query succeeds and free disk space on the logs filesystem is above 10%.
+- `503 Service Unavailable` otherwise.
+
+Response
+
+```json
+{
+	"status": "ok" | "degraded",
+	"dbOk": true,
+	"diskOk": true,
+	"freeBytes": 123456,
+	"totalBytes": 987654
+}
+```
+
+### GET /api/v1/health
+
+Same as `GET /health`, exposed under the versioned API namespace.
+
 ### POST /api/v1/server/cleanup
 
 Starts a manual cleanup pass using the same flow as the disk-space monitor:

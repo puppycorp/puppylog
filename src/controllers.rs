@@ -109,6 +109,37 @@ pub async fn get_server_info() -> Json<Value> {
 	)
 }
 
+pub async fn get_health(State(ctx): State<Arc<Context>>) -> impl IntoResponse {
+	use crate::utility::disk_usage;
+
+	let db_ok = ctx.db.fetch_segments_metadata().await.is_ok();
+	let (free_bytes, total_bytes, disk_ok) = match disk_usage(ctx.logs_path()) {
+		Some((free, total)) if total > 0 => {
+			let free_ratio = free as f64 / total as f64;
+			(free, total, free_ratio > 0.10)
+		}
+		Some((free, total)) => (free, total, false),
+		None => (0, 0, false),
+	};
+	let status_ok = db_ok && disk_ok;
+	let code = if status_ok {
+		StatusCode::OK
+	} else {
+		StatusCode::SERVICE_UNAVAILABLE
+	};
+
+	(
+		code,
+		Json(json!({
+			"status": if status_ok { "ok" } else { "degraded" },
+			"dbOk": db_ok,
+			"diskOk": disk_ok,
+			"freeBytes": free_bytes,
+			"totalBytes": total_bytes
+		})),
+	)
+}
+
 pub async fn start_cleanup(State(ctx): State<Arc<Context>>) -> Json<Value> {
 	use crate::cleanup::cleanup_old_segments;
 	use crate::utility::disk_usage;
@@ -1055,6 +1086,43 @@ mod tests {
 		assert_eq!(res.status(), StatusCode::OK);
 		let ct = res.headers().get(axum::http::header::CONTENT_TYPE).unwrap();
 		assert_eq!(ct, "text/event-stream");
+	}
+
+	#[tokio::test]
+	#[serial_test::serial]
+	async fn health_ok() {
+		let dir = TempDir::new().unwrap();
+		let log_dir = dir.path().join("logs");
+		std::fs::create_dir_all(&log_dir).unwrap();
+		std::env::set_var("LOG_PATH", &log_dir);
+		std::env::set_var("DB_PATH", dir.path().join("db.sqlite"));
+		std::env::set_var("SETTINGS_PATH", dir.path().join("settings.json"));
+		std::fs::write(
+			dir.path().join("settings.json"),
+			"{\"collection_query\":\"\"}",
+		)
+		.unwrap();
+
+		let ctx = Arc::new(Context::new(log_dir).await);
+		let app = Router::new()
+			.route("/health", get(get_health))
+			.with_state(ctx);
+		let res = app
+			.oneshot(
+				Request::builder()
+					.uri("/health")
+					.body(Body::empty())
+					.unwrap(),
+			)
+			.await
+			.unwrap();
+
+		assert_eq!(res.status(), StatusCode::OK);
+		let body = to_bytes(res.into_body(), usize::MAX).await.unwrap();
+		let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+		assert_eq!(json.get("status").and_then(|v| v.as_str()), Some("ok"));
+		assert_eq!(json.get("dbOk").and_then(|v| v.as_bool()), Some(true));
+		assert_eq!(json.get("diskOk").and_then(|v| v.as_bool()), Some(true));
 	}
 
 	#[tokio::test]

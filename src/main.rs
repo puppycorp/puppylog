@@ -68,6 +68,7 @@ async fn main() {
 	// build our application with a route
 	let app = Router::new()
 		.route("/", get(controllers::root))
+		.route("/health", get(controllers::get_health))
 		.route("/puppylog.js", get(controllers::js))
 		.route("/puppylog.css", get(controllers::css))
 		.route("/favicon.ico", get(controllers::favicon))
@@ -156,6 +157,7 @@ async fn main() {
 		)
 		.with_state(ctx.clone())
 		.route("/api/v1/server_info", get(controllers::get_server_info))
+		.route("/api/v1/health", get(controllers::get_health))
 		.route("/api/v1/server/cleanup", post(controllers::start_cleanup))
 		.with_state(ctx.clone())
 		.fallback(get(controllers::root));
