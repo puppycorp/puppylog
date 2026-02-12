@@ -109,6 +109,26 @@ pub async fn get_server_info() -> Json<Value> {
 	)
 }
 
+pub async fn start_cleanup(State(ctx): State<Arc<Context>>) -> Json<Value> {
+	use crate::cleanup::cleanup_old_segments;
+	use crate::utility::disk_usage;
+
+	let upload_dir = upload_path();
+	let (free_before, total_before) = disk_usage(&upload_dir).unwrap_or((0, 0));
+	ctx.force_flush().await;
+	let deleted_segments = cleanup_old_segments(&ctx).await;
+	let (free_after, total_after) = disk_usage(&upload_dir).unwrap_or((0, 0));
+
+	Json(json!({
+		"status": "ok",
+		"deletedSegments": deleted_segments,
+		"freeBytesBefore": free_before,
+		"totalBytesBefore": total_before,
+		"freeBytesAfter": free_after,
+		"totalBytesAfter": total_after
+	}))
+}
+
 pub async fn get_segment_metadata(State(ctx): State<Arc<Context>>) -> Json<Value> {
 	let meta = ctx.db.fetch_segments_metadata().await.unwrap();
 	let avg_logs_per_segment = meta.logs_count as f64 / meta.segment_count as f64;

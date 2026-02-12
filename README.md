@@ -250,6 +250,25 @@ Response
 }
 ```
 
+### POST /api/v1/server/cleanup
+
+Starts a manual cleanup pass using the same flow as the disk-space monitor:
+flushes in-memory logs and deletes oldest segments according to
+`CLEANUP_DELETE_COUNT`.
+
+Response
+
+```json
+{
+	"status": "ok",
+	"deletedSegments": 12,
+	"freeBytesBefore": 123456,
+	"totalBytesBefore": 987654,
+	"freeBytesAfter": 234567,
+	"totalBytesAfter": 987654
+}
+```
+
 ### GET /api/v1/device/:deviceId/status
 
 Gets status for device. Usefull for determining if device is allowed to send logs or not and what logs should be sent. Client can use this api to keep TLS connection alive or makes sure not to waste bandwidth sending logs to server which is not ready to receive logs. In some environments like IOT devices it's important to save battery and bandwidth.

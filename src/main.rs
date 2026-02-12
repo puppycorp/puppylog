@@ -156,6 +156,7 @@ async fn main() {
 		)
 		.with_state(ctx.clone())
 		.route("/api/v1/server_info", get(controllers::get_server_info))
+		.route("/api/v1/server/cleanup", post(controllers::start_cleanup))
 		.with_state(ctx.clone())
 		.fallback(get(controllers::root));
 
