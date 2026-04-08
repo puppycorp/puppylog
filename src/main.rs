@@ -1,19 +1,29 @@
-use axum::extract::DefaultBodyLimit;
-use axum::response::Html;
+use anyhow::Error;
+use axum::body::Body;
+use axum::extract::{
+	ws::{Message, WebSocket, WebSocketUpgrade},
+	DefaultBodyLimit, Path, State,
+};
+use axum::http::{header, StatusCode};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::Router;
 use config::log_path;
 use context::Context;
+use futures_util::Stream;
 use log::LevelFilter;
 use simple_logger::SimpleLogger;
-use std::{collections::HashSet, sync::Arc};
-use tokio::sync::Mutex;
-use tokio::time::{interval, Duration};
+use std::{
+	path::{Path as FsPath, PathBuf},
+	pin::Pin,
+	sync::Arc,
+	task::{Context as TaskContext, Poll},
+};
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use tower_http::decompression::RequestDecompressionLayer;
-use wgui::{ClientEvent, Wgui, WguiHandle};
+use wgui::{Wgui, WguiHandle, WsMessage};
 
 mod cache;
 mod cleanup;
@@ -73,26 +83,11 @@ async fn main() {
 		.allow_headers(Any);
 
 	let mut wgui = Wgui::new_without_server();
-	let wgui_router = wgui.router();
+	wgui.set_ctx_state(ui::UiContext::new(ctx.clone()));
+	wgui.add_component::<ui::Ui>("/");
 	let handle = wgui.handle();
-	let clients = Arc::new(Mutex::new(HashSet::new()));
-
-	let ctx_for_events = ctx.clone();
-	let handle_for_events = handle.clone();
-	let clients_for_events = clients.clone();
 	tokio::spawn(async move {
-		run_wgui_event_loop(wgui, handle_for_events, ctx_for_events, clients_for_events).await;
-	});
-
-	let ctx_for_refresh = ctx.clone();
-	let handle_for_refresh = handle.clone();
-	let clients_for_refresh = clients.clone();
-	tokio::spawn(async move {
-		let mut ticker = interval(Duration::from_secs(5));
-		loop {
-			ticker.tick().await;
-			broadcast_snapshot(&handle_for_refresh, &ctx_for_refresh, &clients_for_refresh).await;
-		}
+		wgui.run().await;
 	});
 
 	let upload_router = Router::new()
@@ -161,15 +156,23 @@ async fn main() {
 			"/api/v1/segment/{segmentId}",
 			delete(controllers::delete_segment),
 		)
-		.merge(upload_router)f
+		.merge(upload_router)
 		.route("/api/v1/server_info", get(controllers::get_server_info))
 		.with_state(ctx.clone())
 		.layer(cors.clone());
 
+	let ui_router = Router::new()
+		.route("/", get(wgui_index))
+		.route("/ws", get(wgui_ws))
+		.route("/index.js", get(wgui_js))
+		.route("/index.css", get(wgui_css))
+		.route("/assets/{*path}", get(wgui_asset))
+		.fallback(get(wgui_index))
+		.with_state(handle);
+
 	let app = Router::new()
 		.merge(api_router)
-		.merge(wgui_router)
-		.fallback(get(wgui_index))
+		.merge(ui_router)
 		.layer(CompressionLayer::new());
 
 	// run our app with hyper, listening globally on port 3000
@@ -177,60 +180,153 @@ async fn main() {
 	axum::serve(listener, app).await.unwrap();
 }
 
-async fn run_wgui_event_loop(
-	mut wgui: Wgui,
-	handle: WguiHandle,
-	ctx: Arc<Context>,
-	clients: Arc<Mutex<HashSet<usize>>>,
-) {
-	use ClientEvent::*;
-	while let Some(event) = wgui.next().await {
-		match event {
-			Connected { id } => {
-				{
-					let mut guard = clients.lock().await;
-					guard.insert(id);
-				}
-				render_snapshot_to_client(&handle, &ctx, id).await;
-			}
-			Disconnected { id } => {
-				let mut guard = clients.lock().await;
-				guard.remove(&id);
-			}
-			OnClick(click) => {
-				if click.id == ui::REFRESH_BUTTON_ID {
-					broadcast_snapshot(&handle, &ctx, &clients).await;
-				}
-			}
-			_ => {}
+struct AxumWs {
+	inner: WebSocket,
+}
+
+impl AxumWs {
+	fn new(inner: WebSocket) -> Self {
+		Self { inner }
+	}
+}
+
+impl Stream for AxumWs {
+	type Item = Result<WsMessage, Error>;
+
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+		match Pin::new(&mut self.inner).poll_next(cx) {
+			Poll::Ready(Some(Ok(message))) => Poll::Ready(Some(Ok(match message {
+				Message::Text(text) => WsMessage::Text(text.to_string()),
+				Message::Binary(bytes) => WsMessage::Binary(bytes.to_vec()),
+				Message::Ping(bytes) => WsMessage::Ping(bytes.to_vec()),
+				Message::Pong(bytes) => WsMessage::Pong(bytes.to_vec()),
+				Message::Close(_) => WsMessage::Close,
+			}))),
+			Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err.into()))),
+			Poll::Ready(None) => Poll::Ready(None),
+			Poll::Pending => Poll::Pending,
 		}
 	}
 }
 
-async fn render_snapshot_to_client(handle: &WguiHandle, ctx: &Arc<Context>, client_id: usize) {
-	let snapshot = ui::UiSnapshot::capture(ctx).await;
-	handle.render(client_id, ui::render(&snapshot)).await;
+impl futures_util::Sink<WsMessage> for AxumWs {
+	type Error = Error;
+
+	fn poll_ready(
+		mut self: Pin<&mut Self>,
+		cx: &mut TaskContext<'_>,
+	) -> Poll<Result<(), Self::Error>> {
+		Pin::new(&mut self.inner)
+			.poll_ready(cx)
+			.map_err(Error::from)
+	}
+
+	fn start_send(mut self: Pin<&mut Self>, item: WsMessage) -> Result<(), Self::Error> {
+		let message = match item {
+			WsMessage::Text(text) => Message::Text(text.into()),
+			WsMessage::Binary(bytes) => Message::Binary(bytes.into()),
+			WsMessage::Ping(bytes) => Message::Ping(bytes.into()),
+			WsMessage::Pong(bytes) => Message::Pong(bytes.into()),
+			WsMessage::Close => Message::Close(None),
+		};
+		Pin::new(&mut self.inner)
+			.start_send(message)
+			.map_err(Error::from)
+	}
+
+	fn poll_flush(
+		mut self: Pin<&mut Self>,
+		cx: &mut TaskContext<'_>,
+	) -> Poll<Result<(), Self::Error>> {
+		Pin::new(&mut self.inner)
+			.poll_flush(cx)
+			.map_err(Error::from)
+	}
+
+	fn poll_close(
+		mut self: Pin<&mut Self>,
+		cx: &mut TaskContext<'_>,
+	) -> Poll<Result<(), Self::Error>> {
+		Pin::new(&mut self.inner)
+			.poll_close(cx)
+			.map_err(Error::from)
+	}
 }
 
-async fn broadcast_snapshot(
-	handle: &WguiHandle,
-	ctx: &Arc<Context>,
-	clients: &Mutex<HashSet<usize>>,
-) {
-	let ids = {
-		let guard = clients.lock().await;
-		guard.iter().copied().collect::<Vec<_>>()
-	};
-	if ids.is_empty() {
-		return;
-	}
-	let snapshot = ui::UiSnapshot::capture(ctx).await;
-	let view = ui::render(&snapshot);
-	for id in ids {
-		handle.render(id, view.clone()).await;
-	}
+async fn wgui_ws(State(handle): State<WguiHandle>, ws: WebSocketUpgrade) -> impl IntoResponse {
+	ws.on_upgrade(move |socket| async move {
+		handle.handle_ws(AxumWs::new(socket)).await;
+	})
 }
 
 async fn wgui_index() -> Html<&'static str> {
 	Html(wgui::dist::index_html())
+}
+
+async fn wgui_js() -> Response {
+	Response::builder()
+		.header(header::CONTENT_TYPE, "text/javascript")
+		.header(header::CACHE_CONTROL, "no-store")
+		.body(Body::from(wgui::dist::index_js()))
+		.unwrap()
+}
+
+async fn wgui_css() -> Response {
+	Response::builder()
+		.header(header::CONTENT_TYPE, "text/css")
+		.header(header::CACHE_CONTROL, "no-store")
+		.body(Body::from(wgui::dist::index_css()))
+		.unwrap()
+}
+
+async fn wgui_asset(Path(path): Path<String>) -> Response {
+	let Some(asset_path) = sanitize_asset_path(&path) else {
+		return Response::builder()
+			.status(StatusCode::BAD_REQUEST)
+			.body(Body::from("bad asset path"))
+			.unwrap();
+	};
+
+	match tokio::fs::read(&asset_path).await {
+		Ok(bytes) => Response::builder()
+			.header(header::CONTENT_TYPE, content_type_for(&asset_path))
+			.body(Body::from(bytes))
+			.unwrap(),
+		Err(_) => Response::builder()
+			.status(StatusCode::NOT_FOUND)
+			.body(Body::from("asset not found"))
+			.unwrap(),
+	}
+}
+
+fn sanitize_asset_path(uri_path: &str) -> Option<PathBuf> {
+	if uri_path.is_empty() {
+		return None;
+	}
+	let mut out = PathBuf::from("assets");
+	for part in uri_path.split('/') {
+		if part.is_empty() || part == "." || part == ".." {
+			return None;
+		}
+		out.push(part);
+	}
+	Some(out)
+}
+
+fn content_type_for(path: &FsPath) -> &'static str {
+	match path
+		.extension()
+		.and_then(|ext| ext.to_str())
+		.unwrap_or_default()
+	{
+		"css" => "text/css",
+		"html" => "text/html",
+		"ico" => "image/x-icon",
+		"js" => "text/javascript",
+		"json" => "application/json",
+		"jpg" | "jpeg" => "image/jpeg",
+		"png" => "image/png",
+		"svg" => "image/svg+xml",
+		_ => "application/octet-stream",
+	}
 }

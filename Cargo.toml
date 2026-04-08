@@ -33,7 +33,7 @@ reqwest = { version = "0.12", features = ["json"] }
 libc = "0.2"
 lru = "0.14"
 num_cpus = "1"
-wgui = { git = "https://github.com/J45k4/wgui.git", rev = "e0a80f841e70bf202ea0358d2eacca0c0dc94a86", features = ["axum"] }
+wgui = { git = "https://github.com/J45k4/wgui.git", rev = "caa4f096beadaf77af95abc56bdc8c41c8970681" }
 
 [dev-dependencies]
 tempfile = "3"

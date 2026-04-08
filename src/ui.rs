@@ -3,21 +3,69 @@ use crate::db::{Device, SegmentsMetadata};
 use crate::server_info::{fetch_server_info, ServerInfo};
 use chrono::{DateTime, Utc};
 use log::error;
-use std::sync::Arc;
-use wgui::*;
+use std::sync::{Arc, Mutex};
+use wgui::wui::runtime::{Component, Ctx};
+use wgui::{wgui_controller, WguiModel};
 
-pub const REFRESH_BUTTON_ID: u32 = 1;
 const DEVICE_ROW_LIMIT: usize = 12;
 
+pub struct UiContext {
+	pub app: Arc<Context>,
+	pub snapshot: Mutex<UiSnapshot>,
+}
+
+impl UiContext {
+	pub fn new(app: Arc<Context>) -> Self {
+		Self {
+			app,
+			snapshot: Mutex::new(UiSnapshot::empty()),
+		}
+	}
+}
+
+pub struct Ui {
+	ctx: Arc<Ctx<UiContext, ()>>,
+}
+
+#[derive(Debug, Clone, WguiModel)]
+pub struct UiStatLine {
+	pub line: String,
+}
+
+#[derive(Debug, Clone, WguiModel)]
+pub struct UiDeviceRow {
+	pub id: String,
+	pub logs_count: String,
+	pub last_upload_at: String,
+	pub send_logs: String,
+}
+
+#[derive(Debug, Clone, WguiModel)]
 pub struct UiSnapshot {
-	pub server_info: ServerInfo,
-	pub segments_metadata: Option<SegmentsMetadata>,
-	pub devices: Vec<Device>,
-	pub last_updated: DateTime<Utc>,
-	pub last_error: Option<String>,
+	pub storage_stats: Vec<UiStatLine>,
+	pub segment_stats: Vec<UiStatLine>,
+	pub segment_stats_available: bool,
+	pub devices: Vec<UiDeviceRow>,
+	pub has_devices: bool,
+	pub has_error: bool,
+	pub last_error: String,
+	pub last_updated: String,
 }
 
 impl UiSnapshot {
+	pub fn empty() -> Self {
+		Self {
+			storage_stats: Vec::new(),
+			segment_stats: Vec::new(),
+			segment_stats_available: false,
+			devices: Vec::new(),
+			has_devices: false,
+			has_error: false,
+			last_error: String::new(),
+			last_updated: String::new(),
+		}
+	}
+
 	pub async fn capture(ctx: &Arc<Context>) -> Self {
 		let server_info = fetch_server_info().await;
 
@@ -40,158 +88,135 @@ impl UiSnapshot {
 		};
 
 		let last_error = if errors.is_empty() {
-			None
+			String::new()
 		} else {
-			Some(errors.join(" | "))
+			errors.join(" | ")
 		};
 
-		UiSnapshot {
+		Self::from_parts(
 			server_info,
 			segments_metadata,
 			devices,
-			last_updated: Utc::now(),
+			Utc::now(),
 			last_error,
+		)
+	}
+
+	fn from_parts(
+		server_info: ServerInfo,
+		segments_metadata: Option<SegmentsMetadata>,
+		devices: Vec<Device>,
+		last_updated: DateTime<Utc>,
+		last_error: String,
+	) -> Self {
+		let storage_stats = vec![
+			UiStatLine {
+				line: format!(
+					"Used: {} ({:.1}%)",
+					format_bytes(server_info.used_bytes),
+					server_info.used_percent,
+				),
+			},
+			UiStatLine {
+				line: format!("Free: {}", format_bytes(server_info.free_bytes)),
+			},
+			UiStatLine {
+				line: format!(
+					"Uploads: {} files, {}",
+					server_info.upload_files_count,
+					format_bytes(server_info.upload_bytes)
+				),
+			},
+		];
+
+		let (segment_stats_available, segment_stats) = if let Some(meta) = segments_metadata {
+			(
+				true,
+				vec![
+					UiStatLine {
+						line: format!("Count: {}", meta.segment_count),
+					},
+					UiStatLine {
+						line: format!("Original size: {}", format_bytes(meta.original_size)),
+					},
+					UiStatLine {
+						line: format!("Compressed size: {}", format_bytes(meta.compressed_size)),
+					},
+					UiStatLine {
+						line: format!("Total logs: {}", meta.logs_count),
+					},
+				],
+			)
+		} else {
+			(false, Vec::new())
+		};
+
+		let devices: Vec<UiDeviceRow> = devices
+			.into_iter()
+			.take(DEVICE_ROW_LIMIT)
+			.map(|device| UiDeviceRow {
+				id: device.id,
+				logs_count: device.logs_count.to_string(),
+				last_upload_at: device
+					.last_upload_at
+					.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+					.unwrap_or_else(|| "never".to_string()),
+				send_logs: if device.send_logs {
+					"enabled".to_string()
+				} else {
+					"disabled".to_string()
+				},
+			})
+			.collect();
+
+		Self {
+			storage_stats,
+			segment_stats,
+			segment_stats_available,
+			has_devices: !devices.is_empty(),
+			devices,
+			has_error: !last_error.is_empty(),
+			last_error,
+			last_updated: format!("Last updated: {}", last_updated.format("%Y-%m-%d %H:%M:%S")),
 		}
 	}
 }
 
-pub fn render(snapshot: &UiSnapshot) -> Item {
-	let header = hstack([
-		text("PuppyLog").grow(1).text_align("left"),
-		button("Refresh").id(REFRESH_BUTTON_ID),
-	])
-	.spacing(12)
-	.padding(12)
-	.border("1px solid #dcdcdc")
-	.background_color("#f7f7f7");
+impl Ui {
+	pub async fn new(ctx: Arc<Ctx<UiContext>>) -> Self {
+		let mut ui = Self { ctx };
+		ui.refresh().await;
+		ui
+	}
+}
 
-	let storage_card = vstack([
-		text("Storage").text_align("center"),
-		text(&format!(
-			"Used: {} ({:.1}%)",
-			format_bytes(snapshot.server_info.used_bytes),
-			snapshot.server_info.used_percent,
-		))
-		.text_align("center"),
-		text(&format!(
-			"Free: {}",
-			format_bytes(snapshot.server_info.free_bytes)
-		))
-		.text_align("center"),
-		text(&format!(
-			"Uploads: {} files, {}",
-			snapshot.server_info.upload_files_count,
-			format_bytes(snapshot.server_info.upload_bytes)
-		))
-		.text_align("center"),
-	])
-	.spacing(8)
-	.padding(12)
-	.border("1px solid #dddddd")
-	.background_color("#ffffff")
-	.grow(1);
-
-	let segments_card = if let Some(meta) = &snapshot.segments_metadata {
-		vstack([
-			text("Segments").text_align("center"),
-			text(&format!("Count: {}", meta.segment_count)).text_align("center"),
-			text(&format!(
-				"Original size: {}",
-				format_bytes(meta.original_size)
-			))
-			.text_align("center"),
-			text(&format!(
-				"Compressed size: {}",
-				format_bytes(meta.compressed_size)
-			))
-			.text_align("center"),
-			text(&format!("Total logs: {}", meta.logs_count)).text_align("center"),
-		])
-		.spacing(6)
-		.padding(12)
-		.border("1px solid #dddddd")
-		.background_color("#ffffff")
-		.grow(1)
-	} else {
-		text("Segment stats unavailable")
-			.text_align("center")
-			.padding(12)
-			.border("1px solid #f5c6cb")
-			.background_color("#fff5f5")
-			.grow(1)
-	};
-
-	let device_rows: Vec<Item> = snapshot
-		.devices
-		.iter()
-		.take(DEVICE_ROW_LIMIT)
-		.map(|device| {
-			tr([
-				td(text(&device.id)),
-				td(text(&device.logs_count.to_string())).text_align("center"),
-				td(text(
-					&device
-						.last_upload_at
-						.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-						.unwrap_or_else(|| "never".to_string()),
-				)),
-				td(text(if device.send_logs {
-					"enabled"
-				} else {
-					"disabled"
-				}))
-				.text_align("center"),
-			])
-		})
-		.collect();
-
-	let device_table = if device_rows.is_empty() {
-		text("No devices yet")
-			.padding(12)
-			.border("1px solid #dddddd")
-	} else {
-		table([
-			thead([tr([
-				th(text("Device ID")),
-				th(text("Logs")),
-				th(text("Last upload")),
-				th(text("Send logs")),
-			])]),
-			tbody(device_rows),
-		])
-		.border("1px solid #dddddd")
-		.wrap(true)
-	};
-
-	let mut layout = vec![
-		header,
-		hstack([storage_card, segments_card]).spacing(12).wrap(true),
-		text("Devices").margin_top(8).text_align("left"),
-		device_table,
-	];
-
-	if let Some(error) = &snapshot.last_error {
-		layout.push(
-			text(error)
-				.padding(10)
-				.border("1px solid #f5c6cb")
-				.background_color("#fff5f5"),
-		);
+#[wgui_controller]
+impl Ui {
+	pub fn state(&self) -> UiSnapshot {
+		self.ctx.state.snapshot.lock().unwrap().clone()
 	}
 
-	layout.push(
-		text(&format!(
-			"Last updated: {}",
-			snapshot.last_updated.format("%Y-%m-%d %H:%M:%S")
-		))
-		.text_align("right")
-		.margin_top(8),
-	);
+	pub async fn refresh(&mut self) {
+		let snapshot = UiSnapshot::capture(&self.ctx.state.app).await;
+		*self.ctx.state.snapshot.lock().unwrap() = snapshot;
+	}
+}
 
-	vstack(layout)
-		.spacing(16)
-		.padding(20)
-		.background_color("#f9fbff")
+#[wgui::wui::runtime::async_trait]
+impl Component for Ui {
+	type Context = UiContext;
+	type Db = ();
+	type Model = UiSnapshot;
+
+	async fn mount(ctx: Arc<Ctx<UiContext, ()>>) -> Self {
+		Self::new(ctx).await
+	}
+
+	fn render(&self, _ctx: &Ctx<UiContext, ()>) -> Self::Model {
+		self.state()
+	}
+
+	fn unmount(self, _ctx: Arc<Ctx<UiContext, ()>>) {}
 }
 
 fn format_bytes(bytes: u64) -> String {

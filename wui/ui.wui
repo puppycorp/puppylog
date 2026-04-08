@@ -1,0 +1,72 @@
+<Switch>
+  <Case path="/" title="PuppyLog">
+    <VStack spacing=16 padding=20 backgroundColor="#f9fbff">
+      <HStack spacing=12 padding=12 border="1px solid #dcdcdc" backgroundColor="#f7f7f7">
+        <Text value="PuppyLog" grow=1 textAlign="left" />
+        <Button text="Refresh" onClick="Refresh" />
+      </HStack>
+
+      <HStack spacing=12 wrap=true>
+        <VStack spacing=8 padding=12 border="1px solid #dddddd" backgroundColor="#ffffff" grow=1 minWidth=260>
+          <Text value="Storage" textAlign="center" />
+          <For each={state.storage_stats} itemAs="stat" key={stat.line}>
+            <Text value={stat.line} textAlign="center" />
+          </For>
+        </VStack>
+
+        <VStack spacing=8 padding=12 border="1px solid #dddddd" backgroundColor="#ffffff" grow=1 minWidth=260>
+          <Text value="Segments" textAlign="center" />
+          <If test={state.segment_stats_available}>
+            <For each={state.segment_stats} itemAs="stat" key={stat.line}>
+              <Text value={stat.line} textAlign="center" />
+            </For>
+          </If>
+          <Else>
+            <Text value="Segment stats unavailable" textAlign="center" color="#b42318" />
+          </Else>
+        </VStack>
+      </HStack>
+
+      <VStack spacing=10 padding=12 border="1px solid #dddddd" backgroundColor="#ffffff">
+        <Text value="Devices" textAlign="left" />
+
+        <If test={state.has_devices}>
+          <HStack spacing=12 paddingBottom=4 border="0 solid transparent" wrap=true>
+            <Text value="Device ID" grow=2 />
+            <Text value="Logs" grow=1 />
+            <Text value="Last upload" grow=2 />
+            <Text value="Send logs" grow=1 />
+          </HStack>
+
+          <For each={state.devices} itemAs="device" key={device.id}>
+            <HStack spacing=12 padding=8 border="1px solid #efefef" backgroundColor="#fbfbfb" wrap=true>
+              <Text value={device.id} grow=2 />
+              <Text value={device.logs_count} grow=1 />
+              <Text value={device.last_upload_at} grow=2 />
+              <Text value={device.send_logs} grow=1 />
+            </HStack>
+          </For>
+        </If>
+        <Else>
+          <Text value="No devices yet" />
+        </Else>
+      </VStack>
+
+      <If test={state.has_error}>
+        <VStack padding=10 border="1px solid #f5c6cb" backgroundColor="#fff5f5">
+          <Text value={state.last_error} color="#b42318" />
+        </VStack>
+      </If>
+
+      <Text value={state.last_updated} textAlign="right" />
+    </VStack>
+  </Case>
+
+  <Case path="/*" title="PuppyLog">
+    <VStack spacing=16 padding=20 backgroundColor="#f9fbff">
+      <Text value="PuppyLog" />
+      <Text value="Page not found" color="#b42318" />
+      <Button text="Refresh" onClick="Refresh" />
+    </VStack>
+  </Case>
+</Switch>
