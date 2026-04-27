@@ -3,11 +3,11 @@ name: Release CLI
 on:
     push:
         tags:
-            - "v*"
+            - "*"
     workflow_dispatch:
         inputs:
             tag:
-                description: "Tag to build and release (for example v0.1.0)"
+                description: "Tag to build and release (for example 1 or v1.0.0)"
                 required: true
                 type: string
 
