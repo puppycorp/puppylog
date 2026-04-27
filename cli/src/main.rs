@@ -1,10 +1,7 @@
 use chrono::NaiveDate;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use log::Level;
-use puppylog::{DrainParser, LogEntry, LogLevel, Prop, PuppylogBuilder};
+use puppylog::{DrainParser, LogEntry, LogLevel, Prop};
 use puppylog_server::{config::log_path, db, segment};
 use rand::{distributions::Alphanumeric, prelude::*};
 use reqwest::{self, Client, Url};
@@ -16,7 +13,6 @@ use std::sync::{
 	atomic::{AtomicUsize, Ordering},
 	Arc,
 };
-use std::thread::sleep;
 use std::time::Duration;
 
 /// Load default server URL if `--address` was not supplied on the command‑line.
@@ -112,19 +108,7 @@ lazy_static::lazy_static! {
 
 // Other constants
 const STATUS_CODES: &[i32] = &[200, 201, 400, 401, 403, 404, 500, 502, 503];
-const EMAIL_DOMAINS: &[&str] = &["example.com", "mail.com", "test.org", "sample.net"];
-const SERVICE_NAMES: &[&str] = &[
-	"AuthService",
-	"DataService",
-	"PaymentService",
-	"NotificationService",
-];
-const DEVICE_NAMES: &[&str] = &["DeviceA", "DeviceB", "SensorX", "SensorY"];
 const API_NAMES: &[&str] = &["GetUser", "CreateOrder", "UpdateProfile", "DeleteAccount"];
-const DATABASE_NAMES: &[&str] = &["UserDB", "OrderDB", "AnalyticsDB", "InventoryDB"];
-const WEBHOOK_SOURCES: &[&str] = &["GitHub", "Stripe", "Slack", "Twilio"];
-const LICENSE_TYPES: &[&str] = &["Pro", "Enterprise", "Basic", "Premium"];
-const REPORT_TYPES: &[&str] = &["Sales", "Inventory", "UserActivity", "Performance"];
 
 // Helper functions to generate random IDs
 fn generate_random_id(prefix: &str, length: usize) -> String {
@@ -144,16 +128,6 @@ fn random_string_name() -> String {
 		.take(length)
 		.map(char::from)
 		.collect()
-}
-
-fn random_email() -> String {
-	let username: String = thread_rng()
-		.sample_iter(&Alphanumeric)
-		.take(7)
-		.map(char::from)
-		.collect();
-	let domain = EMAIL_DOMAINS.choose(&mut thread_rng()).unwrap();
-	format!("{}@{}", username.to_lowercase(), domain)
 }
 
 fn random_num() -> u32 {
@@ -315,6 +289,17 @@ enum SegmentSubCommand {
 }
 
 #[derive(Subcommand)]
+enum LogsSubCommand {
+	Download {
+		#[arg(long)]
+		count: u32,
+		#[arg(long)]
+		query: Option<String>,
+		output: String,
+	},
+}
+
+#[derive(Subcommand)]
 enum Commands {
 	/// Upload log data
 	Upload(UploadLogsArgs),
@@ -325,6 +310,8 @@ enum Commands {
 	UpdateMetadata(UpdateMetadataArgs),
 	#[command(subcommand)]
 	Segment(SegmentSubCommand),
+	#[command(subcommand)]
+	Logs(LogsSubCommand),
 	/// Import compressed log segments from a directory
 	Import {
 		folder: String,
@@ -334,36 +321,6 @@ enum Commands {
 #[derive(Subcommand)]
 enum TokenizeSubcommands {
 	Drain { src: String, output: Option<String> },
-}
-
-async fn upload_logs(address: &str, logs: &[String], compress: bool) -> Result<(), Box<dyn Error>> {
-	let client = reqwest::Client::new();
-	let logs_str = logs.join("\n");
-
-	let mut headers = reqwest::header::HeaderMap::new();
-
-	let body = if compress {
-		headers.insert(
-			reqwest::header::CONTENT_ENCODING,
-			reqwest::header::HeaderValue::from_static("gzip"),
-		);
-
-		let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-		encoder.write_all(logs_str.as_bytes())?;
-		encoder.finish()?
-	} else {
-		logs_str.into_bytes()
-	};
-
-	let response = client
-		.post(address)
-		.headers(headers)
-		.body(body)
-		.send()
-		.await?;
-
-	println!("Upload status: {}", response.status());
-	Ok(())
 }
 
 async fn import_segments(path: &str) -> anyhow::Result<()> {
@@ -420,6 +377,116 @@ async fn import_segments(path: &str) -> anyhow::Result<()> {
 		tokio::fs::write(log_dir.join(format!("{segment_id}.log")), &compressed).await?;
 	}
 
+	Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct DownloadedLogEntry {
+	timestamp: String,
+	level: String,
+	#[serde(default)]
+	props: Vec<DownloadedLogProp>,
+	#[serde(alias = "message")]
+	msg: String,
+}
+
+#[derive(serde::Deserialize)]
+struct DownloadedLogProp {
+	key: String,
+	value: String,
+}
+
+fn format_download_timestamp(ts: &str) -> String {
+	DateTime::parse_from_rfc3339(ts)
+		.map(|date| date.format("%Y-%m-%d %H:%M:%S").to_string())
+		.unwrap_or_else(|_| "unknown time".to_string())
+}
+
+fn day_start_utc(date: NaiveDate) -> DateTime<Utc> {
+	date.and_hms_opt(0, 0, 0)
+		.expect("valid start of day")
+		.and_utc()
+}
+
+fn day_end_utc(date: NaiveDate) -> DateTime<Utc> {
+	date.and_hms_opt(23, 59, 59)
+		.expect("valid end of day")
+		.and_utc()
+}
+
+fn format_download_line(entry: &DownloadedLogEntry) -> String {
+	let props_text = if entry.props.is_empty() {
+		String::new()
+	} else {
+		format!(
+			" {}",
+			entry
+				.props
+				.iter()
+				.map(|prop| format!("{}={}", prop.key, prop.value))
+				.collect::<Vec<_>>()
+				.join(" ")
+		)
+	};
+	let msg = entry.msg.replace(['\r', '\n'], " ").trim().to_string();
+	let msg_text = if msg.is_empty() {
+		String::new()
+	} else {
+		format!(" {}", msg)
+	};
+	format!(
+		"{} {}{}{}",
+		format_download_timestamp(&entry.timestamp),
+		entry.level.to_uppercase(),
+		props_text,
+		msg_text
+	)
+}
+
+async fn download_logs(
+	client: &Client,
+	base_addr: &str,
+	count: u32,
+	query: Option<String>,
+	output: &str,
+) -> Result<(), Box<dyn Error>> {
+	let mut url = Url::parse(&format!("{}/api/logs", base_addr))?;
+	{
+		let mut params = url.query_pairs_mut();
+		params.append_pair("count", &count.to_string());
+		if let Some(query) = query.as_ref() {
+			if !query.trim().is_empty() {
+				params.append_pair("query", query);
+			}
+		}
+	}
+
+	println!("downloading logs: {}", url);
+	let response = client
+		.get(url)
+		.header(reqwest::header::ACCEPT, "application/json")
+		.send()
+		.await?;
+
+	if !response.status().is_success() {
+		let status = response.status();
+		let body = response.text().await.unwrap_or_default();
+		return Err(format!("download failed with {}: {}", status, body).into());
+	}
+
+	let entries = response.json::<Vec<DownloadedLogEntry>>().await?;
+	let content = entries
+		.iter()
+		.map(format_download_line)
+		.collect::<Vec<_>>()
+		.join("\n");
+	if let Some(parent) = Path::new(output).parent() {
+		if !parent.as_os_str().is_empty() {
+			std::fs::create_dir_all(parent)?;
+		}
+	}
+	std::fs::write(output, content)?;
+	println!("saved {} logs to {}", entries.len(), output);
 	Ok(())
 }
 
@@ -536,18 +603,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				.await?;
 
 			println!("Response: {:?}", req);
-
-			// let props: Vec<Prop> = serde_json::from_str(&props)?;
-			// let logger = PuppylogBuilder::new()
-			// 	.server(&address).unwrap()
-			// 	.level(Level::Info)
-			// 	.stdout()
-			// 	.authorization("Bearer 123456")
-			// 	.prop("app", "puppylogcli")
-			// 	.build()
-			// 	.unwrap();
-			// logger.update_metadata(&device_id, props);
-			// logger.close();
 		}
 		Commands::Segment(sub) => {
 			let client = reqwest::Client::new();
@@ -567,16 +622,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 					{
 						let mut query = url.query_pairs_mut();
 						if start.is_some() {
-							query.append_pair(
-								"start",
-								&start.unwrap().and_hms(0, 0, 0).and_utc().to_string(),
-							);
+							query.append_pair("start", &day_start_utc(start.unwrap()).to_string());
 						}
 						if end.is_some() {
-							query.append_pair(
-								"end",
-								&end.unwrap().and_hms(23, 59, 59).and_utc().to_string(),
-							);
+							query.append_pair("end", &day_end_utc(end.unwrap()).to_string());
 						}
 						if count.is_some() {
 							query.append_pair("count", &count.unwrap().to_string());
@@ -606,16 +655,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 					{
 						let mut query = url.query_pairs_mut();
 						if start.is_some() {
-							query.append_pair(
-								"start",
-								&start.unwrap().and_hms(0, 0, 0).and_utc().to_string(),
-							);
+							query.append_pair("start", &day_start_utc(start.unwrap()).to_string());
 						}
 						if end.is_some() {
-							query.append_pair(
-								"end",
-								&end.unwrap().and_hms(23, 59, 59).and_utc().to_string(),
-							);
+							query.append_pair("end", &day_end_utc(end.unwrap()).to_string());
 						}
 						if count.is_some() {
 							query.append_pair("count", &count.unwrap().to_string());
@@ -699,16 +742,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 					{
 						let mut query = url.query_pairs_mut();
 						if start.is_some() {
-							query.append_pair(
-								"start",
-								&start.unwrap().and_hms(0, 0, 0).and_utc().to_string(),
-							);
+							query.append_pair("start", &day_start_utc(start.unwrap()).to_string());
 						}
 						if end.is_some() {
-							query.append_pair(
-								"end",
-								&end.unwrap().and_hms(23, 59, 59).and_utc().to_string(),
-							);
+							query.append_pair("end", &day_end_utc(end.unwrap()).to_string());
 						}
 						if count.is_some() {
 							query.append_pair("count", &count.unwrap().to_string());
@@ -745,10 +782,50 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				}
 			}
 		}
+		Commands::Logs(sub) => {
+			let client = reqwest::Client::new();
+			let base_addr = cli
+				.address
+				.clone()
+				.or_else(load_default_address)
+				.unwrap_or_else(|| "http://127.0.0.1:3337".to_string());
+			match sub {
+				LogsSubCommand::Download {
+					count,
+					query,
+					output,
+				} => {
+					download_logs(&client, &base_addr, count, query, &output).await?;
+				}
+			}
+		}
 		Commands::Import { folder } => {
 			import_segments(&folder).await?;
 		}
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn format_download_line_flattens_props_and_newlines() {
+		let entry = DownloadedLogEntry {
+			timestamp: "2026-03-31T01:29:21.657081Z".to_string(),
+			level: "error".to_string(),
+			props: vec![DownloadedLogProp {
+				key: "id".to_string(),
+				value: "id-123".to_string(),
+			}],
+			msg: "line one\nline two".to_string(),
+		};
+
+		assert_eq!(
+			format_download_line(&entry),
+			"2026-03-31 01:29:21 ERROR id=id-123 line one line two"
+		);
+	}
 }

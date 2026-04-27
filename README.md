@@ -411,12 +411,19 @@ puppylogcli -- --help` to see all commands. Available commands include:
 | `segment get`             | Query segment metadata using filters              |
 | `segment download`        | Download segments to a directory                  |
 | `segment download-remove` | Download segments and delete them from the server |
+| `logs download`           | Download matching logs to a text file             |
 | `import`                  | Import compressed log segments from a directory   |
 
 Example importing log segments:
 
 ```
 cargo run --bin puppylogcli -- import ./segments
+```
+
+Example downloading 500 error logs into a local file:
+
+```
+cargo run --bin puppylogcli -- logs download --count 500 --query 'level = "error"' ./error-logs.txt
 ```
 
 ### Device Simulator
