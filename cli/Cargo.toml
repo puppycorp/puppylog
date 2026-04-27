@@ -1,5 +1,5 @@
 [package]
-name = "puppylogcli"
+name = "plog"
 version = "0.1.0"
 edition = "2021"
 
@@ -18,4 +18,3 @@ serde_json = "1"
 puppylog-server = { path = ".." }
 anyhow = "1"
 zstd = "0.13"
-

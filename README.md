@@ -398,10 +398,10 @@ cargo run
 
 ### Command Line Interface
 
-PuppyLog comes with a CLI called `puppylogcli`. The CLI automatically reads the
+PuppyLog comes with a CLI called `plog`. The CLI automatically reads the
 server address from the `PUPPYLOG_ADDRESS` environment variable or the file
 `$HOME/.puppylog/address` when `--address` is not provided. Run `cargo run --bin
-puppylogcli -- --help` to see all commands. Available commands include:
+plog -- --help` to see all commands. Available commands include:
 
 | Command                   | Description                                       |
 | ------------------------- | ------------------------------------------------- |
@@ -417,7 +417,13 @@ puppylogcli -- --help` to see all commands. Available commands include:
 Example importing log segments:
 
 ```
-cargo run --bin puppylogcli -- import ./segments
+cargo run --bin plog -- import ./segments
+```
+
+Example downloading 500 error logs into a local file:
+
+```
+cargo run --bin plog -- logs download --count 500 --query 'level = "error"' ./error-logs.txt
 ```
 
 Example downloading 500 error logs into a local file:
