@@ -1648,6 +1648,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "plog"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "flate2",
+ "lazy_static",
+ "log",
+ "puppylog",
+ "puppylog-server",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
 name = "plotters"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1769,26 +1789,6 @@ dependencies = [
  "tokio-util",
  "tower",
  "tower-http",
- "zstd",
-]
-
-[[package]]
-name = "puppylogcli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "flate2",
- "lazy_static",
- "log",
- "puppylog",
- "puppylog-server",
- "rand 0.8.5",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
  "zstd",
 ]
 

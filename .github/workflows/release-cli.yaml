@@ -37,7 +37,7 @@ jobs:
 
         env:
             RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-            BIN_NAME: puppylogcli
+            BIN_NAME: plog
 
         steps:
             - name: Check out source
@@ -54,7 +54,7 @@ jobs:
               uses: Swatinem/rust-cache@v2
 
             - name: Build release binary
-              run: cargo build --release -p puppylogcli --target ${{ matrix.target }}
+              run: cargo build --release -p plog --target ${{ matrix.target }}
 
             - name: Package Unix archive
               if: matrix.archive == 'tar.gz'
