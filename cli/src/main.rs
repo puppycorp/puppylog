@@ -9,7 +9,7 @@ use reqwest::{self, Client, Url};
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::HashMap;
 use std::error::Error;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
 	atomic::{AtomicUsize, Ordering},
@@ -50,6 +50,50 @@ fn load_default_address() -> Option<String> {
 		}
 	}
 	read_config().and_then(|config| config.address)
+}
+
+fn validated_server_url(input: &str) -> Result<String, Box<dyn Error>> {
+	let trimmed = input.trim();
+	if trimmed.is_empty() {
+		return Err("server URL cannot be empty".into());
+	}
+	let parsed = Url::parse(trimmed)?;
+	match parsed.scheme() {
+		"http" | "https" => Ok(trimmed.to_string()),
+		_ => Err("server URL must start with http:// or https://".into()),
+	}
+}
+
+fn prompt_for_server_url() -> Result<String, Box<dyn Error>> {
+	if !std::io::stdin().is_terminal() {
+		return Err(
+			"No PuppyLog server URL configured. Set it with `plog config set-url <url>` or pass `--address <url>`.".into(),
+		);
+	}
+
+	eprint!("No PuppyLog server URL configured. Enter server URL: ");
+	std::io::stderr().flush()?;
+
+	let mut input = String::new();
+	std::io::stdin().read_line(&mut input)?;
+	let url = validated_server_url(&input)?;
+
+	let mut config = read_config().unwrap_or_default();
+	config.address = Some(url.clone());
+	let path = write_config(&config)?;
+	eprintln!("saved config to {}", path.display());
+
+	Ok(url)
+}
+
+fn resolve_server_url(cli_address: Option<String>) -> Result<String, Box<dyn Error>> {
+	if let Some(address) = cli_address {
+		return validated_server_url(&address);
+	}
+	if let Some(address) = load_default_address() {
+		return validated_server_url(&address);
+	}
+	prompt_for_server_url()
 }
 
 fn plog_home_dir() -> Option<std::path::PathBuf> {
@@ -684,8 +728,8 @@ enum LogsSubCommand {
 
 #[derive(Subcommand)]
 enum ConfigSubCommand {
-	SetAddress {
-		address: String,
+	SetUrl {
+		url: String,
 	},
 	SetToken {
 		token: String,
@@ -968,9 +1012,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 			run_self_update(&update_client).await?;
 		}
 		Commands::Config { subcommand } => match subcommand {
-			ConfigSubCommand::SetAddress { address } => {
+			ConfigSubCommand::SetUrl { url } => {
 				let mut config = read_config().unwrap_or_default();
-				config.address = Some(address);
+				config.address = Some(validated_server_url(&url)?);
 				let path = write_config(&config)?;
 				println!("saved config to {}", path.display());
 			}
@@ -1053,11 +1097,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 		}
 		Commands::Segment(sub) => {
 			let client = reqwest::Client::new();
-			let base_addr = cli
-				.address
-				.clone()
-				.or_else(load_default_address)
-				.unwrap_or_else(|| "http://127.0.0.1:3337".to_string());
+			let base_addr = resolve_server_url(cli.address.clone())?;
 			let auth_token = load_default_auth_token();
 			match sub {
 				SegmentSubCommand::Get {
@@ -1237,11 +1277,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 		}
 		Commands::Logs(sub) => {
 			let client = reqwest::Client::new();
-			let base_addr = cli
-				.address
-				.clone()
-				.or_else(load_default_address)
-				.unwrap_or_else(|| "http://127.0.0.1:3337".to_string());
+			let base_addr = resolve_server_url(cli.address.clone())?;
 			let auth_token = load_default_auth_token();
 			match sub {
 				LogsSubCommand::Download {

@@ -458,7 +458,7 @@ also be read from `PUPPYLOG_AUTH_TOKEN` or that same config file. Run `cargo run
 | Command                   | Description                                       |
 | ------------------------- | ------------------------------------------------- |
 | `upload`                  | Upload randomly generated logs to a server        |
-| `config set-address`      | Save the default server address                   |
+| `config set-url`          | Save the default server URL                       |
 | `config set-token`        | Save the default auth token                       |
 | `config clear-token`      | Remove the saved auth token                       |
 | `config show`             | Show the current config with secrets masked       |
@@ -477,10 +477,10 @@ Example importing log segments:
 cargo run --bin plog -- import ./segments
 ```
 
-Save a default server address and auth token:
+Save a default server URL and auth token:
 
 ```
-plog config set-address https://logs.example.com
+plog config set-url https://logs.example.com
 plog config set-token your-token-here
 plog config show
 ```
