@@ -121,6 +121,15 @@ fn release_page_url(tag: &str) -> String {
 	format!("https://github.com/{}/releases/tag/{}", GITHUB_REPO, tag)
 }
 
+fn endpoint_url(base_addr: &str, path: &str) -> Result<Url, Box<dyn Error>> {
+	let normalized = if base_addr.ends_with('/') {
+		base_addr.to_string()
+	} else {
+		format!("{}/", base_addr)
+	};
+	Ok(Url::parse(&normalized)?.join(path.trim_start_matches('/'))?)
+}
+
 fn platform_asset_name(tag: &str) -> Option<String> {
 	match (std::env::consts::OS, std::env::consts::ARCH) {
 		("linux", "x86_64") => Some(format!("plog-{tag}-x86_64-unknown-linux-gnu.tar.gz")),
@@ -843,7 +852,7 @@ async fn download_logs(
 	query: Option<String>,
 	output: &str,
 ) -> Result<(), Box<dyn Error>> {
-	let mut url = Url::parse(&format!("{}/api/logs", base_addr))?;
+	let mut url = endpoint_url(base_addr, "/api/logs")?;
 	{
 		let mut params = url.query_pairs_mut();
 		params.append_pair("count", &count.to_string());
@@ -1053,7 +1062,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 					count,
 					sort,
 				} => {
-					let mut url = Url::parse(&format!("{}/api/v1/segments", base_addr))?;
+					let mut url = endpoint_url(&base_addr, "/api/v1/segments")?;
 					{
 						let mut query = url.query_pairs_mut();
 						if start.is_some() {
@@ -1086,7 +1095,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 					sort,
 					output,
 				} => {
-					let mut url = Url::parse(&format!("{}/api/v1/segments", base_addr))?;
+					let mut url = endpoint_url(&base_addr, "/api/v1/segments")?;
 					let output_path = Path::new(&output);
 					if !output_path.exists() {
 						std::fs::create_dir_all(output_path)?;
@@ -1115,9 +1124,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 					for segment in segements {
 						let id = segment["id"].as_i64().unwrap().to_string();
-						let url =
-							Url::parse(&format!("{}/api/v1/segment/{}/download", base_addr, id))
-								.unwrap();
+						let url = endpoint_url(&base_addr, &format!("/api/v1/segment/{}/download", id))?;
 						let file_path = output_path.join(format!("segment_{}.zstd", id));
 						if !file_path.exists() {
 							println!("downloading: {}", url);
@@ -1146,8 +1153,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 							file.write_all(&response)?;
 						}
 
-						let url =
-							Url::parse(&format!("{}/api/v1/segment/{}", base_addr, id)).unwrap();
+						let url = endpoint_url(&base_addr, &format!("/api/v1/segment/{}", id))?;
 						loop {
 							let resp = match apply_auth_header(client.delete(url.clone()), auth_token.as_deref())
 								.send()
@@ -1176,7 +1182,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 					sort,
 					output,
 				} => {
-					let mut url = Url::parse(&format!("{}/api/v1/segments", base_addr))?;
+					let mut url = endpoint_url(&base_addr, "/api/v1/segments")?;
 					let output_path = Path::new(&output);
 					if !output_path.exists() {
 						std::fs::create_dir_all(output_path)?;
@@ -1205,9 +1211,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 					for segment in segements {
 						let id = segment["id"].as_i64().unwrap().to_string();
-						let url =
-							Url::parse(&format!("{}/api/v1/segment/{}/download", base_addr, id))
-								.unwrap();
+						let url = endpoint_url(&base_addr, &format!("/api/v1/segment/{}/download", id))?;
 						let file_path = output_path.join(format!("segment_{}.zst", id));
 						if file_path.exists() {
 							println!("file already exists: {}", file_path.display());
@@ -1283,6 +1287,22 @@ mod tests {
 		assert!(is_newer_version("1.2.0", "1.1.9"));
 		assert!(!is_newer_version("1", "2"));
 		assert!(!is_newer_version("2", "2"));
+	}
+
+	#[test]
+	fn endpoint_url_ignores_trailing_slash_on_base() {
+		assert_eq!(
+			endpoint_url("http://example.com:3337", "/api/logs")
+				.unwrap()
+				.as_str(),
+			"http://example.com:3337/api/logs"
+		);
+		assert_eq!(
+			endpoint_url("http://example.com:3337/", "/api/logs")
+				.unwrap()
+				.as_str(),
+			"http://example.com:3337/api/logs"
+		);
 	}
 
 	#[test]
