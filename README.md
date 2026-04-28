@@ -398,6 +398,8 @@ cargo run
 
 ### Install `plog` from GitHub Releases
 
+#### Linux / macOS
+
 Install the latest `plog` release into `~/.local/bin`:
 
 ```bash
@@ -419,6 +421,31 @@ curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/i
 The installer currently supports Linux x86_64 and Apple Silicon macOS, downloads
 the matching GitHub Release archive, verifies the published SHA-256 checksum,
 and installs `plog` into `~/.local/bin` by default.
+
+#### Windows (PowerShell)
+
+Install the latest `plog` release:
+
+```powershell
+irm https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.ps1 | iex
+```
+
+Install a specific version:
+
+```powershell
+$env:VERSION = "3"; irm https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.ps1 | iex
+```
+
+Install somewhere else:
+
+```powershell
+$env:INSTALL_DIR = "$HOME\\bin"; irm https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.ps1 | iex
+```
+
+The Windows installer downloads the matching `.zip` GitHub Release asset,
+verifies its SHA-256 checksum, installs `plog.exe` into
+`%LOCALAPPDATA%\Programs\plog\bin` by default, and adds that directory to the
+user PATH if needed.
 
 ### Command Line Interface
 
