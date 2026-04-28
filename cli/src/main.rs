@@ -20,6 +20,10 @@ use tar::Archive;
 
 const GITHUB_REPO: &str = "puppycorp/puppylog";
 const UPDATE_CACHE_TTL_SECS: i64 = 24 * 60 * 60;
+const BUILD_VERSION: &str = match option_env!("PLOG_BUILD_TAG") {
+	Some(version) => version,
+	None => "undefined",
+};
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct AuthConfig {
@@ -103,7 +107,7 @@ fn update_cache_path() -> Option<std::path::PathBuf> {
 }
 
 fn current_build_version() -> &'static str {
-	option_env!("PLOG_BUILD_TAG").unwrap_or(env!("CARGO_PKG_VERSION"))
+	BUILD_VERSION
 }
 
 fn release_api_url() -> String {
@@ -590,7 +594,7 @@ fn random_log_entry(timestamp: DateTime<Utc>) -> LogEntry {
 }
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version = BUILD_VERSION, about, long_about = None)]
 struct Cli {
 	/// Base URL of the puppylog server, e.g. http://127.0.0.1:3337
 	#[arg(long)]
