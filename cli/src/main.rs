@@ -677,7 +677,8 @@ enum LogsSubCommand {
 		count: u32,
 		#[arg(long)]
 		query: Option<String>,
-		output: String,
+		#[arg(long)]
+		output: Option<String>,
 	},
 }
 
@@ -850,7 +851,7 @@ async fn download_logs(
 	auth_token: Option<&str>,
 	count: u32,
 	query: Option<String>,
-	output: &str,
+	output: Option<&str>,
 ) -> Result<(), Box<dyn Error>> {
 	let mut url = endpoint_url(base_addr, "/api/logs")?;
 	{
@@ -863,7 +864,7 @@ async fn download_logs(
 		}
 	}
 
-	println!("downloading logs: {}", url);
+	eprintln!("downloading logs: {}", url);
 	let response = apply_auth_header(
 		client.get(url).header(reqwest::header::ACCEPT, "application/json"),
 		auth_token,
@@ -883,13 +884,16 @@ async fn download_logs(
 		.map(format_download_line)
 		.collect::<Vec<_>>()
 		.join("\n");
-	if let Some(parent) = Path::new(output).parent() {
-		if !parent.as_os_str().is_empty() {
-			std::fs::create_dir_all(parent)?;
+	println!("{}", content);
+	if let Some(output) = output {
+		if let Some(parent) = Path::new(output).parent() {
+			if !parent.as_os_str().is_empty() {
+				std::fs::create_dir_all(parent)?;
+			}
 		}
+		std::fs::write(output, content)?;
+		eprintln!("saved {} logs to {}", entries.len(), output);
 	}
-	std::fs::write(output, content)?;
-	println!("saved {} logs to {}", entries.len(), output);
 	Ok(())
 }
 
@@ -1245,7 +1249,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 					query,
 					output,
 				} => {
-					download_logs(&client, &base_addr, auth_token.as_deref(), count, query, &output)
+					download_logs(
+						&client,
+						&base_addr,
+						auth_token.as_deref(),
+						count,
+						query,
+						output.as_deref(),
+					)
 						.await?;
 				}
 			}

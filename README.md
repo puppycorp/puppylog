@@ -468,7 +468,7 @@ also be read from `PUPPYLOG_AUTH_TOKEN` or that same config file. Run `cargo run
 | `segment get`             | Query segment metadata using filters              |
 | `segment download`        | Download segments to a directory                  |
 | `segment download-remove` | Download segments and delete them from the server |
-| `logs download`           | Download matching logs to a text file             |
+| `logs download`           | Download matching logs to stdout, optionally save |
 | `import`                  | Import compressed log segments from a directory   |
 
 Example importing log segments:
@@ -499,7 +499,13 @@ This writes `~/.puppylog/config.json`, for example:
 Example downloading 500 error logs into a local file:
 
 ```
-cargo run --bin plog -- logs download --count 500 --query 'level = "error"' ./error-logs.txt
+cargo run --bin plog -- logs download --count 500 --query 'level = "error"' --output ./error-logs.txt
+```
+
+Example streaming matching logs to stdout:
+
+```
+cargo run --bin plog -- logs download --count 500
 ```
 
 Update the CLI to the newest GitHub release:
