@@ -1,6 +1,6 @@
 use chrono::NaiveDate;
 use chrono::{DateTime, Utc};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use flate2::read::GzDecoder;
 use puppylog::{DrainParser, LogEntry, LogLevel, Prop};
 use puppylog_server::{config::log_path, db, segment};
@@ -654,7 +654,7 @@ struct Cli {
 	address: Option<String>,
 
 	#[command(subcommand)]
-	subcommand: Commands,
+	subcommand: Option<Commands>,
 }
 
 #[derive(Parser)]
@@ -947,13 +947,24 @@ async fn download_logs(
 async fn main() -> Result<(), Box<dyn Error>> {
 	let cli = Cli::parse();
 	let update_client = reqwest::Client::new();
+	let should_prompt_for_url = cli.address.is_none()
+		&& load_default_address().is_none()
+		&& !matches!(cli.subcommand, Some(Commands::Update) | Some(Commands::Config { .. }));
 
-	if !matches!(&cli.subcommand, Commands::Update | Commands::Config { .. }) {
+	if should_prompt_for_url {
+		let _ = prompt_for_server_url()?;
+	}
+
+	if !matches!(&cli.subcommand, Some(Commands::Update) | Some(Commands::Config { .. })) {
 		maybe_check_for_updates(&update_client).await;
 	}
 
 	match cli.subcommand {
-		Commands::Upload(args) => {
+		None => {
+			Cli::command().print_help()?;
+			println!();
+		}
+		Some(Commands::Upload(args)) => {
 			let success_count = Arc::new(AtomicUsize::new(0));
 			let fail_count = Arc::new(AtomicUsize::new(0));
 			let mut handles = Vec::new();
@@ -1010,10 +1021,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 			println!("Success count: {}", success_count.load(Ordering::SeqCst));
 			println!("Fail count: {}", fail_count.load(Ordering::SeqCst));
 		}
-		Commands::Update => {
+		Some(Commands::Update) => {
 			run_self_update(&update_client).await?;
 		}
-		Commands::Config { subcommand } => match subcommand {
+		Some(Commands::Config { subcommand }) => match subcommand {
 			ConfigSubCommand::SetUrl { url } => {
 				let mut config = read_config().unwrap_or_default();
 				config.address = Some(validated_server_url(&url)?);
@@ -1053,7 +1064,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				println!("{}", serde_json::to_string_pretty(&output)?);
 			}
 		},
-		Commands::Tokenize { subcommand } => {
+		Some(Commands::Tokenize { subcommand }) => {
 			match subcommand {
 				TokenizeSubcommands::Drain { src, output } => {
 					let mut parser = DrainParser::new();
@@ -1092,7 +1103,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				}
 			}
 		}
-		Commands::UpdateMetadata(args) => {
+		Some(Commands::UpdateMetadata(args)) => {
 			let props = std::fs::read_to_string(args.props_path)?;
 			println!("props: {}", props);
 			let auth_token = args.auth.clone().or_else(load_default_auth_token);
@@ -1107,7 +1118,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 			println!("Response: {:?}", req);
 		}
-		Commands::Segment(sub) => {
+		Some(Commands::Segment(sub)) => {
 			let client = reqwest::Client::new();
 			let base_addr = resolve_server_url(cli.address.clone())?;
 			let auth_token = load_default_auth_token();
@@ -1287,7 +1298,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				}
 			}
 		}
-		Commands::Logs(sub) => {
+		Some(Commands::Logs(sub)) => {
 			let client = reqwest::Client::new();
 			let base_addr = resolve_server_url(cli.address.clone())?;
 			let auth_token = load_default_auth_token();
@@ -1309,7 +1320,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				}
 			}
 		}
-		Commands::Import { folder } => {
+		Some(Commands::Import { folder }) => {
 			import_segments(&folder).await?;
 		}
 	}
