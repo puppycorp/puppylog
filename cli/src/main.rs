@@ -10,7 +10,7 @@ use std::cmp::Ordering as CmpOrdering;
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{Cursor, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{
 	atomic::{AtomicUsize, Ordering},
 	Arc,
@@ -21,10 +21,22 @@ use tar::Archive;
 const GITHUB_REPO: &str = "puppycorp/puppylog";
 const UPDATE_CACHE_TTL_SECS: i64 = 24 * 60 * 60;
 
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct AuthConfig {
+	token: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct PlogConfig {
+	address: Option<String>,
+	#[serde(default)]
+	auth: AuthConfig,
+}
+
 /// Load default server URL if `--address` was not supplied on the command‑line.
 /// Precedence:
 /// 1. Environment variable `PUPPYLOG_ADDRESS`
-/// 2. File `$HOME/.puppylog/address` (first non‑empty line)
+/// 2. File `$HOME/.puppylog/config.json`
 fn load_default_address() -> Option<String> {
 	// env var first
 	if let Ok(val) = std::env::var("PUPPYLOG_ADDRESS") {
@@ -33,19 +45,7 @@ fn load_default_address() -> Option<String> {
 			return Some(trimmed.to_owned());
 		}
 	}
-	// config file
-	if let Ok(home) = std::env::var("HOME") {
-		let path = std::path::Path::new(&home)
-			.join(".puppylog")
-			.join("address");
-		if let Ok(contents) = std::fs::read_to_string(&path) {
-			let trimmed = contents.trim();
-			if !trimmed.is_empty() {
-				return Some(trimmed.to_owned());
-			}
-		}
-	}
-	None
+	read_config().and_then(|config| config.address)
 }
 
 fn plog_home_dir() -> Option<std::path::PathBuf> {
@@ -53,6 +53,49 @@ fn plog_home_dir() -> Option<std::path::PathBuf> {
 		.ok()
 		.map(std::path::PathBuf::from)
 		.map(|home| home.join(".puppylog"))
+}
+
+fn config_path() -> Option<PathBuf> {
+	plog_home_dir().map(|dir| dir.join("config.json"))
+}
+
+fn read_config() -> Option<PlogConfig> {
+	let path = config_path()?;
+	let content = std::fs::read_to_string(path).ok()?;
+	serde_json::from_str(&content).ok()
+}
+
+fn write_config(config: &PlogConfig) -> Result<PathBuf, Box<dyn Error>> {
+	let path = config_path().ok_or("HOME is not set")?;
+	if let Some(parent) = path.parent() {
+		std::fs::create_dir_all(parent)?;
+	}
+	std::fs::write(&path, serde_json::to_string_pretty(config)?)?;
+	Ok(path)
+}
+
+fn load_default_auth_token() -> Option<String> {
+	if let Ok(val) = std::env::var("PUPPYLOG_AUTH_TOKEN") {
+		let trimmed = val.trim();
+		if !trimmed.is_empty() {
+			return Some(trimmed.to_owned());
+		}
+	}
+	read_config().and_then(|config| config.auth.token)
+}
+
+fn masked_token(token: &str) -> String {
+	if token.len() <= 4 {
+		return "****".to_string();
+	}
+	format!("{}****", &token[..4])
+}
+
+fn apply_auth_header(request: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::RequestBuilder {
+	match token {
+		Some(token) if !token.trim().is_empty() => request.header("Authorization", token),
+		_ => request,
+	}
 }
 
 fn update_cache_path() -> Option<std::path::PathBuf> {
@@ -626,11 +669,28 @@ enum LogsSubCommand {
 }
 
 #[derive(Subcommand)]
+enum ConfigSubCommand {
+	SetAddress {
+		address: String,
+	},
+	SetToken {
+		token: String,
+	},
+	ClearToken,
+	Show,
+}
+
+#[derive(Subcommand)]
 enum Commands {
 	/// Upload log data
 	Upload(UploadLogsArgs),
 	/// Download and install the latest plog release
 	Update,
+	/// Manage local CLI configuration in ~/.puppylog/config.json
+	Config {
+		#[command(subcommand)]
+		subcommand: ConfigSubCommand,
+	},
 	Tokenize {
 		#[command(subcommand)]
 		subcommand: TokenizeSubcommands,
@@ -774,6 +834,7 @@ fn format_download_line(entry: &DownloadedLogEntry) -> String {
 async fn download_logs(
 	client: &Client,
 	base_addr: &str,
+	auth_token: Option<&str>,
 	count: u32,
 	query: Option<String>,
 	output: &str,
@@ -790,11 +851,12 @@ async fn download_logs(
 	}
 
 	println!("downloading logs: {}", url);
-	let response = client
-		.get(url)
-		.header(reqwest::header::ACCEPT, "application/json")
-		.send()
-		.await?;
+	let response = apply_auth_header(
+		client.get(url).header(reqwest::header::ACCEPT, "application/json"),
+		auth_token,
+	)
+	.send()
+	.await?;
 
 	if !response.status().is_success() {
 		let status = response.status();
@@ -823,7 +885,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 	let cli = Cli::parse();
 	let update_client = reqwest::Client::new();
 
-	if !matches!(&cli.subcommand, Commands::Update) {
+	if !matches!(&cli.subcommand, Commands::Update | Commands::Config { .. }) {
 		maybe_check_for_updates(&update_client).await;
 	}
 
@@ -888,6 +950,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
 		Commands::Update => {
 			run_self_update(&update_client).await?;
 		}
+		Commands::Config { subcommand } => match subcommand {
+			ConfigSubCommand::SetAddress { address } => {
+				let mut config = read_config().unwrap_or_default();
+				config.address = Some(address);
+				let path = write_config(&config)?;
+				println!("saved config to {}", path.display());
+			}
+			ConfigSubCommand::SetToken { token } => {
+				let mut config = read_config().unwrap_or_default();
+				config.auth.token = Some(token);
+				let path = write_config(&config)?;
+				println!("saved config to {}", path.display());
+			}
+			ConfigSubCommand::ClearToken => {
+				let mut config = read_config().unwrap_or_default();
+				config.auth.token = None;
+				let path = write_config(&config)?;
+				println!("saved config to {}", path.display());
+			}
+			ConfigSubCommand::Show => {
+				let config = read_config().unwrap_or_default();
+				let output = serde_json::json!({
+					"address": config.address,
+					"auth": {
+						"token": config.auth.token.as_deref().map(masked_token),
+					}
+				});
+				println!("{}", serde_json::to_string_pretty(&output)?);
+			}
+		},
 		Commands::Tokenize { subcommand } => {
 			match subcommand {
 				TokenizeSubcommands::Drain { src, output } => {
@@ -930,9 +1022,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 		Commands::UpdateMetadata(args) => {
 			let props = std::fs::read_to_string(args.props_path)?;
 			println!("props: {}", props);
-			let req = Client::new()
-				.post(&args.address)
-				.header("Authorization", args.auth.unwrap_or_default())
+			let auth_token = args.auth.clone().or_else(load_default_auth_token);
+			let req = apply_auth_header(
+				Client::new().post(&args.address),
+				auth_token.as_deref(),
+			)
 				.header("Content-Type", "application/json")
 				.body(props)
 				.send()
@@ -947,6 +1041,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				.clone()
 				.or_else(load_default_address)
 				.unwrap_or_else(|| "http://127.0.0.1:3337".to_string());
+			let auth_token = load_default_auth_token();
 			match sub {
 				SegmentSubCommand::Get {
 					start,
@@ -973,7 +1068,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 					println!("URL: {}", url);
 
-					let response = client.get(url).send().await?.text().await?;
+					let response = apply_auth_header(client.get(url), auth_token.as_deref())
+						.send()
+						.await?
+						.text()
+						.await?;
 					println!("Response: {:#?}", response);
 				}
 				SegmentSubCommand::DownloadRemove {
@@ -1004,8 +1103,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 						}
 					}
 
-					let segements = client
-						.get(url.clone())
+					let segements = apply_auth_header(client.get(url.clone()), auth_token.as_deref())
 						.send()
 						.await?
 						.json::<Vec<serde_json::Value>>()
@@ -1020,7 +1118,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 						if !file_path.exists() {
 							println!("downloading: {}", url);
 							let response = loop {
-								let res = match client.get(url.clone()).send().await {
+								let res = match apply_auth_header(client.get(url.clone()), auth_token.as_deref())
+									.send()
+									.await {
 									Ok(res) => res,
 									Err(e) => {
 										eprintln!("Error downloading segment: {}", e);
@@ -1045,7 +1145,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 						let url =
 							Url::parse(&format!("{}/api/v1/segment/{}", base_addr, id)).unwrap();
 						loop {
-							let resp = match client.delete(url.clone()).send().await {
+							let resp = match apply_auth_header(client.delete(url.clone()), auth_token.as_deref())
+								.send()
+								.await {
 								Ok(r) => r,
 								Err(e) => {
 									eprintln!("Error deleting segment {}: {}", id, e);
@@ -1091,8 +1193,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 						}
 					}
 
-					let segements = client
-						.get(url.clone())
+					let segements = apply_auth_header(client.get(url.clone()), auth_token.as_deref())
 						.send()
 						.await?
 						.json::<Vec<serde_json::Value>>()
@@ -1110,7 +1211,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 						}
 
 						println!("downloading: {}", url);
-						let response = client.get(url).send().await?.bytes().await?;
+						let response = apply_auth_header(client.get(url), auth_token.as_deref())
+							.send()
+							.await?
+							.bytes()
+							.await?;
 						println!("saving to file: {}", file_path.display());
 						let mut file = std::fs::File::create(file_path)?;
 						file.write_all(&response)?;
@@ -1125,13 +1230,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 				.clone()
 				.or_else(load_default_address)
 				.unwrap_or_else(|| "http://127.0.0.1:3337".to_string());
+			let auth_token = load_default_auth_token();
 			match sub {
 				LogsSubCommand::Download {
 					count,
 					query,
 					output,
 				} => {
-					download_logs(&client, &base_addr, count, query, &output).await?;
+					download_logs(&client, &base_addr, auth_token.as_deref(), count, query, &output)
+						.await?;
 				}
 			}
 		}
@@ -1172,5 +1279,11 @@ mod tests {
 		assert!(is_newer_version("1.2.0", "1.1.9"));
 		assert!(!is_newer_version("1", "2"));
 		assert!(!is_newer_version("2", "2"));
+	}
+
+	#[test]
+	fn masked_token_hides_secret_tail() {
+		assert_eq!(masked_token("abcd1234"), "abcd****");
+		assert_eq!(masked_token("abc"), "****");
 	}
 }

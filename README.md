@@ -400,12 +400,17 @@ cargo run
 
 PuppyLog comes with a CLI called `plog`. The CLI automatically reads the
 server address from the `PUPPYLOG_ADDRESS` environment variable or the file
-`$HOME/.puppylog/address` when `--address` is not provided. Run `cargo run --bin
-plog -- --help` to see all commands. Available commands include:
+`$HOME/.puppylog/config.json` when `--address` is not provided. Auth tokens can
+also be read from `PUPPYLOG_AUTH_TOKEN` or that same config file. Run `cargo run
+--bin plog -- --help` to see all commands. Available commands include:
 
 | Command                   | Description                                       |
 | ------------------------- | ------------------------------------------------- |
 | `upload`                  | Upload randomly generated logs to a server        |
+| `config set-address`      | Save the default server address                   |
+| `config set-token`        | Save the default auth token                       |
+| `config clear-token`      | Remove the saved auth token                       |
+| `config show`             | Show the current config with secrets masked       |
 | `update`                  | Download and install the latest CLI release       |
 | `tokenize drain`          | Tokenize a log file using the Drain algorithm     |
 | `update-metadata`         | Upload updated device metadata from a JSON file   |
@@ -419,6 +424,25 @@ Example importing log segments:
 
 ```
 cargo run --bin plog -- import ./segments
+```
+
+Save a default server address and auth token:
+
+```
+plog config set-address https://logs.example.com
+plog config set-token your-token-here
+plog config show
+```
+
+This writes `~/.puppylog/config.json`, for example:
+
+```json
+{
+  "address": "https://logs.example.com",
+  "auth": {
+    "token": "your-token-here"
+  }
+}
 ```
 
 Example downloading 500 error logs into a local file:
@@ -436,12 +460,6 @@ plog update
 On normal runs, `plog` also performs a lightweight release check and prints a
 notice when a newer version is available. Set `PLOG_NO_UPDATE_CHECK=1` to skip
 that background check.
-
-Example downloading 500 error logs into a local file:
-
-```
-cargo run --bin puppylogcli -- logs download --count 500 --query 'level = "error"' ./error-logs.txt
-```
 
 ### Device Simulator
 
