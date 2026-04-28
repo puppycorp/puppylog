@@ -1,19 +1,25 @@
 use chrono::NaiveDate;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
+use flate2::read::GzDecoder;
 use puppylog::{DrainParser, LogEntry, LogLevel, Prop};
 use puppylog_server::{config::log_path, db, segment};
 use rand::{distributions::Alphanumeric, prelude::*};
 use reqwest::{self, Client, Url};
+use std::cmp::Ordering as CmpOrdering;
 use std::collections::HashMap;
 use std::error::Error;
-use std::io::Write;
+use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use std::sync::{
 	atomic::{AtomicUsize, Ordering},
 	Arc,
 };
 use std::time::Duration;
+use tar::Archive;
+
+const GITHUB_REPO: &str = "puppycorp/puppylog";
+const UPDATE_CACHE_TTL_SECS: i64 = 24 * 60 * 60;
 
 /// Load default server URL if `--address` was not supplied on the command‑line.
 /// Precedence:
@@ -40,6 +46,326 @@ fn load_default_address() -> Option<String> {
 		}
 	}
 	None
+}
+
+fn plog_home_dir() -> Option<std::path::PathBuf> {
+	std::env::var("HOME")
+		.ok()
+		.map(std::path::PathBuf::from)
+		.map(|home| home.join(".puppylog"))
+}
+
+fn update_cache_path() -> Option<std::path::PathBuf> {
+	plog_home_dir().map(|dir| dir.join("plog-update-check.json"))
+}
+
+fn current_build_version() -> &'static str {
+	option_env!("PLOG_BUILD_TAG").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
+fn release_api_url() -> String {
+	format!(
+		"https://api.github.com/repos/{}/releases/latest",
+		GITHUB_REPO
+	)
+}
+
+fn release_page_url(tag: &str) -> String {
+	format!("https://github.com/{}/releases/tag/{}", GITHUB_REPO, tag)
+}
+
+fn platform_asset_name(tag: &str) -> Option<String> {
+	match (std::env::consts::OS, std::env::consts::ARCH) {
+		("linux", "x86_64") => Some(format!("plog-{tag}-x86_64-unknown-linux-gnu.tar.gz")),
+		("macos", "aarch64") => Some(format!("plog-{tag}-aarch64-apple-darwin.tar.gz")),
+		("windows", "x86_64") => Some(format!("plog-{tag}-x86_64-pc-windows-msvc.zip")),
+		_ => None,
+	}
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum VersionPart {
+	Number(u64),
+	Text(String),
+}
+
+fn parse_version_parts(input: &str) -> Vec<VersionPart> {
+	input
+		.trim()
+		.trim_start_matches(['v', 'V'])
+		.split(['.', '-', '_'])
+		.filter(|part| !part.is_empty())
+		.map(|part| match part.parse::<u64>() {
+			Ok(value) => VersionPart::Number(value),
+			Err(_) => VersionPart::Text(part.to_ascii_lowercase()),
+		})
+		.collect()
+}
+
+fn compare_versions(left: &str, right: &str) -> CmpOrdering {
+	let left_parts = parse_version_parts(left);
+	let right_parts = parse_version_parts(right);
+	let max_len = left_parts.len().max(right_parts.len());
+
+	for idx in 0..max_len {
+		let left_part = left_parts.get(idx);
+		let right_part = right_parts.get(idx);
+		let ordering = match (left_part, right_part) {
+			(Some(VersionPart::Number(a)), Some(VersionPart::Number(b))) => a.cmp(b),
+			(Some(VersionPart::Text(a)), Some(VersionPart::Text(b))) => a.cmp(b),
+			(Some(VersionPart::Number(_)), Some(VersionPart::Text(_))) => CmpOrdering::Greater,
+			(Some(VersionPart::Text(_)), Some(VersionPart::Number(_))) => CmpOrdering::Less,
+			(Some(VersionPart::Number(a)), None) => a.cmp(&0),
+			(Some(VersionPart::Text(_)), None) => CmpOrdering::Greater,
+			(None, Some(VersionPart::Number(b))) => 0.cmp(b),
+			(None, Some(VersionPart::Text(_))) => CmpOrdering::Less,
+			(None, None) => CmpOrdering::Equal,
+		};
+
+		if ordering != CmpOrdering::Equal {
+			return ordering;
+		}
+	}
+
+	CmpOrdering::Equal
+}
+
+fn is_newer_version(latest: &str, current: &str) -> bool {
+	compare_versions(latest, current) == CmpOrdering::Greater
+}
+
+#[derive(serde::Deserialize)]
+struct GithubReleaseAsset {
+	name: String,
+	browser_download_url: String,
+}
+
+#[derive(serde::Deserialize)]
+struct GithubRelease {
+	tag_name: String,
+	html_url: String,
+	assets: Vec<GithubReleaseAsset>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct UpdateCache {
+	last_checked: i64,
+	latest_tag: String,
+	release_url: String,
+}
+
+async fn fetch_latest_release(client: &Client) -> Result<GithubRelease, Box<dyn Error>> {
+	let release = client
+		.get(release_api_url())
+		.header(
+			reqwest::header::USER_AGENT,
+			format!("plog/{}", current_build_version()),
+		)
+		.header(reqwest::header::ACCEPT, "application/vnd.github+json")
+		.send()
+		.await?
+		.error_for_status()?
+		.json::<GithubRelease>()
+		.await?;
+	Ok(release)
+}
+
+fn read_update_cache() -> Option<UpdateCache> {
+	let path = update_cache_path()?;
+	let content = std::fs::read_to_string(path).ok()?;
+	serde_json::from_str(&content).ok()
+}
+
+fn write_update_cache(cache: &UpdateCache) {
+	let Some(path) = update_cache_path() else {
+		return;
+	};
+	if let Some(parent) = path.parent() {
+		let _ = std::fs::create_dir_all(parent);
+	}
+	if let Ok(content) = serde_json::to_string(cache) {
+		let _ = std::fs::write(path, content);
+	}
+}
+
+fn print_update_notice(latest_tag: &str, release_url: &str) {
+	eprintln!(
+		"update available: {} -> {} (run `plog update`)\n{}",
+		current_build_version(),
+		latest_tag,
+		release_url
+	);
+}
+
+async fn maybe_check_for_updates(client: &Client) {
+	if std::env::var("PLOG_NO_UPDATE_CHECK").ok().as_deref() == Some("1") {
+		return;
+	}
+
+	let now = Utc::now().timestamp();
+	if let Some(cache) = read_update_cache() {
+		if is_newer_version(&cache.latest_tag, current_build_version()) {
+			print_update_notice(&cache.latest_tag, &cache.release_url);
+		}
+		if now - cache.last_checked < UPDATE_CACHE_TTL_SECS {
+			return;
+		}
+	}
+
+	let release =
+		match tokio::time::timeout(Duration::from_secs(2), fetch_latest_release(client)).await {
+			Ok(Ok(release)) => release,
+			_ => return,
+		};
+
+	let cache = UpdateCache {
+		last_checked: now,
+		latest_tag: release.tag_name.clone(),
+		release_url: release.html_url.clone(),
+	};
+	write_update_cache(&cache);
+
+	if is_newer_version(&release.tag_name, current_build_version()) {
+		print_update_notice(&release.tag_name, &release.html_url);
+	}
+}
+
+fn extract_binary_from_tar_gz(
+	archive_bytes: &[u8],
+	binary_name: &str,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+	let decoder = GzDecoder::new(Cursor::new(archive_bytes));
+	let mut archive = Archive::new(decoder);
+	for entry in archive.entries()? {
+		let mut entry = entry?;
+		let path = entry.path()?;
+		if path.file_name().and_then(|name| name.to_str()) == Some(binary_name) {
+			let mut bytes = Vec::new();
+			entry.read_to_end(&mut bytes)?;
+			return Ok(bytes);
+		}
+	}
+	Err(format!("binary `{binary_name}` not found in archive").into())
+}
+
+fn extract_binary_from_zip(
+	archive_bytes: &[u8],
+	binary_name: &str,
+) -> Result<Vec<u8>, Box<dyn Error>> {
+	let reader = Cursor::new(archive_bytes);
+	let mut archive = zip::ZipArchive::new(reader)?;
+	for idx in 0..archive.len() {
+		let mut file = archive.by_index(idx)?;
+		if Path::new(file.name())
+			.file_name()
+			.and_then(|name| name.to_str())
+			== Some(binary_name)
+		{
+			let mut bytes = Vec::new();
+			file.read_to_end(&mut bytes)?;
+			return Ok(bytes);
+		}
+	}
+	Err(format!("binary `{binary_name}` not found in zip archive").into())
+}
+
+fn replace_current_binary(binary_bytes: &[u8]) -> Result<String, Box<dyn Error>> {
+	let current_exe = std::env::current_exe()?;
+	let file_name = current_exe
+		.file_name()
+		.and_then(|name| name.to_str())
+		.ok_or("failed to determine current executable name")?;
+	let temp_path = current_exe.with_extension("download");
+	std::fs::write(&temp_path, binary_bytes)?;
+
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		let mut perms = std::fs::metadata(&temp_path)?.permissions();
+		perms.set_mode(0o755);
+		std::fs::set_permissions(&temp_path, perms)?;
+		std::fs::rename(&temp_path, &current_exe)?;
+		return Ok(format!(
+			"updated {} at {}",
+			file_name,
+			current_exe.display()
+		));
+	}
+
+	#[cfg(windows)]
+	{
+		let staged_path =
+			current_exe.with_file_name(format!("{}.new.exe", file_name.trim_end_matches(".exe")));
+		std::fs::rename(&temp_path, &staged_path)?;
+		return Ok(format!(
+			"downloaded update to {} (close plog and replace the existing executable manually)",
+			staged_path.display()
+		));
+	}
+
+	#[cfg(not(any(unix, windows)))]
+	{
+		let _ = file_name;
+		Err("self-update is not supported on this platform".into())
+	}
+}
+
+async fn run_self_update(client: &Client) -> Result<(), Box<dyn Error>> {
+	let release = fetch_latest_release(client).await?;
+	if !is_newer_version(&release.tag_name, current_build_version()) {
+		println!("plog is already up to date ({})", current_build_version());
+		return Ok(());
+	}
+
+	let asset_name = platform_asset_name(&release.tag_name).ok_or_else(|| {
+		format!(
+			"no update asset is configured for {}-{}",
+			std::env::consts::OS,
+			std::env::consts::ARCH
+		)
+	})?;
+	let asset = release
+		.assets
+		.iter()
+		.find(|asset| asset.name == asset_name)
+		.ok_or_else(|| {
+			format!(
+				"release {} does not contain asset {}",
+				release.tag_name, asset_name
+			)
+		})?;
+
+	println!("downloading {}", asset.name);
+	let archive_bytes = client
+		.get(&asset.browser_download_url)
+		.header(
+			reqwest::header::USER_AGENT,
+			format!("plog/{}", current_build_version()),
+		)
+		.send()
+		.await?
+		.error_for_status()?
+		.bytes()
+		.await?;
+
+	let binary_name = if cfg!(windows) { "plog.exe" } else { "plog" };
+	let binary_bytes = if asset.name.ends_with(".tar.gz") {
+		extract_binary_from_tar_gz(&archive_bytes, binary_name)?
+	} else if asset.name.ends_with(".zip") {
+		extract_binary_from_zip(&archive_bytes, binary_name)?
+	} else {
+		return Err(format!("unsupported update archive format: {}", asset.name).into());
+	};
+
+	let result = replace_current_binary(&binary_bytes)?;
+	println!("{}", result);
+	println!("updated to {}", release.tag_name);
+	write_update_cache(&UpdateCache {
+		last_checked: Utc::now().timestamp(),
+		latest_tag: release.tag_name.clone(),
+		release_url: release_page_url(&release.tag_name),
+	});
+	Ok(())
 }
 
 // Constants from the Python version
@@ -303,6 +629,8 @@ enum LogsSubCommand {
 enum Commands {
 	/// Upload log data
 	Upload(UploadLogsArgs),
+	/// Download and install the latest plog release
+	Update,
 	Tokenize {
 		#[command(subcommand)]
 		subcommand: TokenizeSubcommands,
@@ -493,6 +821,11 @@ async fn download_logs(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
 	let cli = Cli::parse();
+	let update_client = reqwest::Client::new();
+
+	if !matches!(&cli.subcommand, Commands::Update) {
+		maybe_check_for_updates(&update_client).await;
+	}
 
 	match cli.subcommand {
 		Commands::Upload(args) => {
@@ -551,6 +884,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 			println!("Success count: {}", success_count.load(Ordering::SeqCst));
 			println!("Fail count: {}", fail_count.load(Ordering::SeqCst));
+		}
+		Commands::Update => {
+			run_self_update(&update_client).await?;
 		}
 		Commands::Tokenize { subcommand } => {
 			match subcommand {
@@ -827,5 +1163,14 @@ mod tests {
 			format_download_line(&entry),
 			"2026-03-31 01:29:21 ERROR id=id-123 line one line two"
 		);
+	}
+
+	#[test]
+	fn version_comparison_handles_numeric_tags() {
+		assert!(is_newer_version("2", "1"));
+		assert!(is_newer_version("2", "0.1.0"));
+		assert!(is_newer_version("1.2.0", "1.1.9"));
+		assert!(!is_newer_version("1", "2"));
+		assert!(!is_newer_version("2", "2"));
 	}
 }

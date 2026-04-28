@@ -35,6 +35,7 @@ jobs:
         env:
             RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
             BIN_NAME: plog
+            PLOG_BUILD_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
         steps:
             - name: Check out source

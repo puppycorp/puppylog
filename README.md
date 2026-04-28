@@ -406,6 +406,7 @@ plog -- --help` to see all commands. Available commands include:
 | Command                   | Description                                       |
 | ------------------------- | ------------------------------------------------- |
 | `upload`                  | Upload randomly generated logs to a server        |
+| `update`                  | Download and install the latest CLI release       |
 | `tokenize drain`          | Tokenize a log file using the Drain algorithm     |
 | `update-metadata`         | Upload updated device metadata from a JSON file   |
 | `segment get`             | Query segment metadata using filters              |
@@ -425,6 +426,16 @@ Example downloading 500 error logs into a local file:
 ```
 cargo run --bin plog -- logs download --count 500 --query 'level = "error"' ./error-logs.txt
 ```
+
+Update the CLI to the newest GitHub release:
+
+```
+plog update
+```
+
+On normal runs, `plog` also performs a lightweight release check and prints a
+notice when a newer version is available. Set `PLOG_NO_UPDATE_CHECK=1` to skip
+that background check.
 
 Example downloading 500 error logs into a local file:
 
