@@ -396,6 +396,30 @@ sudo apt-get install gcc libssl-dev pkg-config libsqlite3-dev build-essential
 cargo run
 ```
 
+### Install `plog` from GitHub Releases
+
+Install the latest `plog` release into `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.sh | bash
+```
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.sh | VERSION=3 bash
+```
+
+Install somewhere else:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.sh | INSTALL_DIR="$HOME/bin" bash
+```
+
+The installer currently supports Linux x86_64 and Apple Silicon macOS, downloads
+the matching GitHub Release archive, verifies the published SHA-256 checksum,
+and installs `plog` into `~/.local/bin` by default.
+
 ### Command Line Interface
 
 PuppyLog comes with a CLI called `plog`. The CLI automatically reads the
