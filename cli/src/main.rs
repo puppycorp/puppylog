@@ -734,6 +734,8 @@ enum ConfigSubCommand {
 	SetToken {
 		token: String,
 	},
+	Clear,
+	ClearUrl,
 	ClearToken,
 	Show,
 }
@@ -1021,6 +1023,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 			ConfigSubCommand::SetToken { token } => {
 				let mut config = read_config().unwrap_or_default();
 				config.auth.token = Some(token);
+				let path = write_config(&config)?;
+				println!("saved config to {}", path.display());
+			}
+			ConfigSubCommand::Clear => {
+				let path = write_config(&PlogConfig::default())?;
+				println!("saved config to {}", path.display());
+			}
+			ConfigSubCommand::ClearUrl => {
+				let mut config = read_config().unwrap_or_default();
+				config.address = None;
 				let path = write_config(&config)?;
 				println!("saved config to {}", path.display());
 			}

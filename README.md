@@ -460,6 +460,8 @@ also be read from `PUPPYLOG_AUTH_TOKEN` or that same config file. Run `cargo run
 | `upload`                  | Upload randomly generated logs to a server        |
 | `config set-url`          | Save the default server URL                       |
 | `config set-token`        | Save the default auth token                       |
+| `config clear`            | Clear the saved config                            |
+| `config clear-url`        | Remove the saved server URL                       |
 | `config clear-token`      | Remove the saved auth token                       |
 | `config show`             | Show the current config with secrets masked       |
 | `update`                  | Download and install the latest CLI release       |
