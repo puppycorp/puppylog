@@ -930,7 +930,6 @@ async fn download_logs(
 		.map(format_download_line)
 		.collect::<Vec<_>>()
 		.join("\n");
-	println!("{}", content);
 	if let Some(output) = output {
 		if let Some(parent) = Path::new(output).parent() {
 			if !parent.as_os_str().is_empty() {
@@ -939,6 +938,8 @@ async fn download_logs(
 		}
 		std::fs::write(output, content)?;
 		eprintln!("saved {} logs to {}", entries.len(), output);
+	} else {
+		println!("{}", content);
 	}
 	Ok(())
 }
