@@ -115,15 +115,29 @@ Logbatch is a binary structure which stores multiple loglines. Logbatch is compr
 
 ## API
 
-When server auth is enabled, API clients must send:
+Protected API clients must send:
 
 ```
 Authorization: Bearer <apikey>
 ```
 
 Protected API endpoints return `401 Unauthorized` when the header is missing,
-uses a non-Bearer scheme, or contains a key not listed in the server config.
-`/api/v1/server_info` and the web assets remain public.
+uses a non-Bearer scheme, or contains a key that does not belong to a database
+user. API keys are owned by normal PuppyLog users. `/api/v1/server_info` and
+the web assets remain public.
+
+To create the first admin user on a new database, start the server once with
+both bootstrap variables set:
+
+```bash
+export PUPPYLOG_BOOTSTRAP_ADMIN_NAME=admin
+export PUPPYLOG_BOOTSTRAP_ADMIN_API_KEY=replace-with-a-secret-key
+```
+
+The bootstrap path only creates an admin when the users table is empty. It does
+not overwrite existing users or API keys. UI login and admin screens for
+managing users and API keys are planned next; this backend foundation keeps the
+current web assets public and protects API routes with bearer keys.
 
 ### GET /api/logs
 
@@ -570,12 +584,10 @@ bun x tsc --noEmit
 
 PuppyLog supports tuning of its in-memory buffering and merge batching behavior via environment variables:
 
-- **PUPPYLOG_API_KEYS**: Comma-separated API keys accepted by server Bearer auth,
-  for example `PUPPYLOG_API_KEYS=key-one,key-two`. Blank entries are ignored.
-- **PUPPYLOG_AUTH_REQUIRED**: Optional auth toggle. Truthy values are `1`,
-  `true`, `yes`, and `on`; falsey values are `0`, `false`, `no`, and `off`.
-  When unset, auth is required if `PUPPYLOG_API_KEYS` contains at least one key
-  and disabled otherwise.
+- **PUPPYLOG_BOOTSTRAP_ADMIN_NAME** and
+  **PUPPYLOG_BOOTSTRAP_ADMIN_API_KEY**: Optional first-admin bootstrap. When
+  both are set and the users table is empty, the server creates an admin user
+  with the supplied API key. If any user already exists, bootstrap is skipped.
 - **MERGER_MAX_IN_CORE**: Maximum number of log entries buffered in memory for device merging. Defaults to the compile-time constant `MAX_IN_CORE`.
 - **MERGER_TARGET_SEGMENT_SIZE**: Number of buffered entries per device before triggering a flush to storage. Defaults to `TARGET_SEGMENT_SIZE`.
 - **MERGER_BATCH_SIZE**: Number of orphan log segments fetched per merge iteration. Defaults to `MERGER_BATCH_SIZE`.
@@ -591,5 +603,6 @@ export MERGER_MAX_IN_CORE=1000000
 export MERGER_TARGET_SEGMENT_SIZE=300000
 export MERGER_BATCH_SIZE=2000
 export UPLOAD_FLUSH_THRESHOLD=50000
-export PUPPYLOG_API_KEYS=replace-with-a-secret-key
+export PUPPYLOG_BOOTSTRAP_ADMIN_NAME=admin
+export PUPPYLOG_BOOTSTRAP_ADMIN_API_KEY=replace-with-a-secret-key
 ```

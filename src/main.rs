@@ -1,4 +1,3 @@
-use auth::BearerAuthConfig;
 use axum::extract::DefaultBodyLimit;
 use axum::middleware;
 use axum::routing::{delete, get, post};
@@ -53,6 +52,9 @@ async fn main() {
 		}
 	}
 	let ctx = Arc::new(ctx);
+	auth::bootstrap_admin_from_env(&ctx.db)
+		.await
+		.expect("failed to bootstrap admin user");
 
 	tokio::spawn(upload::process_log_uploads(ctx.clone()));
 	if std::env::var("DISK_SPACE_MONITOR").as_deref() == Ok("1") {
@@ -63,14 +65,14 @@ async fn main() {
 		ctx.clone(),
 	));
 
-	let app = build_router(ctx, BearerAuthConfig::from_env());
+	let app = build_router(ctx);
 
 	// run our app with hyper, listening globally on port 3000
 	let listener = tokio::net::TcpListener::bind("0.0.0.0:3337").await.unwrap();
 	axum::serve(listener, app).await.unwrap();
 }
 
-fn build_router(ctx: Arc<Context>, auth_config: BearerAuthConfig) -> Router {
+fn build_router(ctx: Arc<Context>) -> Router {
 	let cors = CorsLayer::new()
 		.allow_origin(Any)
 		.allow_methods(AllowMethods::any())
@@ -135,7 +137,7 @@ fn build_router(ctx: Arc<Context>, auth_config: BearerAuthConfig) -> Router {
 		)
 		.route("/api/v1/server/cleanup", post(controllers::start_cleanup))
 		.route_layer(middleware::from_fn_with_state(
-			auth_config,
+			ctx.clone(),
 			auth::require_bearer_auth,
 		))
 		.with_state(ctx);
@@ -164,7 +166,7 @@ mod tests {
 	use tempfile::TempDir;
 	use tower::ServiceExt;
 
-	async fn test_app(auth_config: BearerAuthConfig) -> (TempDir, Router) {
+	async fn test_app() -> (TempDir, Arc<Context>, Router) {
 		let dir = TempDir::new().unwrap();
 		let log_dir = dir.path().join("logs");
 		std::fs::create_dir_all(&log_dir).unwrap();
@@ -179,14 +181,14 @@ mod tests {
 		.unwrap();
 
 		let ctx = Arc::new(Context::new(log_dir).await);
-		let app = build_router(ctx, auth_config);
-		(dir, app)
+		let app = build_router(ctx.clone());
+		(dir, ctx, app)
 	}
 
 	#[tokio::test]
 	#[serial]
 	async fn protected_api_rejects_missing_bearer_token() {
-		let (_dir, app) = test_app(BearerAuthConfig::required(["secret"])).await;
+		let (_dir, _ctx, app) = test_app().await;
 
 		let response = app
 			.oneshot(
@@ -208,7 +210,11 @@ mod tests {
 	#[tokio::test]
 	#[serial]
 	async fn protected_api_accepts_valid_bearer_token() {
-		let (_dir, app) = test_app(BearerAuthConfig::required(["secret"])).await;
+		let (_dir, ctx, app) = test_app().await;
+		ctx.db
+			.create_user_with_api_key("admin", true, Some("test"), "secret")
+			.await
+			.unwrap();
 
 		let response = app
 			.oneshot(
@@ -227,7 +233,7 @@ mod tests {
 	#[tokio::test]
 	#[serial]
 	async fn server_info_stays_public_with_auth_required() {
-		let (_dir, app) = test_app(BearerAuthConfig::required(["secret"])).await;
+		let (_dir, _ctx, app) = test_app().await;
 
 		let response = app
 			.oneshot(

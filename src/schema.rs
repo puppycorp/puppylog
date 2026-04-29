@@ -1,4 +1,24 @@
 diesel::table! {
+	users (id) {
+		id -> Integer,
+		name -> Text,
+		is_admin -> Bool,
+		created_at -> Timestamp,
+	}
+}
+
+diesel::table! {
+	api_keys (id) {
+		id -> Integer,
+		user_id -> Integer,
+		name -> Nullable<Text>,
+		key_hash -> Text,
+		created_at -> Timestamp,
+		last_used_at -> Nullable<Timestamp>,
+	}
+}
+
+diesel::table! {
 	devices (id) {
 		id -> Text,
 		send_logs -> Bool,
@@ -49,7 +69,11 @@ diesel::table! {
 	}
 }
 
+diesel::joinable!(api_keys -> users (user_id));
+
 diesel::allow_tables_to_appear_in_same_query!(
+	users,
+	api_keys,
 	devices,
 	device_props,
 	log_segments,
