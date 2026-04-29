@@ -139,10 +139,28 @@ fn masked_token(token: &str) -> String {
 	format!("{}****", &token[..4])
 }
 
-fn apply_auth_header(request: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::RequestBuilder {
-	match token {
-		Some(token) if !token.trim().is_empty() => request.header("Authorization", token),
-		_ => request,
+fn authorization_header_value(token: &str) -> Option<String> {
+	let token = token.trim();
+	if token.is_empty() {
+		return None;
+	}
+	if token
+		.get(.."Bearer ".len())
+		.is_some_and(|scheme| scheme.eq_ignore_ascii_case("Bearer "))
+	{
+		Some(token.to_string())
+	} else {
+		Some(format!("Bearer {token}"))
+	}
+}
+
+fn apply_auth_header(
+	request: reqwest::RequestBuilder,
+	token: Option<&str>,
+) -> reqwest::RequestBuilder {
+	match token.and_then(authorization_header_value) {
+		Some(value) => request.header("Authorization", value),
+		None => request,
 	}
 }
 
@@ -728,12 +746,8 @@ enum LogsSubCommand {
 
 #[derive(Subcommand)]
 enum ConfigSubCommand {
-	SetUrl {
-		url: String,
-	},
-	SetToken {
-		token: String,
-	},
+	SetUrl { url: String },
+	SetToken { token: String },
 	Clear,
 	ClearUrl,
 	ClearToken,
@@ -912,7 +926,9 @@ async fn download_logs(
 
 	eprintln!("downloading logs: {}", url);
 	let response = apply_auth_header(
-		client.get(url).header(reqwest::header::ACCEPT, "application/json"),
+		client
+			.get(url)
+			.header(reqwest::header::ACCEPT, "application/json"),
 		auth_token,
 	)
 	.send()
@@ -950,13 +966,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
 	let update_client = reqwest::Client::new();
 	let should_prompt_for_url = cli.address.is_none()
 		&& load_default_address().is_none()
-		&& !matches!(cli.subcommand, Some(Commands::Update) | Some(Commands::Config { .. }));
+		&& !matches!(
+			cli.subcommand,
+			Some(Commands::Update) | Some(Commands::Config { .. })
+		);
 
 	if should_prompt_for_url {
 		let _ = prompt_for_server_url()?;
 	}
 
-	if !matches!(&cli.subcommand, Some(Commands::Update) | Some(Commands::Config { .. })) {
+	if !matches!(
+		&cli.subcommand,
+		Some(Commands::Update) | Some(Commands::Config { .. })
+	) {
 		maybe_check_for_updates(&update_client).await;
 	}
 
@@ -995,9 +1017,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 					}
 
 					let client = reqwest::Client::new();
-					let response = client
-						.post(&addr)
-						.header("Authorization", auth.unwrap_or_default())
+					let response = apply_auth_header(client.post(&addr), auth.as_deref())
 						.body(buffer)
 						.send()
 						.await
@@ -1108,10 +1128,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 			let props = std::fs::read_to_string(args.props_path)?;
 			println!("props: {}", props);
 			let auth_token = args.auth.clone().or_else(load_default_auth_token);
-			let req = apply_auth_header(
-				Client::new().post(&args.address),
-				auth_token.as_deref(),
-			)
+			let req = apply_auth_header(Client::new().post(&args.address), auth_token.as_deref())
 				.header("Content-Type", "application/json")
 				.body(props)
 				.send()
@@ -1184,22 +1201,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
 						}
 					}
 
-					let segements = apply_auth_header(client.get(url.clone()), auth_token.as_deref())
-						.send()
-						.await?
-						.json::<Vec<serde_json::Value>>()
-						.await?;
+					let segements =
+						apply_auth_header(client.get(url.clone()), auth_token.as_deref())
+							.send()
+							.await?
+							.json::<Vec<serde_json::Value>>()
+							.await?;
 
 					for segment in segements {
 						let id = segment["id"].as_i64().unwrap().to_string();
-						let url = endpoint_url(&base_addr, &format!("/api/v1/segment/{}/download", id))?;
+						let url =
+							endpoint_url(&base_addr, &format!("/api/v1/segment/{}/download", id))?;
 						let file_path = output_path.join(format!("segment_{}.zstd", id));
 						if !file_path.exists() {
 							println!("downloading: {}", url);
 							let response = loop {
-								let res = match apply_auth_header(client.get(url.clone()), auth_token.as_deref())
-									.send()
-									.await {
+								let res = match apply_auth_header(
+									client.get(url.clone()),
+									auth_token.as_deref(),
+								)
+								.send()
+								.await
+								{
 									Ok(res) => res,
 									Err(e) => {
 										eprintln!("Error downloading segment: {}", e);
@@ -1223,9 +1246,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 						let url = endpoint_url(&base_addr, &format!("/api/v1/segment/{}", id))?;
 						loop {
-							let resp = match apply_auth_header(client.delete(url.clone()), auth_token.as_deref())
-								.send()
-								.await {
+							let resp = match apply_auth_header(
+								client.delete(url.clone()),
+								auth_token.as_deref(),
+							)
+							.send()
+							.await
+							{
 								Ok(r) => r,
 								Err(e) => {
 									eprintln!("Error deleting segment {}: {}", id, e);
@@ -1271,15 +1298,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
 						}
 					}
 
-					let segements = apply_auth_header(client.get(url.clone()), auth_token.as_deref())
-						.send()
-						.await?
-						.json::<Vec<serde_json::Value>>()
-						.await?;
+					let segements =
+						apply_auth_header(client.get(url.clone()), auth_token.as_deref())
+							.send()
+							.await?
+							.json::<Vec<serde_json::Value>>()
+							.await?;
 
 					for segment in segements {
 						let id = segment["id"].as_i64().unwrap().to_string();
-						let url = endpoint_url(&base_addr, &format!("/api/v1/segment/{}/download", id))?;
+						let url =
+							endpoint_url(&base_addr, &format!("/api/v1/segment/{}/download", id))?;
 						let file_path = output_path.join(format!("segment_{}.zst", id));
 						if file_path.exists() {
 							println!("file already exists: {}", file_path.display());
@@ -1317,7 +1346,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 						query,
 						output.as_deref(),
 					)
-						.await?;
+					.await?;
 				}
 			}
 		}
@@ -1380,5 +1409,22 @@ mod tests {
 	fn masked_token_hides_secret_tail() {
 		assert_eq!(masked_token("abcd1234"), "abcd****");
 		assert_eq!(masked_token("abc"), "****");
+	}
+
+	#[test]
+	fn authorization_header_value_adds_bearer_scheme() {
+		assert_eq!(
+			authorization_header_value("secret").as_deref(),
+			Some("Bearer secret")
+		);
+		assert_eq!(
+			authorization_header_value("Bearer secret").as_deref(),
+			Some("Bearer secret")
+		);
+		assert_eq!(
+			authorization_header_value("bearer secret").as_deref(),
+			Some("bearer secret")
+		);
+		assert_eq!(authorization_header_value("   "), None);
 	}
 }

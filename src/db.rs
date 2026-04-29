@@ -14,9 +14,12 @@ use diesel::sqlite::{Sqlite, SqliteConnection};
 use diesel::{insert_into, insert_or_ignore_into};
 use puppylog::{LogLevel, Prop};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::config::db_path;
-use crate::schema::{device_props, devices, log_segments, migrations, segment_props};
+use crate::schema::{
+	api_keys, device_props, devices, log_segments, migrations, segment_props, users,
+};
 use crate::segment::SegmentMeta;
 use crate::types::{GetSegmentsQuery, SortDir};
 
@@ -85,6 +88,28 @@ const MIGRATIONS: &[Migration] = &[
 		sql: r#"
                         ALTER TABLE log_segments ADD COLUMN device_id TEXT;
                         CREATE INDEX IF NOT EXISTS log_segments_device_id_idx ON log_segments(device_id);
+                "#,
+	},
+	Migration {
+		id: 20260429,
+		name: "users_and_api_keys",
+		sql: r#"
+                        CREATE TABLE users (
+                                id INTEGER PRIMARY KEY,
+                                name TEXT NOT NULL UNIQUE,
+                                is_admin BOOLEAN NOT NULL DEFAULT false,
+                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        );
+                        CREATE TABLE api_keys (
+                                id INTEGER PRIMARY KEY,
+                                user_id INTEGER NOT NULL,
+                                name TEXT,
+                                key_hash TEXT NOT NULL UNIQUE,
+                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                last_used_at TIMESTAMP,
+                                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                        );
+                        CREATE INDEX IF NOT EXISTS api_keys_user_id_idx ON api_keys(user_id);
                 "#,
 	},
 ];
@@ -168,6 +193,34 @@ struct DeviceRow {
 	created_at: NaiveDateTime,
 	last_upload_at: Option<NaiveDateTime>,
 	send_interval: i32,
+}
+
+#[derive(Queryable, Debug)]
+#[diesel(table_name = users)]
+struct UserRow {
+	id: i32,
+	name: String,
+	is_admin: bool,
+	created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct User {
+	pub id: i32,
+	pub name: String,
+	pub is_admin: bool,
+}
+
+impl From<UserRow> for User {
+	fn from(row: UserRow) -> Self {
+		let _created_at = row.created_at;
+		User {
+			id: row.id,
+			name: row.name,
+			is_admin: row.is_admin,
+		}
+	}
 }
 
 #[derive(Queryable, Debug)]
@@ -284,6 +337,109 @@ impl DB {
 		self.read_pool
 			.get()
 			.context("failed to get sqlite read connection from pool")
+	}
+
+	pub async fn create_user(&self, name: &str, is_admin: bool) -> Result<User> {
+		let mut conn = self.conn()?;
+		conn.transaction::<_, diesel::result::Error, _>(|conn| {
+			insert_into(users::table)
+				.values((users::name.eq(name), users::is_admin.eq(is_admin)))
+				.execute(conn)?;
+			let row: UserRow = users::table
+				.filter(users::id.eq(last_insert_id(conn)? as i32))
+				.first(conn)?;
+			Ok(User::from(row))
+		})
+		.map_err(Into::into)
+	}
+
+	pub async fn add_api_key(&self, user_id: i32, name: Option<&str>, api_key: &str) -> Result<()> {
+		let mut conn = self.conn()?;
+		insert_into(api_keys::table)
+			.values((
+				api_keys::user_id.eq(user_id),
+				api_keys::name.eq(name),
+				api_keys::key_hash.eq(hash_api_key(api_key)),
+			))
+			.execute(&mut conn)
+			.context("failed to create api key")?;
+		Ok(())
+	}
+
+	pub async fn create_user_with_api_key(
+		&self,
+		name: &str,
+		is_admin: bool,
+		key_name: Option<&str>,
+		api_key: &str,
+	) -> Result<User> {
+		let mut conn = self.conn()?;
+		conn.transaction::<_, diesel::result::Error, _>(|conn| {
+			insert_into(users::table)
+				.values((users::name.eq(name), users::is_admin.eq(is_admin)))
+				.execute(conn)?;
+			let user_id = last_insert_id(conn)? as i32;
+			insert_into(api_keys::table)
+				.values((
+					api_keys::user_id.eq(user_id),
+					api_keys::name.eq(key_name),
+					api_keys::key_hash.eq(hash_api_key(api_key)),
+				))
+				.execute(conn)?;
+			let row: UserRow = users::table.filter(users::id.eq(user_id)).first(conn)?;
+			Ok(User::from(row))
+		})
+		.map_err(Into::into)
+	}
+
+	pub async fn bootstrap_admin(&self, name: &str, api_key: &str) -> Result<Option<User>> {
+		let mut conn = self.conn()?;
+		conn.transaction::<_, diesel::result::Error, _>(|conn| {
+			let user_count: i64 = users::table.count().get_result(conn)?;
+			let admin_count: i64 = users::table
+				.filter(users::is_admin.eq(true))
+				.count()
+				.get_result(conn)?;
+			if user_count > 0 || admin_count > 0 {
+				return Ok(None);
+			}
+
+			insert_into(users::table)
+				.values((users::name.eq(name), users::is_admin.eq(true)))
+				.execute(conn)?;
+			let user_id = last_insert_id(conn)? as i32;
+			insert_into(api_keys::table)
+				.values((
+					api_keys::user_id.eq(user_id),
+					api_keys::name.eq(Some("bootstrap")),
+					api_keys::key_hash.eq(hash_api_key(api_key)),
+				))
+				.execute(conn)?;
+			let row: UserRow = users::table.filter(users::id.eq(user_id)).first(conn)?;
+			Ok(Some(User::from(row)))
+		})
+		.map_err(Into::into)
+	}
+
+	pub async fn authenticate_api_key(&self, api_key: &str) -> Result<Option<User>> {
+		let key_hash = hash_api_key(api_key);
+		let mut conn = self.conn()?;
+		let row = users::table
+			.inner_join(api_keys::table)
+			.filter(api_keys::key_hash.eq(&key_hash))
+			.select((users::id, users::name, users::is_admin, users::created_at))
+			.first::<UserRow>(&mut conn)
+			.optional()
+			.context("failed to authenticate api key")?;
+
+		if row.is_some() {
+			diesel::update(api_keys::table.filter(api_keys::key_hash.eq(key_hash)))
+				.set(api_keys::last_used_at.eq(Some(Utc::now().naive_utc())))
+				.execute(&mut conn)
+				.context("failed to update api key last_used_at")?;
+		}
+
+		Ok(row.map(User::from))
 	}
 
 	pub async fn update_device_stats(
@@ -749,6 +905,17 @@ struct LastInsertRow {
 	id: i64,
 }
 
+fn last_insert_id(conn: &mut SqliteConnection) -> diesel::result::QueryResult<i64> {
+	diesel::sql_query("SELECT last_insert_rowid() as id")
+		.get_result::<LastInsertRow>(conn)
+		.map(|row| row.id)
+}
+
+fn hash_api_key(api_key: &str) -> String {
+	let digest = Sha256::digest(api_key.as_bytes());
+	digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn load_device_metadata(conn: &mut SqliteConnection, device_id: &str) -> Result<Vec<MetaProp>> {
 	let rows: Vec<(String, String)> = device_props::table
 		.filter(device_props::device_id.eq(device_id))
@@ -815,6 +982,86 @@ mod tests {
 			write_pool: pool.clone(),
 			read_pool: pool,
 		})
+	}
+
+	#[tokio::test]
+	async fn bootstrap_creates_first_admin() {
+		let db = test_db();
+
+		let user = db
+			.bootstrap_admin("admin", "secret")
+			.await
+			.unwrap()
+			.expect("admin should be created");
+
+		assert_eq!(user.name, "admin");
+		assert!(user.is_admin);
+		assert_eq!(
+			db.authenticate_api_key("secret").await.unwrap(),
+			Some(user.clone())
+		);
+	}
+
+	#[tokio::test]
+	async fn bootstrap_does_not_overwrite_existing_admin() {
+		let db = test_db();
+		let existing = db
+			.create_user_with_api_key("existing", true, Some("existing"), "old-secret")
+			.await
+			.unwrap();
+
+		assert!(db
+			.bootstrap_admin("new-admin", "new-secret")
+			.await
+			.unwrap()
+			.is_none());
+		assert_eq!(
+			db.authenticate_api_key("old-secret").await.unwrap(),
+			Some(existing)
+		);
+		assert_eq!(db.authenticate_api_key("new-secret").await.unwrap(), None);
+	}
+
+	#[tokio::test]
+	async fn bootstrap_does_not_overwrite_existing_user() {
+		let db = test_db();
+		let existing = db
+			.create_user_with_api_key("user", false, Some("user"), "old-secret")
+			.await
+			.unwrap();
+
+		assert!(db
+			.bootstrap_admin("admin", "new-secret")
+			.await
+			.unwrap()
+			.is_none());
+		assert_eq!(
+			db.authenticate_api_key("old-secret").await.unwrap(),
+			Some(existing)
+		);
+		assert_eq!(db.authenticate_api_key("new-secret").await.unwrap(), None);
+	}
+
+	#[tokio::test]
+	async fn user_can_have_multiple_api_keys() {
+		let db = test_db();
+		let user = db.create_user("admin", true).await.unwrap();
+		db.add_api_key(user.id, Some("first"), "first-secret")
+			.await
+			.unwrap();
+		db.add_api_key(user.id, Some("second"), "second-secret")
+			.await
+			.unwrap();
+
+		assert_eq!(
+			db.authenticate_api_key("first-secret").await.unwrap(),
+			Some(user.clone())
+		);
+		assert_eq!(
+			db.authenticate_api_key("second-secret").await.unwrap(),
+			Some(user)
+		);
+		assert_eq!(db.authenticate_api_key("wrong").await.unwrap(), None);
 	}
 
 	#[tokio::test]
