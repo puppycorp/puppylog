@@ -115,6 +115,16 @@ Logbatch is a binary structure which stores multiple loglines. Logbatch is compr
 
 ## API
 
+When server auth is enabled, API clients must send:
+
+```
+Authorization: Bearer <apikey>
+```
+
+Protected API endpoints return `401 Unauthorized` when the header is missing,
+uses a non-Bearer scheme, or contains a key not listed in the server config.
+`/api/v1/server_info` and the web assets remain public.
+
 ### GET /api/logs
 
 Search logs with PQL query. Returns logs in json format.
@@ -452,8 +462,10 @@ user PATH if needed.
 PuppyLog comes with a CLI called `plog`. The CLI automatically reads the
 server address from the `PUPPYLOG_ADDRESS` environment variable or the file
 `$HOME/.puppylog/config.json` when `--address` is not provided. Auth tokens can
-also be read from `PUPPYLOG_AUTH_TOKEN` or that same config file. Run `cargo run
---bin plog -- --help` to see all commands. Available commands include:
+also be read from `PUPPYLOG_AUTH_TOKEN` or that same config file, and are sent
+as `Authorization: Bearer <token>` unless the saved value already starts with
+`Bearer `. Run `cargo run --bin plog -- --help` to see all commands. Available
+commands include:
 
 | Command                   | Description                                       |
 | ------------------------- | ------------------------------------------------- |
@@ -558,6 +570,12 @@ bun x tsc --noEmit
 
 PuppyLog supports tuning of its in-memory buffering and merge batching behavior via environment variables:
 
+- **PUPPYLOG_API_KEYS**: Comma-separated API keys accepted by server Bearer auth,
+  for example `PUPPYLOG_API_KEYS=key-one,key-two`. Blank entries are ignored.
+- **PUPPYLOG_AUTH_REQUIRED**: Optional auth toggle. Truthy values are `1`,
+  `true`, `yes`, and `on`; falsey values are `0`, `false`, `no`, and `off`.
+  When unset, auth is required if `PUPPYLOG_API_KEYS` contains at least one key
+  and disabled otherwise.
 - **MERGER_MAX_IN_CORE**: Maximum number of log entries buffered in memory for device merging. Defaults to the compile-time constant `MAX_IN_CORE`.
 - **MERGER_TARGET_SEGMENT_SIZE**: Number of buffered entries per device before triggering a flush to storage. Defaults to `TARGET_SEGMENT_SIZE`.
 - **MERGER_BATCH_SIZE**: Number of orphan log segments fetched per merge iteration. Defaults to `MERGER_BATCH_SIZE`.
@@ -573,4 +591,5 @@ export MERGER_MAX_IN_CORE=1000000
 export MERGER_TARGET_SEGMENT_SIZE=300000
 export MERGER_BATCH_SIZE=2000
 export UPLOAD_FLUSH_THRESHOLD=50000
+export PUPPYLOG_API_KEYS=replace-with-a-secret-key
 ```
