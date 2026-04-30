@@ -4,6 +4,7 @@ export class Navbar extends HList {
 	public readonly logsLink: HTMLAnchorElement
 	public readonly devicesLink: HTMLAnchorElement
 	public readonly segmentsLink: HTMLAnchorElement
+	public readonly bucketsLink: HTMLAnchorElement
 	private leftItems: HTMLElement[]
 
 	constructor(args?: { right?: (HTMLElement | UiComponent<HTMLElement>)[] }) {
@@ -22,19 +23,29 @@ export class Navbar extends HList {
 		this.segmentsLink.textContent = "Segments"
 		this.segmentsLink.href = "/segments"
 		this.segmentsLink.classList.add("link")
+		this.bucketsLink = document.createElement("a")
+		this.bucketsLink.textContent = "Buckets"
+		this.bucketsLink.href = "/buckets"
+		this.bucketsLink.classList.add("link")
 		// Mark active link
 		const currentPath = window.location.pathname
 		;[
 			{ link: this.logsLink, path: "/logs" },
 			{ link: this.devicesLink, path: "/devices" },
 			{ link: this.segmentsLink, path: "/segments" },
+			{ link: this.bucketsLink, path: "/buckets" },
 		].forEach(({ link, path }) => {
 			if (currentPath === path || currentPath.startsWith(path + "/")) {
 				link.classList.add("active")
 			}
 		})
 		// prepare left items
-		this.leftItems = [this.logsLink, this.devicesLink, this.segmentsLink]
+		this.leftItems = [
+			this.logsLink,
+			this.devicesLink,
+			this.segmentsLink,
+			this.bucketsLink,
+		]
 		// initial render of left and optional right items
 		this.setRight(args?.right)
 	}

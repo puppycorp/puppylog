@@ -9,6 +9,7 @@ import { settingsPage } from "./settings"
 import { Container } from "./ui"
 import { queriesPage } from "./queries"
 import { serverPage } from "./server"
+import { bucketsPage } from "./buckets"
 
 window.onload = () => {
 	const body = document.querySelector("body")
@@ -23,6 +24,7 @@ window.onload = () => {
 		"/devices": () => devicesPage(body),
 		"/device/:deviceId": (params: any) => devicePage(body, params.deviceId),
 		"/segments": () => segmentsPage(container),
+		"/buckets": () => bucketsPage(body),
 		"/queries": () => queriesPage(body),
 		"/segment/:segmentId": (params: any) =>
 			segmentPage(body, params.segmentId),

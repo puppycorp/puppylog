@@ -5,6 +5,13 @@ import { Button, Collapsible, VList } from "./ui"
 import { Histogram, HistogramItem } from "./histogram"
 import { getQueryParam, removeQueryParam, setQueryParam } from "./utility"
 import { Navbar } from "./navbar"
+import {
+	appendLogsToBucket,
+	listBuckets,
+	MAX_BUCKET_ENTRIES,
+	upsertBucket,
+} from "./log-buckets"
+import type { BucketLogEntry, LogBucket } from "./log-buckets"
 
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal"
 
@@ -174,6 +181,7 @@ const formatDownloadLine = (entry: LogEntry): string => {
 export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	const logIds = new Set<string>()
 	const logEntries: LogEntry[] = []
+	let activeBucket: LogBucket | null = null
 	let logViewMode: LogViewMode = "structured"
 	let rawWrapEnabled = false
 	args.root.innerHTML = ``
@@ -215,6 +223,257 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 	searchControls.className = "logs-search-controls"
 	searchControls.append(searchButton, stopButton, downloadButton)
 	actionBar.appendChild(searchControls)
+
+	const bucketControls = document.createElement("div")
+	bucketControls.className = "logs-bucket-controls"
+	bucketControls.style.display = "flex"
+	bucketControls.style.alignItems = "center"
+	bucketControls.style.marginLeft = "8px"
+
+	const bucketButton = document.createElement("button")
+	bucketButton.className = "logs-bucket-button"
+	bucketButton.textContent = "Collect logs"
+	bucketButton.setAttribute("aria-pressed", "false")
+	bucketControls.appendChild(bucketButton)
+	actionBar.appendChild(bucketControls)
+
+	const bucketBanner = document.createElement("div")
+	bucketBanner.className = "logs-bucket-banner"
+	bucketBanner.style.display = "none"
+	bucketBanner.style.margin = "8px 0"
+	bucketBanner.style.padding = "8px 16px"
+	bucketBanner.style.background = "#e0f2fe"
+	bucketBanner.style.borderRadius = "4px"
+	bucketBanner.style.fontSize = "12px"
+	bucketBanner.style.color = "#1f2937"
+	args.root.appendChild(bucketBanner)
+
+	const cloneEntriesForBucket = (
+		entries: ReadonlyArray<LogEntry>,
+	): BucketLogEntry[] =>
+		entries.map((entry) => ({
+			id: entry.id,
+			timestamp: entry.timestamp,
+			level: entry.level,
+			msg: entry.msg,
+			props: entry.props.map((prop) => ({
+				key: prop.key,
+				value: prop.value,
+			})),
+		}))
+
+	const updateBucketUI = () => {
+		if (!activeBucket) {
+			bucketButton.textContent = "Collect logs"
+			bucketButton.setAttribute("aria-pressed", "false")
+			bucketButton.title = "Copy future log lines into a named bucket"
+			bucketBanner.style.display = "none"
+			bucketBanner.textContent = ""
+			return
+		}
+		bucketButton.textContent = `Collecting (${activeBucket.name})`
+		bucketButton.setAttribute("aria-pressed", "true")
+		const count = activeBucket.logs.length
+		const query = activeBucket.query
+			? `“${activeBucket.query}”`
+			: "current search"
+		bucketBanner.textContent = `Collecting ${count}/${MAX_BUCKET_ENTRIES} logs into "${activeBucket.name}" for ${query}.`
+		bucketBanner.style.display = "flex"
+		bucketBanner.style.alignItems = "center"
+	}
+
+	const startCollecting = async (
+		bucket: LogBucket,
+		copyExisting: boolean,
+	) => {
+		let workingBucket = bucket
+		if (copyExisting && logEntries.length > 0) {
+			const clones = cloneEntriesForBucket(
+				logEntries.slice(0, MAX_BUCKET_ENTRIES),
+			)
+			try {
+				const updated = await appendLogsToBucket(bucket.id, clones)
+				if (updated) workingBucket = updated
+			} catch (error) {
+				console.error("Failed to append logs to bucket", error)
+			}
+		}
+		activeBucket = workingBucket
+		updateBucketUI()
+	}
+
+	const stopCollecting = () => {
+		activeBucket = null
+		updateBucketUI()
+	}
+
+	const handleBucketSelection = async (
+		bucket: LogBucket,
+		close: () => void,
+		setError: (message: string) => void,
+	) => {
+		try {
+			const updated = await upsertBucket({
+				id: bucket.id,
+				name: bucket.name,
+				query: searchTextarea.value,
+			})
+			await startCollecting(updated, true)
+			close()
+		} catch (error) {
+			console.error("Failed to activate bucket", error)
+			setError("Failed to activate bucket. Please try again.")
+		}
+	}
+
+	const openBucketModal = async () => {
+		let closeModal = () => {}
+		const container = document.createElement("div")
+		container.style.display = "flex"
+		container.style.flexDirection = "column"
+		container.style.gap = "12px"
+		const description = document.createElement("p")
+		description.textContent =
+			"Buckets store a copy of matching log lines for quick access."
+		description.style.margin = "0"
+		container.appendChild(description)
+		const existingTitle = document.createElement("h4")
+		existingTitle.textContent = "Use an existing bucket"
+		existingTitle.style.margin = "0"
+		container.appendChild(existingTitle)
+		const errorText = document.createElement("span")
+		errorText.style.color = "#dc2626"
+		errorText.style.fontSize = "12px"
+		errorText.style.minHeight = "16px"
+		const existingList = document.createElement("div")
+		existingList.style.display = "flex"
+		existingList.style.flexDirection = "column"
+		existingList.style.gap = "8px"
+		container.appendChild(existingList)
+		let buckets: LogBucket[] = []
+		let loadError: string | null = null
+		try {
+			buckets = await listBuckets()
+		} catch (error) {
+			console.error("Failed to load buckets", error)
+			loadError = "Unable to load buckets from the server."
+		}
+		if (loadError) {
+			const failed = document.createElement("span")
+			failed.textContent = loadError
+			failed.style.color = "#dc2626"
+			existingList.appendChild(failed)
+		} else if (buckets.length === 0) {
+			const empty = document.createElement("span")
+			empty.textContent = "No buckets yet."
+			empty.style.color = "#6b7280"
+			existingList.appendChild(empty)
+		} else {
+			buckets.forEach((bucket) => {
+				const option = document.createElement("button")
+				option.type = "button"
+				option.textContent = `${bucket.name} (${bucket.logs.length})`
+				option.style.display = "flex"
+				option.style.justifyContent = "space-between"
+				option.style.alignItems = "center"
+				option.style.padding = "6px 10px"
+				option.style.border = "1px solid #d1d5db"
+				option.style.borderRadius = "4px"
+				option.style.background = "white"
+				option.style.cursor = "pointer"
+				if (activeBucket && bucket.id === activeBucket.id) {
+					option.style.background = "#e0f2fe"
+				}
+				option.onclick = () =>
+					handleBucketSelection(
+						bucket,
+						() => closeModal(),
+						(message) => {
+							errorText.textContent = message
+						},
+					)
+				existingList.appendChild(option)
+			})
+		}
+		const createSection2 = document.createElement("div")
+		createSection2.style.display = "flex"
+		createSection2.style.flexDirection = "column"
+		createSection2.style.gap = "8px"
+		const createTitle = document.createElement("h4")
+		createTitle.textContent = "Create a new bucket"
+		createTitle.style.margin = "0"
+		createSection2.appendChild(createTitle)
+		const nameInput = document.createElement("input")
+		nameInput.type = "text"
+		nameInput.placeholder = "Bucket name"
+		nameInput.autocomplete = "off"
+		nameInput.style.padding = "6px"
+		nameInput.style.border = "1px solid #d1d5db"
+		nameInput.style.borderRadius = "4px"
+		createSection2.appendChild(nameInput)
+		const helper = document.createElement("span")
+		helper.textContent = `Each bucket keeps up to ${MAX_BUCKET_ENTRIES} log lines.`
+		helper.style.fontSize = "12px"
+		helper.style.color = "#6b7280"
+		createSection2.appendChild(helper)
+		createSection2.appendChild(errorText)
+		const createButton = document.createElement("button")
+		createButton.type = "button"
+		createButton.textContent = "Create & collect"
+		createButton.style.alignSelf = "flex-start"
+		createButton.style.padding = "6px 12px"
+		createButton.style.border = "1px solid #2563eb"
+		createButton.style.background = "#2563eb"
+		createButton.style.color = "white"
+		createButton.style.borderRadius = "4px"
+		createButton.style.cursor = "pointer"
+		createSection2.appendChild(createButton)
+		container.appendChild(createSection2)
+		const closeButton = new Button({ text: "Close" })
+		const footerButtons: Button[] = []
+		if (activeBucket) {
+			const stopButton = new Button({ text: "Stop collecting" })
+			stopButton.onClick = () => {
+				stopCollecting()
+				closeModal()
+			}
+			footerButtons.push(stopButton)
+		}
+		footerButtons.push(closeButton)
+		closeModal = showModal({
+			title: "Collect logs in a bucket",
+			minWidth: 360,
+			content: container,
+			footer: footerButtons,
+		})
+		closeButton.onClick = () => closeModal()
+		createButton.onclick = () => {
+			errorText.textContent = ""
+			const name = nameInput.value.trim()
+			if (!name) {
+				errorText.textContent = "Please provide a bucket name."
+				return
+			}
+			void (async () => {
+				try {
+					const bucket = await upsertBucket({
+						name,
+						query: searchTextarea.value,
+					})
+					await startCollecting(bucket, true)
+					closeModal()
+				} catch (error) {
+					console.error("Failed to create bucket", error)
+					errorText.textContent =
+						"Failed to create bucket. Please try again."
+				}
+			})()
+		}
+	}
+	updateBucketUI()
+	bucketButton.onclick = () => {
+		void openBucketModal()
+	}
 
 	const viewActions = document.createElement("div")
 	viewActions.className = "logs-view-actions"
@@ -258,8 +517,6 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		wrapToggleWrapper.style.display = isRaw ? "flex" : "none"
 		renderLogs()
 	})
-
-	// Options dropdown (currently only histogram)
 	const featuresList = new VList()
 	const histogramToggle = document.createElement("label")
 	histogramToggle.style.display = "flex"
@@ -274,7 +531,7 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		content: featuresList,
 	})
 	// If you want to show the dropdown uncomment next line
-	// rightPanel.appendChild(featuresDropdown.root)
+	// actionBar.appendChild(featuresDropdown.root)
 
 	// Histogram container
 	const histogramContainer = document.createElement("div")
@@ -538,6 +795,35 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 				logIds.add(entry.id)
 				logEntries.push(entry)
 			})
+			if (
+				activeBucket &&
+				newEntries.length > 0 &&
+				activeBucket.query === lastQuery
+			) {
+				const targetBucket = activeBucket
+				const clones = cloneEntriesForBucket(newEntries)
+				void (async () => {
+					try {
+						const updated = await appendLogsToBucket(
+							targetBucket.id,
+							clones,
+						)
+						if (
+							updated &&
+							activeBucket &&
+							updated.id === activeBucket.id
+						) {
+							activeBucket = updated
+							updateBucketUI()
+						}
+					} catch (error) {
+						console.error(
+							"Failed to append streaming logs to bucket",
+							error,
+						)
+					}
+				})()
+			}
 			logEntries.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
 			if (
 				logEntries.length > MAX_LOG_ENTRIES &&
@@ -571,6 +857,21 @@ export const logsSearchPage = (args: LogsSearchPageArgs) => {
 		segmentStatus = ""
 		statsStatus = ""
 		updateProgressIndicator()
+		if (activeBucket) {
+			void (async () => {
+				try {
+					const updated = await upsertBucket({
+						id: activeBucket?.id,
+						name: activeBucket?.name || "",
+						query: searchTextarea.value,
+					})
+					activeBucket = updated
+					updateBucketUI()
+				} catch (error) {
+					console.error("Failed to refresh bucket metadata", error)
+				}
+			})()
+		}
 		return token
 	}
 
