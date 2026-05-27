@@ -92,12 +92,43 @@ const MIGRATIONS: &[Migration] = &[
 #[derive(Debug, Default)]
 struct SqlitePragmaSetup;
 
+fn normalize_sqlite_sync(value: &str) -> Option<&'static str> {
+	match value.trim().to_ascii_uppercase().as_str() {
+		"0" | "OFF" => Some("OFF"),
+		"1" | "NORMAL" => Some("NORMAL"),
+		"2" | "FULL" => Some("FULL"),
+		"3" | "EXTRA" => Some("EXTRA"),
+		_ => None,
+	}
+}
+
+fn sqlite_sync_pragma() -> Option<&'static str> {
+	let value = std::env::var("SQLITE_SYNC").ok()?;
+	match normalize_sqlite_sync(&value) {
+		Some(mode) => Some(mode),
+		None => {
+			log::warn!(
+				"ignoring invalid SQLITE_SYNC value {:?}; expected OFF, NORMAL, FULL, EXTRA, or 0-3",
+				value
+			);
+			None
+		}
+	}
+}
+
 impl CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for SqlitePragmaSetup {
 	fn on_acquire(
 		&self,
 		conn: &mut SqliteConnection,
 	) -> std::result::Result<(), diesel::r2d2::Error> {
-		conn.batch_execute("PRAGMA journal_mode=WAL; PRAGMA busy_timeout = 5000;")
+		let mut pragmas = "PRAGMA journal_mode=WAL; PRAGMA busy_timeout = 5000;".to_string();
+		if let Some(mode) = sqlite_sync_pragma() {
+			pragmas.push_str(" PRAGMA synchronous = ");
+			pragmas.push_str(mode);
+			pragmas.push(';');
+		}
+
+		conn.batch_execute(&pragmas)
 			.map_err(diesel::r2d2::Error::QueryError)
 	}
 }
@@ -808,6 +839,15 @@ pub fn run_migrations(conn: &mut SqliteConnection) -> Result<()> {
 mod tests {
 	use super::*;
 	use puppylog::Prop;
+
+	#[test]
+	fn normalize_sqlite_sync_accepts_known_modes() {
+		assert_eq!(normalize_sqlite_sync("off"), Some("OFF"));
+		assert_eq!(normalize_sqlite_sync("NORMAL"), Some("NORMAL"));
+		assert_eq!(normalize_sqlite_sync("2"), Some("FULL"));
+		assert_eq!(normalize_sqlite_sync("3"), Some("EXTRA"));
+		assert_eq!(normalize_sqlite_sync("delete from devices"), None);
+	}
 
 	fn test_db() -> DB {
 		let pool = establish_pool(":memory:").unwrap();

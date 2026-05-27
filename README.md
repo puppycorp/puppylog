@@ -563,6 +563,7 @@ PuppyLog supports tuning of its in-memory buffering and merge batching behavior 
 - **MERGER_BATCH_SIZE**: Number of orphan log segments fetched per merge iteration. Defaults to `MERGER_BATCH_SIZE`.
 - **MERGER_RUN**: Enables or disables merger background processing. Defaults to `true`.
 - **UPLOAD_FLUSH_THRESHOLD**: Number of buffered log entries received via the upload API before they are persisted to storage. The server reads this value at startup. Defaults to the compile-time constant `UPLOAD_FLUSH_THRESHOLD`.
+- **SQLITE_SYNC**: Optional SQLite durability/performance mode. Accepted values are `OFF`, `NORMAL`, `FULL`, `EXTRA`, or numeric `0`-`3`. Leaving it unset uses SQLite's default. `OFF` is fastest but can corrupt the database on OS crash or power loss; use it only when the database is disposable or rebuildable.
 - **RUN_SEGMENT_COMPACTOR**: Enables or disables the segment compactor background process. Defaults to `true`. It tries to compact device segment logs up to 300k entries per segment. This helps to improve compression ratio and query performance with less files on disk.
 - **DISK_SPACE_MONITOR**: Set to `1` to enable the disk-space-monitor background task. When enabled the server will spawn `cleanup::run_disk_space_monitor`, which periodically checks the upload directory, logs the available MB, notifies Slack once per low-disk incident, flushes in-memory buffers, and deletes the oldest segments until free space recovers (honoring `CLEANUP_DELETE_COUNT`). The monitor stays disabled otherwise so disk cleanup only runs when you opt in.
 
@@ -573,4 +574,5 @@ export MERGER_MAX_IN_CORE=1000000
 export MERGER_TARGET_SEGMENT_SIZE=300000
 export MERGER_BATCH_SIZE=2000
 export UPLOAD_FLUSH_THRESHOLD=50000
+export SQLITE_SYNC=NORMAL
 ```
