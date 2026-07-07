@@ -158,6 +158,7 @@ async fn main() {
 		)
 		.merge(upload_router)
 		.route("/api/v1/server_info", get(controllers::get_server_info))
+		.route("/api/v1/server/cleanup", post(controllers::start_cleanup))
 		.with_state(ctx.clone())
 		.layer(cors.clone());
 
@@ -175,8 +176,10 @@ async fn main() {
 		.merge(ui_router)
 		.layer(CompressionLayer::new());
 
-	// run our app with hyper, listening globally on port 3000
-	let listener = tokio::net::TcpListener::bind("0.0.0.0:3337").await.unwrap();
+	let bind_addr = "0.0.0.0:3337";
+	let listener = tokio::net::TcpListener::bind(bind_addr).await.unwrap();
+	let local_addr = listener.local_addr().unwrap();
+	log::info!("listening on http://{}", local_addr);
 	axum::serve(listener, app).await.unwrap();
 }
 

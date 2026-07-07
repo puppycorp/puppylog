@@ -148,9 +148,17 @@ impl LogSegment {
 
 pub fn compress_segment(buf: &[u8]) -> anyhow::Result<Vec<u8>> {
 	let mut encoder = Encoder::new(Vec::new(), 14)?;
-	encoder.multithread(num_cpus::get() as u32)?;
+	encoder.multithread(compression_thread_count())?;
 	encoder.write_all(&buf)?;
 	Ok(encoder.finish()?)
+}
+
+pub fn compression_thread_count() -> u32 {
+	std::env::var("SEGMENT_COMPRESSION_THREADS")
+		.ok()
+		.and_then(|v| v.parse::<u32>().ok())
+		.filter(|threads| *threads > 0)
+		.unwrap_or_else(|| num_cpus::get().saturating_sub(1).max(1) as u32)
 }
 
 #[cfg(test)]

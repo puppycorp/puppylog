@@ -25,7 +25,10 @@ use tokio_util::io::ReaderStream;
 use zstd::Decoder;
 
 use crate::config::{log_path, upload_path};
-use crate::context::{Context, LogStreamItem, SearchProgress, SegmentProgress};
+use crate::context::{
+	note_frontend_request, should_defer_background_work, Context, LogStreamItem, SearchProgress,
+	SegmentProgress,
+};
 use crate::db::{MetaProp, UpdateDeviceSettings};
 use crate::segment::{HEADER_SIZE, MAGIC, VERSION};
 use crate::server_info::{fetch_server_info, ServerInfo};
@@ -52,6 +55,26 @@ pub(crate) struct GetHistogramQuery {
 pub async fn get_server_info() -> Json<ServerInfo> {
 	let info = fetch_server_info().await;
 	Json(info)
+}
+
+pub async fn start_cleanup(State(ctx): State<Arc<Context>>) -> Json<Value> {
+	use crate::cleanup::cleanup_old_segments;
+	use crate::utility::disk_usage;
+
+	let upload_dir = upload_path();
+	let (free_before, total_before) = disk_usage(&upload_dir).unwrap_or((0, 0));
+	ctx.force_flush().await;
+	let deleted_segments = cleanup_old_segments(&ctx).await;
+	let (free_after, total_after) = disk_usage(&upload_dir).unwrap_or((0, 0));
+
+	Json(json!({
+		"status": "ok",
+		"deletedSegments": deleted_segments,
+		"freeBytesBefore": free_before,
+		"totalBytesBefore": total_before,
+		"freeBytesAfter": free_after,
+		"totalBytesAfter": total_after
+	}))
 }
 
 pub async fn get_segment_metadata(State(ctx): State<Arc<Context>>) -> Json<Value> {
@@ -280,6 +303,20 @@ pub async fn upload_device_logs(
 	Path(device_id): Path<String>,
 	body: Body,
 ) -> impl IntoResponse {
+	if should_defer_background_work() {
+		let retry_after = rand::rng().random_range(1..=5);
+		let mut resp = (
+			StatusCode::SERVICE_UNAVAILABLE,
+			"Frontend active, delaying upload",
+		)
+			.into_response();
+		resp.headers_mut().insert(
+			axum::http::header::RETRY_AFTER,
+			retry_after.to_string().parse().unwrap(),
+		);
+		return resp;
+	}
+
 	let _guard = match ctx.upload_guard() {
 		Ok(g) => g,
 		Err(err) => {
@@ -409,8 +446,8 @@ pub async fn update_device_metadata(
 }
 
 const FAVICON: &[u8] = include_bytes!("../assets/favicon.ico");
-const FAVICON_192x192: &[u8] = include_bytes!("../assets/favicon-192x192.png");
-const FAVICON_512x512: &[u8] = include_bytes!("../assets/favicon-512x512.png");
+const FAVICON_192X192: &[u8] = include_bytes!("../assets/favicon-192x192.png");
+const FAVICON_512X512: &[u8] = include_bytes!("../assets/favicon-512x512.png");
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
 	const FNV_OFFSET: u64 = 0xcbf29ce484222325;
@@ -501,26 +538,30 @@ pub async fn get_settings_query(State(ctx): State<Arc<Context>>) -> String {
 }
 
 pub async fn favicon(headers: HeaderMap) -> Result<Response, StatusCode> {
+	note_frontend_request();
 	Ok(cached_bytes_response(FAVICON, "image/x-icon", &headers))
 }
 
 pub async fn favicon_192x192(headers: HeaderMap) -> Result<Response, StatusCode> {
+	note_frontend_request();
 	Ok(cached_bytes_response(
-		FAVICON_192x192,
+		FAVICON_192X192,
 		"image/png",
 		&headers,
 	))
 }
 
 pub async fn favicon_512x512(headers: HeaderMap) -> Result<Response, StatusCode> {
+	note_frontend_request();
 	Ok(cached_bytes_response(
-		FAVICON_512x512,
+		FAVICON_512X512,
 		"image/png",
 		&headers,
 	))
 }
 
 pub async fn manifest(headers: HeaderMap) -> Result<Response, StatusCode> {
+	note_frontend_request();
 	Ok(cached_bytes_response(
 		include_bytes!("../assets/manifest.json"),
 		"application/json",

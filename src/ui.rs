@@ -4,7 +4,7 @@ use crate::server_info::{fetch_server_info, ServerInfo};
 use chrono::{DateTime, Utc};
 use log::error;
 use std::sync::{Arc, Mutex};
-use wgui::wui::runtime::{Component, Ctx};
+use wgui::wui::runtime::{Component, Ctx, MountResult, RouteContext};
 use wgui::{wgui_controller, WguiModel};
 
 const DEVICE_ROW_LIMIT: usize = 12;
@@ -208,8 +208,8 @@ impl Component for Ui {
 	type Db = ();
 	type Model = UiSnapshot;
 
-	async fn mount(ctx: Arc<Ctx<UiContext, ()>>) -> Self {
-		Self::new(ctx).await
+	async fn mount(ctx: Arc<Ctx<UiContext, ()>>, _route: RouteContext) -> MountResult<Self> {
+		MountResult::Ready(Self::new(ctx).await)
 	}
 
 	fn render(&self, _ctx: &Ctx<UiContext, ()>) -> Self::Model {

@@ -250,6 +250,25 @@ Response
 }
 ```
 
+### POST /api/v1/server/cleanup
+
+Starts a manual cleanup pass using the same flow as the disk-space monitor:
+flushes in-memory logs and deletes oldest segments according to
+`CLEANUP_DELETE_COUNT`.
+
+Response
+
+```json
+{
+	"status": "ok",
+	"deletedSegments": 12,
+	"freeBytesBefore": 123456,
+	"totalBytesBefore": 987654,
+	"freeBytesAfter": 234567,
+	"totalBytesAfter": 987654
+}
+```
+
 ### GET /api/v1/device/:deviceId/status
 
 Gets status for device. Usefull for determining if device is allowed to send logs or not and what logs should be sent. Client can use this api to keep TLS connection alive or makes sure not to waste bandwidth sending logs to server which is not ready to receive logs. In some environments like IOT devices it's important to save battery and bandwidth.
@@ -269,6 +288,10 @@ Device sends logs to server in LogBatch format and server will send ack back to 
 
 Transfer-Encoding: chunked // If streaming logs
 Content-Encoding: gzip, zstd, none
+
+When the frontend is actively loading, or when too many uploads are already in
+progress, the server can respond with `503 Service Unavailable` and a
+`Retry-After` header. Clients should delay the upload and retry later.
 
 ### POST /api/v1/settings
 
@@ -377,28 +400,187 @@ sudo apt-get install gcc libssl-dev pkg-config libsqlite3-dev build-essential
 cargo run
 ```
 
+### Install PuppyLog server as a user service
+
+Install the latest Linux x86_64 `puppylog` server release as a systemd user
+service:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install.sh | bash
+```
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install.sh | VERSION=0.0.1 bash
+```
+
+Install the current source version from the repository by building the `master`
+branch locally:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install.sh | VERSION=repo bash
+```
+
+Install from another repository branch or tag:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install.sh | VERSION=repo REPO_REF=my-branch bash
+```
+
+Install from a locally built server binary:
+
+```bash
+cargo build --release --bin puppylog
+PUPPYLOG_BIN=./target/release/puppylog ./scripts/install.sh
+```
+
+The installer writes a systemd user unit to
+`~/.config/systemd/user/puppylog.service`, installs the server binary into
+`~/.local/bin` by default, and writes service environment settings to
+`~/.config/puppylog/puppylog.env`. Edit that env file to move the log directory,
+database file, settings file, or upload directory:
+
+```bash
+LOG_PATH="/home/puppy/.local/share/puppylog/logs"
+DB_PATH="/home/puppy/.local/share/puppylog/puppylog.db"
+SETTINGS_PATH="/home/puppy/.local/share/puppylog/settings.json"
+UPLOAD_PATH="/home/puppy/.local/share/puppylog/uploads"
+```
+
+Restart the service after changing settings:
+
+```bash
+systemctl --user restart puppylog.service
+```
+
+Use `DATA_DIR=/srv/puppylog` to choose a different default data root during
+install, or set `LOG_PATH`, `DB_PATH`, `SETTINGS_PATH`, and `UPLOAD_PATH`
+individually before running the installer.
+
+### Install `plog` from GitHub Releases
+
+#### Linux / macOS
+
+Install the latest `plog` release into `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.sh | bash
+```
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.sh | VERSION=0.0.1 bash
+```
+
+Install somewhere else:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.sh | INSTALL_DIR="$HOME/bin" bash
+```
+
+The installer currently supports Linux x86_64 and Apple Silicon macOS, downloads
+the matching GitHub Release archive, verifies the published SHA-256 checksum,
+and installs `plog` into `~/.local/bin` by default.
+
+#### Windows (PowerShell)
+
+Install the latest `plog` release:
+
+```powershell
+irm https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.ps1 | iex
+```
+
+Install a specific version:
+
+```powershell
+$env:VERSION = "0.0.1"; irm https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.ps1 | iex
+```
+
+Install somewhere else:
+
+```powershell
+$env:INSTALL_DIR = "$HOME\\bin"; irm https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.ps1 | iex
+```
+
+The Windows installer downloads the matching `.zip` GitHub Release asset,
+verifies its SHA-256 checksum, installs `plog.exe` into
+`%LOCALAPPDATA%\Programs\plog\bin` by default, and adds that directory to the
+user PATH if needed.
+
 ### Command Line Interface
 
-PuppyLog comes with a CLI called `puppylogcli`. The CLI automatically reads the
+PuppyLog comes with a CLI called `plog`. The CLI automatically reads the
 server address from the `PUPPYLOG_ADDRESS` environment variable or the file
-`$HOME/.puppylog/address` when `--address` is not provided. Run `cargo run --bin
-puppylogcli -- --help` to see all commands. Available commands include:
+`$HOME/.puppylog/config.json` when `--address` is not provided. Auth tokens can
+also be read from `PUPPYLOG_AUTH_TOKEN` or that same config file. Run `cargo run
+--bin plog -- --help` to see all commands. Available commands include:
 
 | Command                   | Description                                       |
 | ------------------------- | ------------------------------------------------- |
 | `upload`                  | Upload randomly generated logs to a server        |
+| `config set-url`          | Save the default server URL                       |
+| `config set-token`        | Save the default auth token                       |
+| `config clear`            | Clear the saved config                            |
+| `config clear-url`        | Remove the saved server URL                       |
+| `config clear-token`      | Remove the saved auth token                       |
+| `config show`             | Show the current config with secrets masked       |
+| `update`                  | Download and install the latest CLI release       |
 | `tokenize drain`          | Tokenize a log file using the Drain algorithm     |
 | `update-metadata`         | Upload updated device metadata from a JSON file   |
 | `segment get`             | Query segment metadata using filters              |
 | `segment download`        | Download segments to a directory                  |
 | `segment download-remove` | Download segments and delete them from the server |
+| `logs download`           | Download matching logs to stdout, optionally save |
 | `import`                  | Import compressed log segments from a directory   |
 
 Example importing log segments:
 
 ```
-cargo run --bin puppylogcli -- import ./segments
+cargo run --bin plog -- import ./segments
 ```
+
+Save a default server URL and auth token:
+
+```
+plog config set-url https://logs.example.com
+plog config set-token your-token-here
+plog config show
+```
+
+This writes `~/.puppylog/config.json`, for example:
+
+```json
+{
+	"address": "https://logs.example.com",
+	"auth": {
+		"token": "your-token-here"
+	}
+}
+```
+
+Example downloading 500 error logs into a local file:
+
+```
+cargo run --bin plog -- logs download --count 500 --query 'level = "error"' --output ./error-logs.txt
+```
+
+Example streaming matching logs to stdout:
+
+```
+cargo run --bin plog -- logs download --count 500
+```
+
+Update the CLI to the newest GitHub release:
+
+```
+plog update
+```
+
+On normal runs, `plog` also performs a lightweight release check and prints a
+notice when a newer version is available. Set `PLOG_NO_UPDATE_CHECK=1` to skip
+that background check.
 
 ### Device Simulator
 
@@ -446,6 +628,9 @@ PuppyLog supports tuning of its in-memory buffering and merge batching behavior 
 - **MERGER_BATCH_SIZE**: Number of orphan log segments fetched per merge iteration. Defaults to `MERGER_BATCH_SIZE`.
 - **MERGER_RUN**: Enables or disables merger background processing. Defaults to `true`.
 - **UPLOAD_FLUSH_THRESHOLD**: Number of buffered log entries received via the upload API before they are persisted to storage. The server reads this value at startup. Defaults to the compile-time constant `UPLOAD_FLUSH_THRESHOLD`.
+- **FRONTEND_PRIORITY_WINDOW_MS**: Number of milliseconds after serving frontend assets during which background upload processing and segment maintenance should yield. Defaults to `3000`.
+- **SEGMENT_COMPRESSION_THREADS**: Number of zstd worker threads used when compressing segments. Defaults to one less than the detected CPU count, with a minimum of `1`, so request handling keeps CPU headroom.
+- **SQLITE_SYNC**: Optional SQLite durability/performance mode. Accepted values are `OFF`, `NORMAL`, `FULL`, `EXTRA`, or numeric `0`-`3`. Leaving it unset uses SQLite's default. `OFF` is fastest but can corrupt the database on OS crash or power loss; use it only when the database is disposable or rebuildable.
 - **RUN_SEGMENT_COMPACTOR**: Enables or disables the segment compactor background process. Defaults to `true`. It tries to compact device segment logs up to 300k entries per segment. This helps to improve compression ratio and query performance with less files on disk.
 - **DISK_SPACE_MONITOR**: Set to `1` to enable the disk-space-monitor background task. When enabled the server will spawn `cleanup::run_disk_space_monitor`, which periodically checks the upload directory, logs the available MB, notifies Slack once per low-disk incident, flushes in-memory buffers, and deletes the oldest segments until free space recovers (honoring `CLEANUP_DELETE_COUNT`). The monitor stays disabled otherwise so disk cleanup only runs when you opt in.
 
@@ -456,4 +641,7 @@ export MERGER_MAX_IN_CORE=1000000
 export MERGER_TARGET_SEGMENT_SIZE=300000
 export MERGER_BATCH_SIZE=2000
 export UPLOAD_FLUSH_THRESHOLD=50000
+export FRONTEND_PRIORITY_WINDOW_MS=3000
+export SEGMENT_COMPRESSION_THREADS=3
+export SQLITE_SYNC=NORMAL
 ```

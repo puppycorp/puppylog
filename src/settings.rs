@@ -31,7 +31,6 @@ impl Settings {
 			Ok(text) => serde_json::from_str(&text)?,
 			Err(_) => SettingsInner {
 				collection_query: "qwert".to_string(),
-				..Default::default()
 			},
 		};
 		Ok(Self {
@@ -45,7 +44,7 @@ impl Settings {
 		}
 	}
 
-	pub async fn inner(&self) -> tokio::sync::MutexGuard<SettingsInner> {
+	pub async fn inner(&self) -> tokio::sync::MutexGuard<'_, SettingsInner> {
 		self.inner.lock().await
 	}
 }

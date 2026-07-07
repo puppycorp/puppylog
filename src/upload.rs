@@ -6,11 +6,13 @@ use tokio::io::AsyncReadExt;
 use tokio::time::sleep;
 
 use crate::config::upload_path;
-use crate::context::Context;
+use crate::context::{wait_for_frontend_priority, Context};
 use puppylog::{LogEntry, LogentryDeserializerError};
 
 // Background task that imports *.ready log files into the DB.
 pub async fn process_log_uploads(ctx: Arc<Context>) {
+	const PARSE_YIELD_EVERY: usize = 10_000;
+
 	let upload_dir = upload_path();
 	if !upload_dir.exists() {
 		match create_dir_all(upload_dir.clone()).await {
@@ -23,6 +25,8 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
 	}
 
 	loop {
+		wait_for_frontend_priority().await;
+
 		let mut dir = match read_dir(&upload_dir).await {
 			Ok(d) => d,
 			Err(e) => {
@@ -67,9 +71,11 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
 
 			match File::open(&path).await {
 				Ok(mut file) => {
+					wait_for_frontend_priority().await;
 					buf.clear();
 					log_entries.clear();
 					let mut ptr: usize = 0;
+					let mut parsed_since_yield = 0;
 					let mut chunk = vec![0u8; 8 * 1024 * 1024]; // 8 MiB chunks
 					loop {
 						match file.read(&mut chunk).await {
@@ -95,7 +101,13 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
 									match LogEntry::fast_deserialize(&buf, &mut ptr) {
 										Ok(log_entry) => {
 											processed_loglines += 1;
+											parsed_since_yield += 1;
 											log_entries.push(log_entry);
+											if parsed_since_yield >= PARSE_YIELD_EVERY {
+												parsed_since_yield = 0;
+												tokio::task::yield_now().await;
+												wait_for_frontend_priority().await;
+											}
 										}
 										Err(LogentryDeserializerError::NotEnoughData) => {
 											// Retain the unconsumed tail to avoid unbounded memory usage.
@@ -126,7 +138,13 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
 						match LogEntry::fast_deserialize(&buf, &mut ptr) {
 							Ok(log_entry) => {
 								processed_loglines += 1;
+								parsed_since_yield += 1;
 								log_entries.push(log_entry);
+								if parsed_since_yield >= PARSE_YIELD_EVERY {
+									parsed_since_yield = 0;
+									tokio::task::yield_now().await;
+									wait_for_frontend_priority().await;
+								}
 							}
 							Err(LogentryDeserializerError::NotEnoughData) => break,
 							Err(err) => {
@@ -136,6 +154,7 @@ pub async fn process_log_uploads(ctx: Arc<Context>) {
 						}
 					}
 
+					wait_for_frontend_priority().await;
 					ctx.save_logs(&log_entries).await;
 					let log_count = log_entries.len();
 					let total_bytes = buf.len();

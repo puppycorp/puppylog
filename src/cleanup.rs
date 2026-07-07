@@ -10,8 +10,8 @@ use crate::slack;
 use crate::types::{GetSegmentsQuery, SortDir};
 use crate::utility::disk_usage;
 
-// Deletes oldest segments until free space reaches the given ratio.
-pub async fn cleanup_old_segments(ctx: &Context) {
+// Deletes oldest segments and returns the number of segments removed.
+pub async fn cleanup_old_segments(ctx: &Context) -> usize {
 	let count = std::env::var("CLEANUP_DELETE_COUNT")
 		.ok()
 		.and_then(|v| v.parse::<usize>().ok())
@@ -29,8 +29,9 @@ pub async fn cleanup_old_segments(ctx: &Context) {
 		.await
 		.unwrap_or_default();
 	if segs.is_empty() {
-		return;
+		return 0;
 	}
+	let mut deleted = 0usize;
 	for seg in segs {
 		let path = ctx.logs_path().join(format!("{}.log", seg.id));
 		log::warn!("deleting old segment {}", path.display());
@@ -39,8 +40,11 @@ pub async fn cleanup_old_segments(ctx: &Context) {
 		}
 		if let Err(err) = ctx.db.delete_segment(seg.id).await {
 			log::error!("failed to delete segment {} from DB: {}", seg.id, err);
+		} else {
+			deleted += 1;
 		}
 	}
+	deleted
 }
 
 // Monitors disk space and triggers cleanup when low
