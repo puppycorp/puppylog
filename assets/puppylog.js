@@ -2446,49 +2446,11 @@ var fetchSegments = async (args) => {
 };
 var segmentsPage = async (root) => {
   root.root.innerHTML = "";
-  const segementsMetadata = await fetch("/api/segment/metadata").then((res) => res.json());
-  const compressionRatio = segementsMetadata.compressedSize / segementsMetadata.originalSize * 100;
-  const averageCompressedLogSize = segementsMetadata.compressedSize / segementsMetadata.logsCount;
-  const averageOriginalLogSize = segementsMetadata.originalSize / segementsMetadata.logsCount;
-  const metadata = new KeyValueTable([
-    {
-      key: "Total segments",
-      value: formatNumber(segementsMetadata.segmentCount)
-    },
-    {
-      key: "Total original size",
-      value: formatBytes(segementsMetadata.originalSize)
-    },
-    {
-      key: "Total compressed size",
-      value: formatBytes(segementsMetadata.compressedSize)
-    },
-    {
-      key: "Total logs count",
-      value: formatNumber(segementsMetadata.logsCount)
-    },
-    { key: "Compression ratio", value: compressionRatio.toFixed(2) + "%" },
-    {
-      key: "Average compressed log size",
-      value: formatBytes(averageCompressedLogSize)
-    },
-    {
-      key: "Average original log size",
-      value: formatBytes(averageOriginalLogSize)
-    },
-    {
-      key: "Average logs per segment",
-      value: formatNumber(segementsMetadata.logsCount / segementsMetadata.segmentCount)
-    },
-    {
-      key: "Average segment size",
-      value: formatBytes(segementsMetadata.originalSize / segementsMetadata.segmentCount)
-    }
-  ]);
-  metadata.root.style.whiteSpace = "nowrap";
+  const metadataContent = new Container(document.createElement("div"));
+  metadataContent.root.textContent = "Loading metadata...";
   const metadataCollapsible = new Collapsible({
     buttonText: "Metadata",
-    content: metadata
+    content: metadataContent
   });
   const navbar = new Navbar({ right: [metadataCollapsible] });
   root.add(navbar);
@@ -2544,6 +2506,59 @@ var segmentsPage = async (root) => {
       filterStatus.style.color = "#047857";
     else
       filterStatus.style.color = "#6b7280";
+  };
+  const loadMetadata = async () => {
+    try {
+      const segementsMetadata = await fetch("/api/segment/metadata").then((res) => res.json());
+      const compressionRatio = segementsMetadata.originalSize > 0 ? segementsMetadata.compressedSize / segementsMetadata.originalSize * 100 : 0;
+      const averageCompressedLogSize = segementsMetadata.logsCount > 0 ? segementsMetadata.compressedSize / segementsMetadata.logsCount : 0;
+      const averageOriginalLogSize = segementsMetadata.logsCount > 0 ? segementsMetadata.originalSize / segementsMetadata.logsCount : 0;
+      const averageLogsPerSegment = segementsMetadata.segmentCount > 0 ? segementsMetadata.logsCount / segementsMetadata.segmentCount : 0;
+      const averageSegmentSize = segementsMetadata.segmentCount > 0 ? segementsMetadata.originalSize / segementsMetadata.segmentCount : 0;
+      const metadata = new KeyValueTable([
+        {
+          key: "Total segments",
+          value: formatNumber(segementsMetadata.segmentCount)
+        },
+        {
+          key: "Total original size",
+          value: formatBytes(segementsMetadata.originalSize)
+        },
+        {
+          key: "Total compressed size",
+          value: formatBytes(segementsMetadata.compressedSize)
+        },
+        {
+          key: "Total logs count",
+          value: formatNumber(segementsMetadata.logsCount)
+        },
+        {
+          key: "Compression ratio",
+          value: compressionRatio.toFixed(2) + "%"
+        },
+        {
+          key: "Average compressed log size",
+          value: formatBytes(averageCompressedLogSize)
+        },
+        {
+          key: "Average original log size",
+          value: formatBytes(averageOriginalLogSize)
+        },
+        {
+          key: "Average logs per segment",
+          value: formatNumber(averageLogsPerSegment)
+        },
+        {
+          key: "Average segment size",
+          value: formatBytes(averageSegmentSize)
+        }
+      ]);
+      metadata.root.style.whiteSpace = "nowrap";
+      metadataContent.root.innerHTML = "";
+      metadataContent.add(metadata);
+    } catch {
+      metadataContent.root.textContent = "Failed to load metadata.";
+    }
   };
   const renderSegmentCard = (segment) => {
     const table = new KeyValueTable([
@@ -2641,6 +2656,7 @@ var segmentsPage = async (root) => {
   clearFiltersButton.onClick = clearFilters;
   startInput.input.value = formatDateInputValue(filterStart);
   endInput.input.value = formatDateInputValue(filterEnd);
+  loadMetadata();
   await loadMoreSegments(true);
 };
 var segmentPage = async (root, segmentId) => {
@@ -2739,18 +2755,20 @@ var queriesPage = (root) => {
 // ts/server.ts
 var serverPage = async (root) => {
   root.root.innerHTML = "";
-  let info = null;
-  try {
-    info = await fetch("/api/v1/server_info").then((r) => r.json());
-  } catch (e) {
-    root.add(new KeyValueTable([{ key: "Error", value: String(e) }]));
-    return;
-  }
+  const loadServerInfo = async () => {
+    try {
+      return await fetch("/api/v1/server_info").then((r) => r.json());
+    } catch (e) {
+      root.add(new KeyValueTable([{ key: "Error", value: String(e) }]));
+      return null;
+    }
+  };
+  let info = await loadServerInfo();
   if (!info) {
     root.add(new KeyValueTable([{ key: "Error", value: "No data" }]));
     return;
   }
-  root.add(new KeyValueTable([
+  const infoTable = new KeyValueTable([
     { key: "Total space", value: formatBytes(info.totalBytes) },
     {
       key: "Used space",
@@ -2759,7 +2777,39 @@ var serverPage = async (root) => {
     { key: "Free space", value: formatBytes(info.freeBytes) },
     { key: "Upload files", value: info.uploadFilesCount.toString() },
     { key: "Upload bytes", value: formatBytes(info.uploadBytes) }
-  ]));
+  ]);
+  root.add(infoTable);
+  const status = document.createElement("div");
+  status.style.padding = "8px 0";
+  status.style.fontSize = "12px";
+  status.style.color = "#6b7280";
+  status.textContent = "";
+  root.root.appendChild(status);
+  const cleanupButton = new Button({ text: "Start Cleanup" });
+  cleanupButton.root.style.width = "fit-content";
+  cleanupButton.onClick = async () => {
+    cleanupButton.root.disabled = true;
+    status.style.color = "#6b7280";
+    status.textContent = "Starting cleanup...";
+    try {
+      const res = await fetch("/api/v1/server/cleanup", {
+        method: "POST"
+      });
+      if (!res.ok) {
+        throw new Error(`cleanup failed (${res.status})`);
+      }
+      const payload = await res.json();
+      const deleted = Number(payload.deletedSegments || 0);
+      status.style.color = "#047857";
+      status.textContent = `Cleanup finished, deleted ${deleted} segments.`;
+    } catch (e) {
+      status.style.color = "#b91c1c";
+      status.textContent = e instanceof Error ? e.message : "Failed to start cleanup.";
+    } finally {
+      cleanupButton.root.disabled = false;
+    }
+  };
+  root.add(cleanupButton);
 };
 
 // ts/app.ts

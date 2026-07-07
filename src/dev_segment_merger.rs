@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::context::Context;
+use crate::context::{wait_for_frontend_priority, Context};
 use crate::db::NewSegmentArgs;
 use crate::segment::{compress_segment, LogSegment};
 use lru::LruCache;
@@ -139,11 +139,14 @@ impl DeviceMerger {
 	}
 
 	pub async fn run_once(&mut self) -> anyhow::Result<bool> {
+		const PROCESS_YIELD_EVERY: usize = 10_000;
+
 		let mut processed = false;
 		let mut to_delete = Vec::new();
 		let mut device_ids = HashSet::new();
 
 		loop {
+			wait_for_frontend_priority().await;
 			let batch_size = std::env::var("MERGER_BATCH_SIZE")
 				.ok()
 				.and_then(|v| v.parse::<u32>().ok())
@@ -160,6 +163,7 @@ impl DeviceMerger {
 
 			log::info!("processing {} segments", segments.len());
 			for seg in segments {
+				wait_for_frontend_priority().await;
 				let path = self.ctx.logs_path().join(format!("{}.log", seg.id));
 				let file = match std::fs::File::open(&path) {
 					Ok(f) => f,
@@ -177,6 +181,7 @@ impl DeviceMerger {
 				log::info!("process segment {} from {}", seg.id, path.display());
 				let mut decoder = zstd::Decoder::new(file)?;
 				let log_seg = LogSegment::parse(&mut decoder);
+				let mut processed_since_yield = 0;
 				for log in log_seg.buffer {
 					let device_id = log
 						.props
@@ -187,6 +192,12 @@ impl DeviceMerger {
 						log::info!("[{}] devices", device_ids.len());
 					}
 					self.handle_log(log).await?;
+					processed_since_yield += 1;
+					if processed_since_yield >= PROCESS_YIELD_EVERY {
+						processed_since_yield = 0;
+						tokio::task::yield_now().await;
+						wait_for_frontend_priority().await;
+					}
 				}
 				to_delete.push((seg.id, path));
 			}
@@ -194,6 +205,7 @@ impl DeviceMerger {
 			// Flush remaining buffers unconditionally
 			let keys: Vec<String> = self.buffers.keys().cloned().collect();
 			for k in keys {
+				wait_for_frontend_priority().await;
 				self.flush_device(&k).await?;
 			}
 

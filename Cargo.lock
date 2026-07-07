@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "device_simulator"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1460,7 +1460,7 @@ checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
 name = "log_server"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "log",
  "puppylog",
@@ -1698,7 +1698,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "plog"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1791,7 +1791,7 @@ dependencies = [
 
 [[package]]
 name = "puppylog"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "byteorder",
  "bytes",
@@ -1811,7 +1811,7 @@ dependencies = [
 
 [[package]]
 name = "puppylog-server"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "axum",

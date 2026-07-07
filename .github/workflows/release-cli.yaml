@@ -1,4 +1,4 @@
-name: Release CLI
+name: Release Binaries
 
 on:
     push:
@@ -54,6 +54,10 @@ jobs:
             - name: Build release binary
               run: cargo build --release -p plog --target ${{ matrix.target }}
 
+            - name: Build Linux server binary
+              if: matrix.target == 'x86_64-unknown-linux-gnu'
+              run: cargo build --release -p puppylog-server --bin puppylog --target ${{ matrix.target }}
+
             - name: Package Unix archive
               if: matrix.archive == 'tar.gz'
               shell: bash
@@ -73,6 +77,16 @@ jobs:
                   Compress-Archive -Path "target/${{ matrix.target }}/release/$env:BIN_NAME.exe" -DestinationPath "dist/$archiveName"
                   $hash = (Get-FileHash "dist/$archiveName" -Algorithm SHA256).Hash.ToLower()
                   "$hash  $archiveName" | Out-File -FilePath "dist/$archiveName.sha256" -Encoding ascii
+
+            - name: Package Linux server archive
+              if: matrix.target == 'x86_64-unknown-linux-gnu'
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mkdir -p dist
+                  archive_name="puppylog-${RELEASE_TAG}-${{ matrix.target }}.tar.gz"
+                  tar -C target/${{ matrix.target }}/release -czf "dist/${archive_name}" puppylog
+                  shasum -a 256 "dist/${archive_name}" > "dist/${archive_name}.sha256"
 
             - name: Upload packaged artifacts
               uses: actions/upload-artifact@v4

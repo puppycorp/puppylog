@@ -289,6 +289,10 @@ Device sends logs to server in LogBatch format and server will send ack back to 
 Transfer-Encoding: chunked // If streaming logs
 Content-Encoding: gzip, zstd, none
 
+When the frontend is actively loading, or when too many uploads are already in
+progress, the server can respond with `503 Service Unavailable` and a
+`Retry-After` header. Clients should delay the upload and retry later.
+
 ### POST /api/v1/settings
 
 Set query used for collecting logs.
@@ -396,6 +400,64 @@ sudo apt-get install gcc libssl-dev pkg-config libsqlite3-dev build-essential
 cargo run
 ```
 
+### Install PuppyLog server as a user service
+
+Install the latest Linux x86_64 `puppylog` server release as a systemd user
+service:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install.sh | bash
+```
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install.sh | VERSION=0.0.1 bash
+```
+
+Install the current source version from the repository by building the `master`
+branch locally:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install.sh | VERSION=repo bash
+```
+
+Install from another repository branch or tag:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install.sh | VERSION=repo REPO_REF=my-branch bash
+```
+
+Install from a locally built server binary:
+
+```bash
+cargo build --release --bin puppylog
+PUPPYLOG_BIN=./target/release/puppylog ./scripts/install.sh
+```
+
+The installer writes a systemd user unit to
+`~/.config/systemd/user/puppylog.service`, installs the server binary into
+`~/.local/bin` by default, and writes service environment settings to
+`~/.config/puppylog/puppylog.env`. Edit that env file to move the log directory,
+database file, settings file, or upload directory:
+
+```bash
+LOG_PATH="/home/puppy/.local/share/puppylog/logs"
+DB_PATH="/home/puppy/.local/share/puppylog/puppylog.db"
+SETTINGS_PATH="/home/puppy/.local/share/puppylog/settings.json"
+UPLOAD_PATH="/home/puppy/.local/share/puppylog/uploads"
+```
+
+Restart the service after changing settings:
+
+```bash
+systemctl --user restart puppylog.service
+```
+
+Use `DATA_DIR=/srv/puppylog` to choose a different default data root during
+install, or set `LOG_PATH`, `DB_PATH`, `SETTINGS_PATH`, and `UPLOAD_PATH`
+individually before running the installer.
+
 ### Install `plog` from GitHub Releases
 
 #### Linux / macOS
@@ -409,7 +471,7 @@ curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/i
 Install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.sh | VERSION=3 bash
+curl -fsSL https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.sh | VERSION=0.0.1 bash
 ```
 
 Install somewhere else:
@@ -433,7 +495,7 @@ irm https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-
 Install a specific version:
 
 ```powershell
-$env:VERSION = "3"; irm https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.ps1 | iex
+$env:VERSION = "0.0.1"; irm https://raw.githubusercontent.com/puppycorp/puppylog/master/scripts/install-plog.ps1 | iex
 ```
 
 Install somewhere else:
@@ -491,10 +553,10 @@ This writes `~/.puppylog/config.json`, for example:
 
 ```json
 {
-  "address": "https://logs.example.com",
-  "auth": {
-    "token": "your-token-here"
-  }
+	"address": "https://logs.example.com",
+	"auth": {
+		"token": "your-token-here"
+	}
 }
 ```
 
@@ -563,6 +625,8 @@ PuppyLog supports tuning of its in-memory buffering and merge batching behavior 
 - **MERGER_BATCH_SIZE**: Number of orphan log segments fetched per merge iteration. Defaults to `MERGER_BATCH_SIZE`.
 - **MERGER_RUN**: Enables or disables merger background processing. Defaults to `true`.
 - **UPLOAD_FLUSH_THRESHOLD**: Number of buffered log entries received via the upload API before they are persisted to storage. The server reads this value at startup. Defaults to the compile-time constant `UPLOAD_FLUSH_THRESHOLD`.
+- **FRONTEND_PRIORITY_WINDOW_MS**: Number of milliseconds after serving frontend assets during which background upload processing and segment maintenance should yield. Defaults to `3000`.
+- **SEGMENT_COMPRESSION_THREADS**: Number of zstd worker threads used when compressing segments. Defaults to one less than the detected CPU count, with a minimum of `1`, so request handling keeps CPU headroom.
 - **SQLITE_SYNC**: Optional SQLite durability/performance mode. Accepted values are `OFF`, `NORMAL`, `FULL`, `EXTRA`, or numeric `0`-`3`. Leaving it unset uses SQLite's default. `OFF` is fastest but can corrupt the database on OS crash or power loss; use it only when the database is disposable or rebuildable.
 - **RUN_SEGMENT_COMPACTOR**: Enables or disables the segment compactor background process. Defaults to `true`. It tries to compact device segment logs up to 300k entries per segment. This helps to improve compression ratio and query performance with less files on disk.
 - **DISK_SPACE_MONITOR**: Set to `1` to enable the disk-space-monitor background task. When enabled the server will spawn `cleanup::run_disk_space_monitor`, which periodically checks the upload directory, logs the available MB, notifies Slack once per low-disk incident, flushes in-memory buffers, and deletes the oldest segments until free space recovers (honoring `CLEANUP_DELETE_COUNT`). The monitor stays disabled otherwise so disk cleanup only runs when you opt in.
@@ -574,5 +638,7 @@ export MERGER_MAX_IN_CORE=1000000
 export MERGER_TARGET_SEGMENT_SIZE=300000
 export MERGER_BATCH_SIZE=2000
 export UPLOAD_FLUSH_THRESHOLD=50000
+export FRONTEND_PRIORITY_WINDOW_MS=3000
+export SEGMENT_COMPRESSION_THREADS=3
 export SQLITE_SYNC=NORMAL
 ```

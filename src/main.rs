@@ -160,7 +160,9 @@ async fn main() {
 		.with_state(ctx.clone())
 		.fallback(get(controllers::root));
 
-	// run our app with hyper, listening globally on port 3000
-	let listener = tokio::net::TcpListener::bind("0.0.0.0:3337").await.unwrap();
+	let bind_addr = "0.0.0.0:3337";
+	let listener = tokio::net::TcpListener::bind(bind_addr).await.unwrap();
+	let local_addr = listener.local_addr().unwrap();
+	log::info!("listening on http://{}", local_addr);
 	axum::serve(listener, app).await.unwrap();
 }

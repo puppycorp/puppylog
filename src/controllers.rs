@@ -25,7 +25,10 @@ use tokio_util::io::ReaderStream;
 use zstd::Decoder;
 
 use crate::config::{log_path, upload_path};
-use crate::context::{Context, LogStreamItem, SearchProgress, SegmentProgress};
+use crate::context::{
+	note_frontend_request, should_defer_background_work, Context, LogStreamItem, SearchProgress,
+	SegmentProgress,
+};
 use crate::db::{MetaProp, UpdateDeviceSettings};
 use crate::segment::{HEADER_SIZE, MAGIC, VERSION};
 use crate::types::GetSegmentsQuery;
@@ -355,6 +358,20 @@ pub async fn upload_device_logs(
 	Path(device_id): Path<String>,
 	body: Body,
 ) -> impl IntoResponse {
+	if should_defer_background_work() {
+		let retry_after = rand::rng().random_range(1..=5);
+		let mut resp = (
+			StatusCode::SERVICE_UNAVAILABLE,
+			"Frontend active, delaying upload",
+		)
+			.into_response();
+		resp.headers_mut().insert(
+			axum::http::header::RETRY_AFTER,
+			retry_after.to_string().parse().unwrap(),
+		);
+		return resp;
+	}
+
 	let _guard = match ctx.upload_guard() {
 		Ok(g) => g,
 		Err(err) => {
@@ -601,6 +618,7 @@ fn cached_string_response(
 
 #[cfg(debug_assertions)]
 pub async fn css(headers: HeaderMap) -> Response {
+	note_frontend_request();
 	let mut file = tokio::fs::File::open("assets/puppylog.css").await.unwrap();
 	let mut contents = String::new();
 	file.read_to_string(&mut contents).await.unwrap();
@@ -609,17 +627,20 @@ pub async fn css(headers: HeaderMap) -> Response {
 
 #[cfg(not(debug_assertions))]
 pub async fn css(headers: HeaderMap) -> Response {
+	note_frontend_request();
 	cached_string_response(CSS, "text/css; charset=utf-8", &headers)
 }
 
 // basic handler that responds with a static string
 pub async fn root() -> Html<&'static str> {
+	note_frontend_request();
 	// Intentionally do not set long-lived cache for index.html
 	Html(INDEX_HTML)
 }
 
 #[cfg(debug_assertions)]
 pub async fn js(headers: HeaderMap) -> Response {
+	note_frontend_request();
 	let mut file = tokio::fs::File::open("assets/puppylog.js").await.unwrap();
 	let mut contents = String::new();
 	file.read_to_string(&mut contents).await.unwrap();
@@ -628,6 +649,7 @@ pub async fn js(headers: HeaderMap) -> Response {
 
 #[cfg(not(debug_assertions))]
 pub async fn js(headers: HeaderMap) -> Response {
+	note_frontend_request();
 	cached_string_response(JS_HTML, "application/javascript; charset=utf-8", &headers)
 }
 
@@ -653,10 +675,12 @@ pub async fn get_settings_query(State(ctx): State<Arc<Context>>) -> String {
 }
 
 pub async fn favicon(headers: HeaderMap) -> Result<Response, StatusCode> {
+	note_frontend_request();
 	Ok(cached_bytes_response(FAVICON, "image/x-icon", &headers))
 }
 
 pub async fn favicon_192x192(headers: HeaderMap) -> Result<Response, StatusCode> {
+	note_frontend_request();
 	Ok(cached_bytes_response(
 		FAVICON_192x192,
 		"image/png",
@@ -665,6 +689,7 @@ pub async fn favicon_192x192(headers: HeaderMap) -> Result<Response, StatusCode>
 }
 
 pub async fn favicon_512x512(headers: HeaderMap) -> Result<Response, StatusCode> {
+	note_frontend_request();
 	Ok(cached_bytes_response(
 		FAVICON_512x512,
 		"image/png",
@@ -673,6 +698,7 @@ pub async fn favicon_512x512(headers: HeaderMap) -> Result<Response, StatusCode>
 }
 
 pub async fn manifest(headers: HeaderMap) -> Result<Response, StatusCode> {
+	note_frontend_request();
 	Ok(cached_bytes_response(
 		include_bytes!("../assets/manifest.json"),
 		"application/json",

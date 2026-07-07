@@ -54,7 +54,9 @@ export const serverPage = async (root: Container) => {
 		status.style.color = "#6b7280"
 		status.textContent = "Starting cleanup..."
 		try {
-			const res = await fetch("/api/v1/server/cleanup", { method: "POST" })
+			const res = await fetch("/api/v1/server/cleanup", {
+				method: "POST",
+			})
 			if (!res.ok) {
 				throw new Error(`cleanup failed (${res.status})`)
 			}

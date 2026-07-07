@@ -23,10 +23,11 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex as StdMutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
@@ -36,6 +37,62 @@ use tokio::sync::Mutex;
 const CONCURRENCY_LIMIT: usize = 10;
 /// Default number of buffered log entries before logs are flushed to disk.
 pub const UPLOAD_FLUSH_THRESHOLD: usize = 3_000_000;
+const DEFAULT_FRONTEND_PRIORITY_WINDOW_MS: u64 = 3_000;
+const FRONTEND_PRIORITY_POLL_MS: u64 = 100;
+static FRONTEND_PRIORITY_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+	SystemTime::now()
+		.duration_since(UNIX_EPOCH)
+		.unwrap_or(Duration::ZERO)
+		.as_millis() as u64
+}
+
+fn frontend_priority_window_ms() -> u64 {
+	std::env::var("FRONTEND_PRIORITY_WINDOW_MS")
+		.ok()
+		.and_then(|v| v.parse::<u64>().ok())
+		.unwrap_or(if cfg!(test) {
+			10
+		} else {
+			DEFAULT_FRONTEND_PRIORITY_WINDOW_MS
+		})
+}
+
+pub fn note_frontend_request() {
+	let until = now_ms().saturating_add(frontend_priority_window_ms());
+	let mut current = FRONTEND_PRIORITY_UNTIL_MS.load(Ordering::Relaxed);
+	while until > current {
+		match FRONTEND_PRIORITY_UNTIL_MS.compare_exchange_weak(
+			current,
+			until,
+			Ordering::Relaxed,
+			Ordering::Relaxed,
+		) {
+			Ok(_) => break,
+			Err(observed) => current = observed,
+		}
+	}
+}
+
+pub fn should_defer_background_work() -> bool {
+	FRONTEND_PRIORITY_UNTIL_MS.load(Ordering::Relaxed) > now_ms()
+}
+
+pub async fn wait_for_frontend_priority() {
+	loop {
+		let now = now_ms();
+		let until = FRONTEND_PRIORITY_UNTIL_MS.load(Ordering::Relaxed);
+		if until <= now {
+			return;
+		}
+		let remaining = until - now;
+		tokio::time::sleep(Duration::from_millis(
+			remaining.min(FRONTEND_PRIORITY_POLL_MS),
+		))
+		.await;
+	}
+}
 
 #[derive(Debug)]
 pub struct Context {
@@ -239,6 +296,7 @@ impl Context {
 
 	pub fn allowed_to_upload(&self) -> bool {
 		self.upload_queue.load(Ordering::SeqCst) < CONCURRENCY_LIMIT
+			&& !should_defer_background_work()
 	}
 
 	pub fn upload_guard(&self) -> Result<UploadGuard<'_>, &str> {
@@ -269,6 +327,16 @@ mod tests {
 		fs::create_dir_all(&logs_path).unwrap();
 		let ctx = Context::new(logs_path).await;
 		(ctx, dir)
+	}
+
+	#[test]
+	fn frontend_request_defers_background_work() {
+		FRONTEND_PRIORITY_UNTIL_MS.store(0, std::sync::atomic::Ordering::Relaxed);
+		assert!(!should_defer_background_work());
+
+		note_frontend_request();
+
+		assert!(should_defer_background_work());
 	}
 
 	#[tokio::test]

@@ -87,6 +87,15 @@ const MIGRATIONS: &[Migration] = &[
                         CREATE INDEX IF NOT EXISTS log_segments_device_id_idx ON log_segments(device_id);
                 "#,
 	},
+	Migration {
+		id: 20260527,
+		name: "segment_time_indexes",
+		sql: r#"
+                        CREATE INDEX IF NOT EXISTS log_segments_first_timestamp_idx ON log_segments(first_timestamp);
+                        CREATE INDEX IF NOT EXISTS log_segments_last_timestamp_idx ON log_segments(last_timestamp);
+                        CREATE INDEX IF NOT EXISTS log_segments_device_first_timestamp_idx ON log_segments(device_id, first_timestamp);
+                "#,
+	},
 ];
 
 #[derive(Debug, Default)]

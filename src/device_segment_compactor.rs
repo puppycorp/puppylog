@@ -3,10 +3,10 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::context::Context;
+use crate::context::{wait_for_frontend_priority, Context};
 use crate::db::NewSegmentArgs;
 use crate::dev_segment_merger::TARGET_SEGMENT_SIZE;
-use crate::segment::LogSegment;
+use crate::segment::{compression_thread_count, LogSegment};
 use crate::types::{GetSegmentsQuery, SortDir};
 use puppylog::{LogEntry, Prop};
 use tokio::fs::remove_file;
@@ -36,7 +36,7 @@ impl DeviceSegmentCompactor {
 		let orig_size = buf.len();
 
 		let mut encoder = Encoder::new(Vec::new(), 14)?;
-		encoder.multithread(num_cpus::get() as u32)?;
+		encoder.multithread(compression_thread_count())?;
 		encoder.write_all(&buf)?;
 		let compressed = encoder.finish()?;
 		let comp_size = compressed.len();
@@ -81,6 +81,8 @@ impl DeviceSegmentCompactor {
 	}
 
 	pub async fn run_once(&self) -> anyhow::Result<bool> {
+		wait_for_frontend_priority().await;
+
 		let segments = self
 			.ctx
 			.db
@@ -114,6 +116,7 @@ impl DeviceSegmentCompactor {
 		let mut processed = false;
 
 		for (device, mut segs) in by_device {
+			wait_for_frontend_priority().await;
 			if segs.len() < 2 {
 				continue;
 			}
@@ -122,6 +125,7 @@ impl DeviceSegmentCompactor {
 			let mut buffer: Vec<LogEntry> = Vec::new();
 			let mut to_delete = Vec::new();
 			for seg in segs {
+				wait_for_frontend_priority().await;
 				let path = self.ctx.logs_path().join(format!("{}.log", seg.id));
 				let file = match std::fs::File::open(&path) {
 					Ok(f) => f,
@@ -143,6 +147,7 @@ impl DeviceSegmentCompactor {
 				to_delete.push((seg.id, path));
 
 				while buffer.len() >= TARGET_SEGMENT_SIZE {
+					wait_for_frontend_priority().await;
 					let logs: Vec<LogEntry> = buffer.drain(..TARGET_SEGMENT_SIZE).collect();
 					self.persist_segment(&device, logs).await?;
 					processed = true;
@@ -150,6 +155,7 @@ impl DeviceSegmentCompactor {
 			}
 
 			if !buffer.is_empty() {
+				wait_for_frontend_priority().await;
 				self.persist_segment(&device, buffer.clone()).await?;
 				buffer.clear();
 				processed = true;

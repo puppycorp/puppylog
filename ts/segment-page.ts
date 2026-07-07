@@ -65,59 +65,13 @@ const fetchSegments = async (args: {
 
 export const segmentsPage = async (root: Container) => {
 	root.root.innerHTML = ""
-	const segementsMetadata = (await fetch("/api/segment/metadata").then(
-		(res) => res.json(),
-	)) as SegementsMetadata
-	const compressionRatio =
-		(segementsMetadata.compressedSize / segementsMetadata.originalSize) *
-		100
-	const averageCompressedLogSize =
-		segementsMetadata.compressedSize / segementsMetadata.logsCount
-	const averageOriginalLogSize =
-		segementsMetadata.originalSize / segementsMetadata.logsCount
-	const metadata = new KeyValueTable([
-		{
-			key: "Total segments",
-			value: formatNumber(segementsMetadata.segmentCount),
-		},
-		{
-			key: "Total original size",
-			value: formatBytes(segementsMetadata.originalSize),
-		},
-		{
-			key: "Total compressed size",
-			value: formatBytes(segementsMetadata.compressedSize),
-		},
-		{
-			key: "Total logs count",
-			value: formatNumber(segementsMetadata.logsCount),
-		},
-		{ key: "Compression ratio", value: compressionRatio.toFixed(2) + "%" },
-		{
-			key: "Average compressed log size",
-			value: formatBytes(averageCompressedLogSize),
-		},
-		{
-			key: "Average original log size",
-			value: formatBytes(averageOriginalLogSize),
-		},
-		{
-			key: "Average logs per segment",
-			value: formatNumber(
-				segementsMetadata.logsCount / segementsMetadata.segmentCount,
-			),
-		},
-		{
-			key: "Average segment size",
-			value: formatBytes(
-				segementsMetadata.originalSize / segementsMetadata.segmentCount,
-			),
-		},
-	])
-	metadata.root.style.whiteSpace = "nowrap"
+
+	const metadataContent = new Container(document.createElement("div"))
+	metadataContent.root.textContent = "Loading metadata..."
+
 	const metadataCollapsible = new Collapsible({
 		buttonText: "Metadata",
-		content: metadata,
+		content: metadataContent,
 	})
 	const navbar = new Navbar({ right: [metadataCollapsible] })
 	root.add(navbar)
@@ -178,11 +132,91 @@ export const segmentsPage = async (root: Container) => {
 	let isLoadingSegments = false
 	let segmentsExhausted = false
 
-	const setFilterStatus = (message: string, type: "info" | "error" | "idle") => {
+	const setFilterStatus = (
+		message: string,
+		type: "info" | "error" | "idle",
+	) => {
 		filterStatus.textContent = message
 		if (type === "error") filterStatus.style.color = "#b91c1c"
 		else if (type === "info") filterStatus.style.color = "#047857"
 		else filterStatus.style.color = "#6b7280"
+	}
+
+	const loadMetadata = async () => {
+		try {
+			const segementsMetadata = (await fetch(
+				"/api/segment/metadata",
+			).then((res) => res.json())) as SegementsMetadata
+			const compressionRatio =
+				segementsMetadata.originalSize > 0
+					? (segementsMetadata.compressedSize /
+							segementsMetadata.originalSize) *
+						100
+					: 0
+			const averageCompressedLogSize =
+				segementsMetadata.logsCount > 0
+					? segementsMetadata.compressedSize /
+						segementsMetadata.logsCount
+					: 0
+			const averageOriginalLogSize =
+				segementsMetadata.logsCount > 0
+					? segementsMetadata.originalSize /
+						segementsMetadata.logsCount
+					: 0
+			const averageLogsPerSegment =
+				segementsMetadata.segmentCount > 0
+					? segementsMetadata.logsCount /
+						segementsMetadata.segmentCount
+					: 0
+			const averageSegmentSize =
+				segementsMetadata.segmentCount > 0
+					? segementsMetadata.originalSize /
+						segementsMetadata.segmentCount
+					: 0
+			const metadata = new KeyValueTable([
+				{
+					key: "Total segments",
+					value: formatNumber(segementsMetadata.segmentCount),
+				},
+				{
+					key: "Total original size",
+					value: formatBytes(segementsMetadata.originalSize),
+				},
+				{
+					key: "Total compressed size",
+					value: formatBytes(segementsMetadata.compressedSize),
+				},
+				{
+					key: "Total logs count",
+					value: formatNumber(segementsMetadata.logsCount),
+				},
+				{
+					key: "Compression ratio",
+					value: compressionRatio.toFixed(2) + "%",
+				},
+				{
+					key: "Average compressed log size",
+					value: formatBytes(averageCompressedLogSize),
+				},
+				{
+					key: "Average original log size",
+					value: formatBytes(averageOriginalLogSize),
+				},
+				{
+					key: "Average logs per segment",
+					value: formatNumber(averageLogsPerSegment),
+				},
+				{
+					key: "Average segment size",
+					value: formatBytes(averageSegmentSize),
+				},
+			])
+			metadata.root.style.whiteSpace = "nowrap"
+			metadataContent.root.innerHTML = ""
+			metadataContent.add(metadata)
+		} catch {
+			metadataContent.root.textContent = "Failed to load metadata."
+		}
 	}
 
 	const renderSegmentCard = (segment: Segment) => {
@@ -237,7 +271,10 @@ export const segmentsPage = async (root: Container) => {
 				start: filterStart,
 			})
 			if (segments.length === 0 && initial) {
-				setFilterStatus("No segments match the current filters.", "idle")
+				setFilterStatus(
+					"No segments match the current filters.",
+					"idle",
+				)
 				segmentsExhausted = true
 			} else {
 				setFilterStatus("", "idle")
@@ -293,6 +330,7 @@ export const segmentsPage = async (root: Container) => {
 
 	startInput.input.value = formatDateInputValue(filterStart)
 	endInput.input.value = formatDateInputValue(filterEnd)
+	void loadMetadata()
 	await loadMoreSegments(true)
 }
 
